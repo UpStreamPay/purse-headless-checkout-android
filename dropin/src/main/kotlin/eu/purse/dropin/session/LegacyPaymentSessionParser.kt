@@ -91,6 +91,7 @@ internal object LegacyPaymentSessionParser {
             paymentMaxAmount = settingsJson?.optBigDecimalOrNull("payment_max_amount"),
             usagePerSessionLimit = settingsJson?.optIntOrNull("usage_per_session_limit"),
             integrationMode = IntegrationMode.fromWire(merchantSpecificsJson?.optStringOrNull("integration_mode")),
+            merchantClientId = merchantSpecificsJson?.optStringOrNull("client_id"),
         )
 
         return MethodConfiguration(

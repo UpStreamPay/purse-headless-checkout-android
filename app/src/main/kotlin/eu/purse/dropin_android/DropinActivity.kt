@@ -9,6 +9,10 @@ import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import eu.purse.dropin.DropinAndroid
+import eu.purse.dropin.core.environment.PurseEnvironment
+import eu.purse.dropin.partnerui.partner.paypal.wallet.PaypalCheckoutContract
+import eu.purse.dropin.partnerui.partner.paypal.wallet.PaypalCheckoutInput
+import eu.purse.dropin.partnerui.partner.paypal.wallet.PaypalCheckoutResult
 import eu.purse.dropin.payment.method.DropinPaymentMethod
 import eu.purse.dropin.payment.method.IntegrationMode
 import eu.purse.dropin.payment.method.Method
@@ -52,11 +56,21 @@ class DropinActivity : AppCompatActivity() {
     private var primaryValid: Boolean = false
     private var primarySubmit: (suspend () -> SubmitResult)? = null
 
+    // The active decoded session, plus the PayPal handoff state — the init's step_id links the
+    // /init that created the order to the /validate that captures it.
+    private var activeDropin: DropinAndroid? = null
+    private var paypalStepId: String? = null
+
+    // Registered up front (before the Activity is started) so the PayPal approval result routes back
+    // here. The return Activity + its deep-link filter live in :partner-ui — no manifest work here.
+    private val paypalLauncher = registerForActivityResult(PaypalCheckoutContract()) { onPaypalResult(it) }
+
     private val primaryMethods by lazy {
         PrimaryMethodsView(
             activity = this,
             onPrimaryValidChanged = { valid -> primaryValid = valid; updatePayState() },
             onPrimarySubmitReady = { submit -> primarySubmit = submit },
+            onPaypalWallet = { startPaypal() },
         )
     }
     private val secondaryMethods by lazy {
@@ -90,11 +104,15 @@ class DropinActivity : AppCompatActivity() {
             appendLine("  id: ${dropin.session.id}")
             appendLine("  amount: ${dropin.session.amount} ${dropin.session.currency}")
             appendLine("  isInformationRequest: ${dropin.isInformationRequest}")
-            append("  vaultTenantId: ${dropin.vaultTenantId}")
+            appendLine("  vaultTenantId: ${dropin.vaultTenantId}")
+            appendLine("  entityId: ${dropin.sessionParams.entityId}")
+            append("  apiRoot: ${dropin.paymentApiRoot}")
         }
 
         // Reset payment state for this session (a fresh splitter owes the full amount).
         split = PaymentSplitter(dropin.session.amount)
+        activeDropin = dropin
+        paypalStepId = null
         currency = dropin.session.currency
         primaryValid = false
         primarySubmit = null
@@ -175,6 +193,65 @@ class DropinActivity : AppCompatActivity() {
     private fun showPayStatus(message: String) {
         binding.payStatus.text = message
         binding.payStatus.isVisible = true
+    }
+
+    /**
+     * PayPal wallet, step 1: create the order (`/init`) off the main thread, then hand the order id
+     * to the :partner-ui PayPal launcher (which opens the approval and returns to [onPaypalResult]).
+     */
+    private fun startPaypal() {
+        val dropin = activeDropin ?: return
+        val clientId = dropin.paypalClientId
+        if (clientId.isNullOrBlank()) {
+            showPayStatus(getString(R.string.paypal_no_client_id))
+            return
+        }
+        showPayStatus(getString(R.string.paypal_creating_order))
+        Thread {
+            try {
+                val order = dropin.createPaypalOrder()
+                runOnUiThread {
+                    paypalStepId = order.stepId
+                    val sandbox = dropin.sessionParams.environment != PurseEnvironment.PRODUCTION
+                    paypalLauncher.launch(PaypalCheckoutInput(order.orderId, clientId, sandbox))
+                }
+            } catch (e: Exception) {
+                runOnUiThread { showPayStatus(getString(R.string.paypal_error, e.message)) }
+            }
+        }.start()
+    }
+
+    /** PayPal wallet, step 2: the approval outcome. On approval, capture via `/validate`. */
+    private fun onPaypalResult(result: PaypalCheckoutResult) {
+        when (result) {
+            is PaypalCheckoutResult.Approved -> capturePaypal()
+            PaypalCheckoutResult.Canceled -> showPayStatus(getString(R.string.paypal_canceled))
+            is PaypalCheckoutResult.Failed -> showPayStatus(getString(R.string.paypal_failed, result.message))
+        }
+    }
+
+    /**
+     * PayPal wallet, step 3: capture the approved order (`/validate`, carrying the init's step id)
+     * off the main thread. A chained 3-D Secure redirect ([WalletValidationResult.redirectionUrl])
+     * isn't handled in this POC — see docs/architecture/redirect-handling.md.
+     */
+    private fun capturePaypal() {
+        val dropin = activeDropin ?: return
+        showPayStatus(getString(R.string.paypal_capturing))
+        Thread {
+            try {
+                val result = dropin.validatePaypal(paypalStepId)
+                runOnUiThread {
+                    if (result.isSuccess) {
+                        showPayStatus(getString(R.string.paypal_success))
+                    } else {
+                        showPayStatus(getString(R.string.paypal_declined, result.globalStatus))
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread { showPayStatus(getString(R.string.paypal_error, e.message)) }
+            }
+        }.start()
     }
 
     /**

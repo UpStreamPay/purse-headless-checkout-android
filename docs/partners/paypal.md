@@ -1,13 +1,15 @@
 # Partner: `paypal`
 
-Backs **PayPal** (`wallet`) in this POC — "starter" depth, since it's the one method requiring a
-redirect out of and back into the app (the ticket's own open question).
+Backs **PayPal** (`wallet`) in this POC. **Implemented** end to end on Android via the official
+PayPal Android SDK (`com.paypal.android:paypal-web-payments`) — the one method that requires the
+buyer to leave and return to the app (the ticket's own open question).
 
 ---
 
 ## Table of Contents
 
 - [Role in this POC](#role-in-this-poc)
+- [Implemented (Android)](#implemented-android)
 - [Documentation](#documentation)
 - [Redirection study](#redirection-study)
 - [See also](#see-also)
@@ -20,6 +22,41 @@ redirect out of and back into the app (the ticket's own open question).
 `.../paypal/bnpl/index.ts` — this POC only targets `wallet` (see
 [POC Scope](../decisions/poc-scope.md#explicitly-out-of-scope) for why `bnpl`, "Pay Later," is
 excluded).
+
+## Implemented (Android)
+
+Built in the `:partner-ui` module (`eu.purse.dropin.partnerui.partner.paypal.wallet`), orchestrated
+by `:dropin`'s `DropinAndroid` and triggered from the **official branded PayPal button**
+(`com.paypal.android:payment-buttons`'s `PayPalButton`, rendered in the demo `:app`'s method list —
+not a custom button). **Wallet pay-now
+only** — registration/vaulting is out of scope. The flow mirrors web's paypal plugin, with its
+in-page JS-SDK popup swapped for a native browser-switch:
+
+1. **Create order** — `DropinAndroid.createPaypalOrder()` → `POST /init` for `paypal`/`wallet`
+   (`PaypalWalletMapper.buildInitPayload`), reading `plugin_result.logs.order_id` + top-level
+   `step_id` into a `WalletOrder`.
+2. **Approve** — the app launches `PaypalCheckoutContract` (an `ActivityResultContract`), which runs
+   PayPal's `PayPalWebCheckoutClient.start(orderId)` inside the self-contained
+   `PaypalCheckoutActivity`. PayPal opens its approval (Custom Tab / PayPal app); on return,
+   `finishStart()` yields approved / canceled / failed.
+3. **Capture** — on approval, `DropinAndroid.validatePaypal(stepId)` → `POST /validate` (array body,
+   carrying the init's `step_id`), reading `global_status` into a `WalletValidationResult`.
+
+**Session config used:** `merchant_specifics.client_id` (parsed into
+`MethodSettings.merchantClientId`, surfaced as `DropinAndroid.paypalClientId`) for PayPal's
+`CoreConfig`; the Purse environment (`PurseEnvironment.PRODUCTION` → PayPal `LIVE`, else `SANDBOX`).
+
+**No manifest work for the integrator:** the return `<intent-filter>` (scheme `${applicationId}`)
+ships in `:partner-ui`'s own manifest and merges into the app.
+
+**Still open / not built here:**
+- The PayPal order's `return_url` (set server-side at `/init`) must deep-link back to the app's
+  scheme (`${applicationId}://…`) for the SDK to catch the return — **needs backend confirmation**.
+- A chained 3-D Secure `redirection` in the `/validate` response
+  (`WalletValidationResult.redirectionUrl`) is surfaced but not yet followed.
+- BNPL ("Pay Later") stays out of scope.
+- End-to-end approval is only exercisable on a device against a PayPal-enabled session; the unit
+  tests cover the `/init`+`/validate` payload/parse contract (`PaypalWalletMapperTest`).
 
 ## Documentation
 
@@ -55,6 +92,9 @@ an edge case on top of an otherwise-synchronous flow (as with CB/Google Pay's 3D
 *primary* flow needing a redirect-shaped answer at all, which is why [Redirect
 Handling](../architecture/redirect-handling.md#proposed-paypal-flow-for-this-poc) proposes Custom
 Tabs + an app-returning deep link as the working design, flagged as needing backend confirmation.
+On Android this is now implemented via the PayPal Android SDK's own browser-switch (see
+[Implemented (Android)](#implemented-android)) rather than a hand-rolled Custom Tab — but the same
+backend `return_url` → app-deep-link dependency still applies.
 
 **Implication for Android:** once a PayPal order is approved (via whichever mechanism — Custom
 Tabs/deep link, or PayPal's own Android SDK), the follow-up `/validate` call and its own

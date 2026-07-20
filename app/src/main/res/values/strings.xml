@@ -32,6 +32,15 @@
     <string name="pay_primary_ok">Card tokenized (%1$s). Submitting the payment (/validate) isn\'t wired in this POC yet.</string>
     <string name="pay_primary_error">Payment failed: %1$s</string>
 
+    <string name="paypal_no_client_id">PayPal isn\'t configured for this session (no client_id).</string>
+    <string name="paypal_creating_order">Creating PayPal order…</string>
+    <string name="paypal_capturing">Confirming PayPal payment…</string>
+    <string name="paypal_success">PayPal payment approved and captured.</string>
+    <string name="paypal_declined">PayPal payment not completed (status: %1$s).</string>
+    <string name="paypal_canceled">PayPal payment canceled.</string>
+    <string name="paypal_failed">PayPal failed: %1$s</string>
+    <string name="paypal_error">PayPal error: %1$s</string>
+
     <string name="method_amount_min">min %1$s</string>
     <string name="method_amount_max">max %1$s</string>
     <string name="method_no_methods">No payment methods available for this session.</string>

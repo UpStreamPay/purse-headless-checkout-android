@@ -28,4 +28,7 @@ include(":dropin")
 // Raw transport + environment layer (≈ usp-widget's `sdk` package): the low-level Payment API
 // client and environment targets, with no session/payment domain logic. `:dropin` depends on it.
 include(":core")
+// Per-partner plugins (≈ usp-widget's `partner-ui` package): PayPal & co — the partner-specific
+// /init+/validate payloads and the SDK launch. Sits on `:core`; `:dropin` depends on it.
+include(":partner-ui")
  

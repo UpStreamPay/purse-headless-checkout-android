@@ -5,10 +5,11 @@ a **native Android Drop-in** that initializes a Purse payment session and lets a
 Carte Bancaire (CB), Google Pay, PayPal, or Illicado, entirely with native UI — no WebView-hosted
 checkout page.
 
-> **Status: early POC, in progress.** The `:core` + `:dropin` SDK modules (session decode + method
-> model + payment splitter in `:dropin`; the Payment API `/init` client + environment in `:core`)
-> and a working `:app` demo exist; several pieces (`/validate`, redirect handling) are still
-> design-only. Each page states what's confirmed vs. still
+> **Status: early POC, in progress.** The `:core`, `:partner-ui`, and `:dropin` SDK modules
+> (session decode + method model + payment splitter in `:dropin`; PayPal wallet in `:partner-ui`;
+> the Payment API client + environment in `:core`) and a working `:app` demo exist. PayPal (wallet)
+> pays end to end via the PayPal Android SDK; some pieces (card `/validate`, Google Pay, generic
+> redirect/3-D Secure) are still design-only. Each page states what's confirmed vs. still
 > open, and calls out what's implemented. See [POC scope](decisions/poc-scope.md) for what "done"
 > means for this ticket, and [Project Setup](internal/project-setup.md#still-to-do) for the current
 > build state.
@@ -86,7 +87,7 @@ that partner — some already redirect today, some never do, and the reasons dif
 ## I'm setting up the project from scratch
 
 **[Project Setup](internal/project-setup.md)** *(internal — contributor onboarding)* — the
-`:core` / `:dropin` / `:app` module split, Gradle wiring, and domain-shaped package layout.
+`:core` / `:partner-ui` / `:dropin` / `:app` module split, Gradle wiring, and domain-shaped package layout.
 
 ---
 

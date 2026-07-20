@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!--
+          The PayPal return Activity ships here, in the :partner-ui library manifest, so it merges
+          into any integrating app with no manifest work of its own. The deep-link scheme is the
+          app's own applicationId (${applicationId}) — unique per app, and matched at runtime by the
+          urlScheme we pass to PayPalWebCheckoutClient (= packageName). See docs/partners/paypal.md.
+        -->
+        <activity
+            android:name=".partner.paypal.wallet.PaypalCheckoutActivity"
+            android:launchMode="singleTop"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${applicationId}" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

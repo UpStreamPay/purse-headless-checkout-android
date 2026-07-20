@@ -12,7 +12,7 @@ Module layout for implementing this POC, and how to get from the original bare s
 
 - [Current state](#current-state)
 - [A gotcha: don't apply the JetBrains Kotlin Android plugin](#a-gotcha-dont-apply-the-jetbrains-kotlin-android-plugin)
-- [Modules: `:core`, `:dropin`, `:app`](#modules-core-dropin-app)
+- [Modules: `:core`, `:partner-ui`, `:dropin`, `:app`](#modules-core-partner-ui-dropin-app)
 - [Why org.json instead of kotlinx.serialization](#why-orgjson-instead-of-kotlinxserialization)
 - [Package layout](#package-layout)
 - [Still to do](#still-to-do)
@@ -85,12 +85,14 @@ the SecureFields SDK's Kotlin version.
 
 ---
 
-## Modules: `:core`, `:dropin`, `:app`
+## Modules: `:core`, `:partner-ui`, `:dropin`, `:app`
 
-`settings.gradle.kts` has `include(":core")` and `include(":dropin")` alongside `include(":app")`.
-Both library modules apply only `alias(libs.plugins.android.library)` (no Kotlin plugin, per the
-gotcha above). The dependency direction is `:app` → `:dropin` → `:core`, matching web's
-`dropin` → `headless-checkout` → `sdk`.
+`settings.gradle.kts` has `include(":core")`, `include(":partner-ui")`, and `include(":dropin")`
+alongside `include(":app")`. The three library modules apply only
+`alias(libs.plugins.android.library)` (no Kotlin plugin, per the gotcha above). The dependency
+direction is `:app` → `:dropin` → `:partner-ui` → `:core`, matching web's
+`dropin` → `headless-checkout` → `partner-ui` → `sdk`: the engine orchestrates the per-partner
+plugins, which in turn sit on the raw transport.
 
 ```kotlin
 // core/build.gradle.kts — the raw layer (≈ web sdk)
@@ -115,13 +117,18 @@ android {
     /* compileSdk / defaultConfig / compileOptions identical to :core */
 }
 dependencies {
-    // `api` (not `implementation`) so `:app` sees :core types like PurseEnvironment transitively,
-    // mirroring how web's headless-checkout re-exports sdk's enums.
+    // `api` (not `implementation`) so `:app` sees :core / :partner-ui types transitively, mirroring
+    // how web's headless-checkout re-exports sdk's enums and depends on partner-ui.
     api(project(":core"))
+    api(project(":partner-ui"))
     testImplementation(libs.json)
     testImplementation(libs.junit)
 }
 ```
+
+`:partner-ui` adds `com.paypal.android:paypal-web-payments` (+ appcompat), so — exactly as in web,
+where headless-checkout depends on partner-ui — the engine transitively pulls in the PayPal SDK and
+androidx. That's the deliberate trade-off for having the engine orchestrate partner plugins.
 
 `libs.versions.toml` additions so far: `json = "20260522"` / `json = { group = "org.json", name =
 "json", ... }` (test-only, see below), and an `android-library` plugin alias. Coroutines in
@@ -173,7 +180,7 @@ splitter and partner vocabulary alongside); `vault/` is the card-capture config:
 
 ```
 dropin/src/main/kotlin/eu/purse/dropin/
-├── DropinAndroid.kt              ← public entry point: init(), paymentMethods, vaultTenantId, getSecondaryToken()
+├── DropinAndroid.kt              ← public entry: init(), paymentMethods, vaultTenantId, getSecondaryToken(), createPaypalOrder()/validatePaypal()
 ├── session/
 │   ├── SessionCodec.kt           ← decode(widgetData): PurseSessionParams
 │   ├── LegacyPaymentSessionParser.kt  ← payment_session JSON → LegacyPaymentSession
@@ -205,6 +212,22 @@ dropin/src/main/kotlin/eu/purse/dropin/
     └── CardBrand.kt
 ```
 
+**`:partner-ui`** (≈ web `partner-ui`) — per-partner plugins on top of `:core`. PayPal today:
+
+```
+partner-ui/src/main/kotlin/eu/purse/dropin/partnerui/
+└── partner/paypal/wallet/
+    ├── PaypalWalletMapper.kt      ← /init + /validate payload build/parse (order_id, step_id, global_status)
+    ├── WalletOrder.kt             ← the created order (order id + step id) to approve
+    ├── WalletValidationResult.kt  ← the capture outcome (+ any chained redirect)
+    ├── PaypalCheckoutContract.kt  ← ActivityResultContract: launch approval, get the outcome back
+    └── PaypalCheckoutActivity.kt  ← self-contained return Activity (PayPalWebCheckoutClient)
+```
+
+The return Activity's `<intent-filter>` uses `android:scheme="${applicationId}"` in `:partner-ui`'s
+own `AndroidManifest.xml`, so it merges into any integrating app with **no manifest work there** —
+the reason PayPal lives in a library module rather than the demo `:app`.
+
 **`:app`** (≈ web `dropin`) — the demo UI. `DropinActivity` is the orchestrator; rendering is split
 by the same primary/secondary axis as web's `ui/`, over a payment-agnostic `ui.components` layer:
 
@@ -228,6 +251,10 @@ A few placement notes:
 - The runtime split lives in one place, `payment/split/PaymentSplitter`, rather than being smeared
   across the builder and the Activity. `DropinActivity` holds a `PaymentSplitter` and reads
   `remaining`/`isFulfilled` from it, the way web's UI consumes the splitter's stores.
+- **PayPal lives in `:partner-ui`**, not `:dropin`: the engine (`DropinAndroid.createPaypalOrder` /
+  `validatePaypal`) orchestrates it, exactly as web's headless-checkout drives the partner-ui paypal
+  plugin. The `/init`+`/validate` payloads, the PayPal SDK launch, and the self-contained return
+  Activity all live in `:partner-ui`.
 
 `DropinAndroid.init()` accepts an optional `lockedEnvironment: PurseEnvironment?` — when set, it
 overrides whatever the session itself declares. This implements the environment-locking rule in
@@ -240,42 +267,47 @@ Robolectric needed — nothing in these modules touches `android.*`): `SessionCo
 malformed-session cases, unknown partner/method round-tripping), `PaymentSessionBuilderTest`
 (secondary-via-labels, position sorting, `information_request` filtering, all three `DisabledReason`
 cases), `PaymentSplitterTest` (the split math: fresh/partial/accumulating/over-cover),
-`SecondaryConfigTest` + `SecondaryTokenMapperTest` (under `payment/method/secondary/`), and
+`SecondaryConfigTest` + `SecondaryTokenMapperTest` (under `payment/method/secondary/`),
+`PaypalWalletMapperTest` (under `:partner-ui` — the PayPal `/init`+`/validate` payload contract), and
 `DropinAndroidTest` (the public API surface, including the environment lock).
 
 ---
 
 ## Still to do
 
-Already built: the `:core` `/init` client (secondary flow), `:app` wired to `:dropin`, the Internet
-permission, a working demo harness (`MainActivity` + `DropinActivity`, View system), **CB card
-capture via the SecureFields Android SDK**, a **pay button** driven by `PaymentSplitter`, and the
-`:core` / `:dropin` module split with a domain-shaped package layout. `securefields-android`,
-`lifecycle-runtime-ktx`, and `kotlinx-coroutines-android` are in `libs.versions.toml` / `:app`.
-Still unbuilt:
+Already built: the `:core` Payment API client (`/init` + `/validate`), `:app` wired to `:dropin`,
+the Internet permission, a working demo harness (`MainActivity` + `DropinActivity`, View system),
+**CB card capture via the SecureFields Android SDK**, **PayPal (wallet) via the official PayPal
+Android SDK** (`/init` → approval → `/validate`, in `:partner-ui`), a **pay button** driven by
+`PaymentSplitter`, and the `:core` / `:partner-ui` / `:dropin` module split with a domain-shaped
+package layout. `securefields-android`, `lifecycle-runtime-ktx`, `kotlinx-coroutines-android`, and
+`paypal-web-payments` are in `libs.versions.toml`. Still unbuilt:
 
-- **`/validate`** — `PaymentApiClient` only implements `/init` so far; the validate call (and its
-  array/split request shape) is not built. The pay button captures/tokenizes the card (SecureFields)
-  but the `/init` + `/validate` submission that turns a token into an authorized payment isn't wired.
-  See [Session & Protocols](../architecture/session-and-protocols.md#init-and-validate).
-- **Google Pay & PayPal coordinators** (`methods/`) — `PaymentsClient` (Google Pay) and the PayPal
-  redirect flow. CB (SecureFields) and the Illicado secondary `/init` are wired today; these two
-  aren't. See [Payment Methods](../integration/payment-methods.md).
+- **Card `/validate`** — the card pay button captures/tokenizes via SecureFields, but the `/init` +
+  `/validate` submission that turns that token into an authorized card payment isn't wired (PayPal
+  already exercises the `/validate` client). See
+  [Session & Protocols](../architecture/session-and-protocols.md#init-and-validate).
+- **Google Pay coordinator** — `PaymentsClient` (Google Pay) isn't built; its xpay button stays
+  inert. CB (SecureFields), the Illicado secondary `/init`, and PayPal (wallet) are wired today. See
+  [Payment Methods](../integration/payment-methods.md).
+- **Generic redirect / 3-D Secure** — PayPal uses its own SDK browser-switch, but a generic
+  `DropinRedirectionHandler` (Custom Tabs / WebView) for `integration_mode: "redirection"` methods
+  and chained `/validate` `redirection` (3DS) responses isn't built. PayPal's own `return_url` →
+  app-deep-link also needs backend confirmation. See
+  [Redirect Handling](../architecture/redirect-handling.md).
 - **Live split recomputation** — `PaymentSplitter` tracks a secondary's balance contribution and the
   pay button reads `remaining`/`isFulfilled` from it, but `PaymentSessionBuilder` still computes each
   method's disabled state against the full amount (not against the live splitter as secondaries are
   added), and there's no partial-capture or multi-source submission yet.
-- **`redirect/DropinRedirectionHandler.kt`** — Custom Tabs / WebView dispatch and a redirect-return
-  `<intent-filter>` in `app/src/main/AndroidManifest.xml`, see
-  [Redirect Handling](../architecture/redirect-handling.md).
-- **Remaining dependencies** — `androidx.browser` and `play-services-wallet` (and Compose, if the
-  demo moves off the View system) are added when the PayPal/Google Pay coordinators need them.
+- **Remaining dependencies** — `play-services-wallet` (and Compose, if the demo moves off the View
+  system) when the Google Pay coordinator needs them. `androidx.browser` isn't needed for PayPal —
+  the PayPal SDK bundles its own browser-switch.
 
 ---
 
 ## Final project layout
 
-The target shape is what's described in [Package layout](#package-layout), across the three modules:
+The target shape is what's described in [Package layout](#package-layout), across the four modules:
 
 ```
 dropinandroid/
@@ -289,9 +321,10 @@ dropinandroid/
 │       ├── DropinAndroid.kt
 │       ├── session/               ← done
 │       ├── payment/               ← method (+ secondary), partner, split — done
-│       ├── vault/                 ← done
-│       ├── redirect/              ← not yet built
-│       └── methods/               ← not yet built
+│       └── vault/                 ← done
+├── partner-ui/
+│   └── src/main/kotlin/eu/purse/dropin/partnerui/
+│       └── partner/paypal/wallet/ ← PayPal wallet done (mapper + SDK launch + return Activity)
 ├── core/
 │   └── src/main/kotlin/eu/purse/dropin/core/
 │       ├── api/                   ← done

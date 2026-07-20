@@ -155,6 +155,12 @@ Same priority order as the web resolver: check `plugin_result.logs` first, then
 
 ## Proposed PayPal flow for this POC
 
+> **Update — implemented.** The wallet flow below is now built in `:partner-ui` using the PayPal
+> Android SDK's own browser-switch (`PayPalWebCheckoutClient`) rather than a hand-rolled Custom Tab,
+> so steps 3–5 are handled by the SDK; steps 2 (`/init`) and 6 (`/validate`) are as described. See
+> [Partner: paypal](../partners/paypal.md#implemented-android). The backend `return_url` question in
+> [What needs backend confirmation](#what-needs-backend-confirmation) still stands.
+
 PayPal's web flow (see [Payment Methods](../integration/payment-methods.md#paypal-starter))
 resolves an `order_id` via `/init` and then has the PayPal JS SDK collect approval in a popup —
 Android has no popup equivalent, so this POC proposes a full redirect instead:

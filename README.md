@@ -5,14 +5,16 @@ initialize a Purse payment session and pay with CB, Google Pay, PayPal, or Illic
 UI throughout — built on top of the existing [SecureFields Android
 SDK](https://upstreampay.atlassian.net/browse/SDK-11769) for card capture.
 
-> **Status: early POC, in progress.** The `:core` + `:dropin` SDK modules (session decode +
-> payment-method model in `:dropin`; the Payment API `/init` client + environment targets in
-> `:core`) and a working `:app` demo (View system) exist. The demo
+> **Status: early POC, in progress.** The `:core`, `:partner-ui`, and `:dropin` SDK modules
+> (session decode + payment-method model in `:dropin`; PayPal in `:partner-ui`; the Payment API
+> client + environment targets in `:core`) and a working `:app` demo (View system) exist. The demo
 > mints a session via the alfred dev server and renders the method list on its own page; **CB card
 > capture uses the SecureFields Android SDK**, Illicado gift-card entry works end to end against
-> `/init`, and a **pay button** reflects web's completion rule (secondaries cover the amount, or a
-> primary is valid). Still to build: `/validate` (the pay button tokenizes but doesn't submit yet),
-> Google Pay & PayPal coordinators, full split orchestration, and redirect handling — see
+> `/init`, **PayPal (wallet) pays via the official PayPal Android SDK** (`/init` → approval →
+> `/validate`), and a **pay button** reflects web's completion rule (secondaries cover the amount,
+> or a primary is valid). Still to build: `/validate` for the card pay button (it tokenizes but
+> doesn't submit yet), the Google Pay coordinator, live split orchestration, and generic
+> redirect/3-D Secure handling — see
 > [Still to do](docs/internal/project-setup.md#still-to-do). The `/docs` folder documents the target
 > architecture, derived from the web Drop-in (`@upstreampay/dropin` / `@upstreampay/headless-checkout`
 > in the sibling `usp-widget` repo) and the SecureFields Android SDK (sibling `vault-android` repo).
@@ -40,10 +42,11 @@ SDK](https://upstreampay.atlassian.net/browse/SDK-11769) for card capture.
 | Module | Description | Status |
 |---|---|---|
 | `:app` | Demo app exercising the Drop-in (session builder + Drop-in page, View system; UI split into `ui.components` / `ui.primaries` / `ui.secondaries`) | Working — see [Testing with alfred](docs/internal/testing-with-alfred.md) |
-| `:dropin` | Headless engine (≈ web `headless-checkout`): session decode/build, payment-method model, payment splitter, vault config. Depends on `:core` | Built; `/validate`, method coordinators, redirect handling still to do |
-| `:core` | Raw layer (≈ web `sdk`): Payment API `/init` client + environment targets, no domain logic | Built |
+| `:dropin` | Headless engine (≈ web `headless-checkout`): session decode/build, payment-method model, payment splitter, vault config. Depends on `:core` + `:partner-ui` | Built; Google Pay coordinator, `/validate` for card, redirect-mode/3DS still to do |
+| `:partner-ui` | Per-partner plugins (≈ web `partner-ui`): PayPal wallet `/init`+`/validate` payloads + the PayPal SDK launch (self-contained return Activity). Depends on `:core` | PayPal wallet built |
+| `:core` | Raw layer (≈ web `sdk`): Payment API `/init`+`/validate` client + environment targets, no domain logic | Built |
 
-The `:app` → `:dropin` → `:core` layering mirrors web's `dropin` → `headless-checkout` → `sdk`.
+The `:app` → `:dropin` → `:partner-ui` → `:core` layering mirrors web's `dropin` → `headless-checkout` → `partner-ui` → `sdk`.
 
 CB card capture itself is not reimplemented here — it's delegated to
 `eu.purse:securefields-android`, published on Maven Central (see

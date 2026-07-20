@@ -87,15 +87,16 @@ own `PaymentsClient` API:
 ## PayPal (starter)
 
 **`protocols.paypal.wallet`**. Web's flow (`usp-widget/packages/partner-ui/src/plugins/partners/paypal/wallet/index.ts`)
-uses the PayPal JS SDK's own popup button, which has no Android equivalent — see
-[Redirect Handling](../architecture/redirect-handling.md#proposed-paypal-flow-for-this-poc) for
-the proposed native flow. Summary:
+uses the PayPal JS SDK's own popup button, which has no Android equivalent.
+
+> **Implemented** in `:partner-ui` via the official PayPal Android SDK — see
+> [Partner: paypal](../partners/paypal.md#implemented-android). Summary of the native flow:
 
 1. `POST /init` with `partner: "paypal", method: "wallet"` → response's
    `plugin_result.logs.order_id` is the PayPal order ID (same call web makes from its
    `createOrder` callback).
-2. Open PayPal's hosted approval page for that order in a Custom Tab (or PayPal's own Android SDK
-   — see the open question in [Redirect Handling](../architecture/redirect-handling.md#what-needs-backend-confirmation)).
+2. Launch PayPal's approval for that order via the PayPal Android SDK's `PayPalWebCheckoutClient`
+   (`:partner-ui`'s `PaypalCheckoutActivity`), which owns the browser-switch and the return.
 3. On return to the app, `POST /validate` with `partner: "paypal", method: "wallet"` — same call
    web makes after `onApprove` fires, no PayPal-specific data needed in the request since the
    order was already approved server-side by PayPal at this point.

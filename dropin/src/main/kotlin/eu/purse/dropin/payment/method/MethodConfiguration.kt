@@ -44,4 +44,6 @@ data class MethodSettings(
     val paymentMaxAmount: BigDecimal?,
     val usagePerSessionLimit: Int?,
     val integrationMode: IntegrationMode?,
+    /** `merchant_specifics.client_id` — the PSP's client-side SDK id (e.g. PayPal's REST client id). */
+    val merchantClientId: String? = null,
 )

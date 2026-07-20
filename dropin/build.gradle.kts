@@ -26,6 +26,10 @@ dependencies {
     // so consumers of `:dropin` — e.g. the demo `:app` — see core types like PurseEnvironment
     // transitively, mirroring how web's headless-checkout re-exports sdk's enums.
     api(project(":core"))
+    // Per-partner plugins (≈ web `partner-ui`), which this engine orchestrates — same direction as
+    // web's headless-checkout depending on partner-ui. `api` so `:app` sees the wallet types
+    // (WalletOrder, …) it needs to drive the PayPal launch.
+    api(project(":partner-ui"))
 
     // org.json is provided by the Android platform at compile/runtime (part of android.jar) —
     // no production dependency needed. The Android platform stub throws on the unit test

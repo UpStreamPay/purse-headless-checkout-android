@@ -7,6 +7,7 @@ import android.widget.RadioButton
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
 import com.google.android.material.button.MaterialButton
+import com.paypal.android.paymentbuttons.PayPalButton
 import eu.purse.dropin.DropinAndroid
 import eu.purse.dropin.core.environment.PurseEnvironment
 import eu.purse.dropin.payment.method.DisabledReason
@@ -43,6 +44,7 @@ internal class PrimaryMethodsView(
     private val activity: AppCompatActivity,
     private val onPrimaryValidChanged: (Boolean) -> Unit,
     private val onPrimarySubmitReady: (suspend () -> SubmitResult) -> Unit,
+    private val onPaypalWallet: () -> Unit,
 ) {
 
     /** xpay methods (Google Pay, popup PayPal) as full-width buttons, two per row. */
@@ -56,11 +58,23 @@ internal class PrimaryMethodsView(
             // Up to two buttons per row, each taking an equal share (a lone button fills the row).
             for (offset in 0 until 2) {
                 val method = methods.getOrNull(index + offset) ?: break
-                val button = MaterialButton(activity).apply {
-                    text = methodTitle(method)
-                    isEnabled = method.disabled == null
-                    layoutParams = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
-                        if (offset == 1) marginStart = activity.dp(8)
+                val buttonLayout = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                    if (offset == 1) marginStart = activity.dp(8)
+                }
+                // PayPal renders as the official branded PayPalButton (gold, PayPal wordmark) wired
+                // to the checkout flow. The other xpay methods (Google Pay) aren't implemented in
+                // this POC, so they stay plain, inert Material buttons.
+                val button: View = if (method.method == Method.Wallet && method.partner == Partner.Paypal) {
+                    PayPalButton(activity).apply {
+                        layoutParams = buttonLayout
+                        isEnabled = method.disabled == null
+                        setOnClickListener { onPaypalWallet() }
+                    }
+                } else {
+                    MaterialButton(activity).apply {
+                        text = methodTitle(method)
+                        isEnabled = method.disabled == null
+                        layoutParams = buttonLayout
                     }
                 }
                 row.addView(button)

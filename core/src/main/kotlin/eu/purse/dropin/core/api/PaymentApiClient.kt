@@ -1,5 +1,6 @@
 package eu.purse.dropin.core.api
 
+import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
 import java.io.IOException
@@ -26,9 +27,16 @@ class PaymentApiClient(
     private val root: String = apiRoot.trimEnd('/')
 
     /** `POST /init` — see docs/architecture/session-and-protocols.md#init-and-validate. */
-    fun init(payload: JSONObject): JSONObject = post("/init", payload)
+    fun init(payload: JSONObject): JSONObject = post("/init", payload.toString())
 
-    private fun post(path: String, payload: JSONObject): JSONObject {
+    /**
+     * `POST /validate` — the validate call takes a JSON *array* of items (one per method being
+     * submitted), mirroring web's `FetchPaymentAPI.validate`. Returns the `{results, redirection,
+     * global_status}` object. See docs/architecture/session-and-protocols.md#init-and-validate.
+     */
+    fun validate(payload: JSONArray): JSONObject = post("/validate", payload.toString())
+
+    private fun post(path: String, body: String): JSONObject {
         val url = "$root/$entityId/sessions/$sessionId$path"
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = "POST"
@@ -39,7 +47,7 @@ class PaymentApiClient(
             setRequestProperty("x-api-key", apiKey)
         }
         val body = try {
-            connection.outputStream.use { it.write(payload.toString().toByteArray()) }
+            connection.outputStream.use { it.write(body.toByteArray()) }
             // Web's FetchPaymentAPI treats status < 400 as success.
             val code = connection.responseCode
             val stream = if (code < 400) connection.inputStream else connection.errorStream
