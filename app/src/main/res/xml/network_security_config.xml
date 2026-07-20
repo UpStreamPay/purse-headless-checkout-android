@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  This demo app talks to usp-widget's "alfred" dev server over plain HTTP (e.g.
+  http://10.0.2.2:9001 from an emulator, or a LAN IP for a physical device) — see
+  docs/internal/testing-with-alfred.md. Cleartext is permitted for this reason. This app is a
+  POC/demo, never distributed, so a blanket allowance is acceptable here; a real merchant app
+  would scope this to specific dev hosts instead.
+-->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>
