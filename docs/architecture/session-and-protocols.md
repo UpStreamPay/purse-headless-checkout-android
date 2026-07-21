@@ -439,11 +439,16 @@ outside this pair; everything else — including Illicado's PAN/CVV — goes str
 
 ## `/init` and `/validate`
 
-> **Status:** `/init` is **implemented** — `eu.purse.dropin.core.api.PaymentApiClient` (a thin,
-> synchronous `HttpURLConnection` client mirroring web's `FetchPaymentAPI`) plus
-> `SecondaryTokenMapper` (payload builder + response parser). It is wired up for the **secondary
-> (Illicado gift card) flow only**, via `DropinAndroid.getSecondaryToken(method, pan, cvv)`. The
-> primary-method `/init` calls (CB/Google Pay/PayPal) and **`/validate` are not built yet**.
+> **Status:** `/init`/`/validate` are **implemented** — `eu.purse.dropin.core.api.PaymentApiClient`
+> (a thin, synchronous `HttpURLConnection` client mirroring web's `FetchPaymentAPI`) backs every
+> flow below it. Wired up for: the **secondary (Illicado gift card)** flow, via
+> `SecondaryTokenMapper` + `DropinAndroid.getSecondaryToken(method, pan, cvv)` (`/init` only);
+> **PayPal wallet**, via `PaypalWalletMapper` + `DropinAndroid.createPaypalOrder`/`validatePaypal`
+> (both calls — see [Partner: paypal](../partners/paypal.md#implemented-android)); and **Google
+> Pay**, via `GooglePayMapper` + `DropinAndroid.createGooglePayRequest`/`validateGooglePay` (both
+> calls — see [Partner: adyen](../partners/adyen.md#implemented-android)). **CB's `/init`+`/validate`
+> are not built yet** (SecureFields tokenizes in-app today, but the follow-up submit to the Payment
+> API isn't wired).
 
 `/init` is called once the shopper picks (or, for CB, finishes typing into) a method. Request
 shape:

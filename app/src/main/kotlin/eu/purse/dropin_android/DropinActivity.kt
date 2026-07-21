@@ -8,8 +8,13 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
+import com.google.android.gms.common.api.CommonStatusCodes
+import com.google.android.gms.wallet.AutoResolveHelper
+import com.google.android.gms.wallet.PaymentData
+import com.google.android.gms.wallet.contract.TaskResultContracts.GetPaymentDataResult
 import eu.purse.dropin.DropinAndroid
 import eu.purse.dropin.core.environment.PurseEnvironment
+import eu.purse.dropin.partnerui.generic.googlepay.GooglePayClient
 import eu.purse.dropin.partnerui.partner.paypal.wallet.PaypalCheckoutContract
 import eu.purse.dropin.partnerui.partner.paypal.wallet.PaypalCheckoutInput
 import eu.purse.dropin.partnerui.partner.paypal.wallet.PaypalCheckoutResult
@@ -30,6 +35,8 @@ import eu.purse.dropin_android.ui.primaries.PrimaryMethodsView
 import eu.purse.dropin_android.ui.secondaries.SecondaryMethodsView
 import eu.purse.securefields.model.SubmitResult
 import kotlinx.coroutines.launch
+import org.json.JSONException
+import org.json.JSONObject
 import java.math.BigDecimal
 
 /**
@@ -61,9 +68,26 @@ class DropinActivity : AppCompatActivity() {
     private var activeDropin: DropinAndroid? = null
     private var paypalStepId: String? = null
 
+    // The partner wire value ("adyen") from the last Google Pay request created — carried into the
+    // follow-up /validate call, the same role [paypalStepId] plays for PayPal.
+    private var googlePayPartnerWire: String? = null
+
     // Registered up front (before the Activity is started) so the PayPal approval result routes back
     // here. The return Activity + its deep-link filter live in :partner-ui — no manifest work here.
     private val paypalLauncher = registerForActivityResult(PaypalCheckoutContract()) { onPaypalResult(it) }
+
+    // Registered up front, same rationale as [paypalLauncher] — but Google Pay needs no dedicated
+    // return Activity/manifest work at all: `GetPaymentDataResult` is Google's own
+    // ActivityResultContract, resolving the `Task<PaymentData>` the sheet produces.
+    private val googlePayLauncher = registerForActivityResult(GetPaymentDataResult()) { taskResult ->
+        when (taskResult.status.statusCode) {
+            CommonStatusCodes.SUCCESS -> onGooglePaySuccess(taskResult.result)
+            CommonStatusCodes.CANCELED -> showPayStatus(getString(R.string.googlepay_canceled))
+            AutoResolveHelper.RESULT_ERROR ->
+                showPayStatus(getString(R.string.googlepay_failed, taskResult.status.statusMessage))
+            else -> showPayStatus(getString(R.string.googlepay_error, "status ${taskResult.status.statusCode}"))
+        }
+    }
 
     private val primaryMethods by lazy {
         PrimaryMethodsView(
@@ -71,6 +95,7 @@ class DropinActivity : AppCompatActivity() {
             onPrimaryValidChanged = { valid -> primaryValid = valid; updatePayState() },
             onPrimarySubmitReady = { submit -> primarySubmit = submit },
             onPaypalWallet = { startPaypal() },
+            onGooglePay = { startGooglePay() },
         )
     }
     private val secondaryMethods by lazy {
@@ -113,6 +138,7 @@ class DropinActivity : AppCompatActivity() {
         split = PaymentSplitter(dropin.session.amount)
         activeDropin = dropin
         paypalStepId = null
+        googlePayPartnerWire = null
         currency = dropin.session.currency
         primaryValid = false
         primarySubmit = null
@@ -270,6 +296,78 @@ class DropinActivity : AppCompatActivity() {
                 }
             } catch (e: Exception) {
                 runOnUiThread { showPayStatus(getString(R.string.paypal_error, e.message)) }
+            }
+        }.start()
+    }
+
+    /**
+     * Google Pay, step 1: create the request (`/init`) off the main thread — the gateway config
+     * (`gatewayMerchantId`, allowed networks) comes back from the backend, the same way PayPal's
+     * `order_id` does — then show the native sheet via `loadPaymentData`. Unlike PayPal there's no
+     * separate approval Activity: the sheet itself is the whole "approval" step, and its result
+     * routes back through [googlePayLauncher].
+     */
+    private fun startGooglePay() {
+        val dropin = activeDropin ?: return
+        showPayStatus(getString(R.string.googlepay_creating_request))
+        Thread {
+            try {
+                val request = dropin.createGooglePayRequest()
+                val client = GooglePayClient.create(this, dropin.sessionParams.environment)
+                runOnUiThread {
+                    googlePayPartnerWire = request.partnerWireValue
+                    client.loadPaymentDataTask(request.paymentDataRequestJson)
+                        .addOnCompleteListener(googlePayLauncher::launch)
+                }
+            } catch (e: Exception) {
+                runOnUiThread { showPayStatus(getString(R.string.googlepay_error, e.message)) }
+            }
+        }.start()
+    }
+
+    /**
+     * Google Pay, step 2: the sheet succeeded — parse the token and selected card network out of
+     * `PaymentData.toJson()` and capture via `/validate`. Mirrors [onPaypalResult] +
+     * [capturePaypal] collapsed into one step, since Google Pay has no separate
+     * approval-then-capture activities the way PayPal's browser-switch does.
+     */
+    private fun onGooglePaySuccess(paymentData: PaymentData?) {
+        if (paymentData == null) {
+            showPayStatus(getString(R.string.googlepay_error, "no payment data"))
+            return
+        }
+        try {
+            val methodData = JSONObject(paymentData.toJson()).getJSONObject("paymentMethodData")
+            val token = methodData.getJSONObject("tokenizationData").getString("token")
+            val network = methodData.optJSONObject("info")?.optString("cardNetwork")
+            captureGooglePay(token, network)
+        } catch (e: JSONException) {
+            showPayStatus(getString(R.string.googlepay_error, e.message))
+        }
+    }
+
+    /**
+     * Google Pay, step 3: capture the token (`/validate`) off the main thread. A chained 3-D
+     * Secure redirect ([eu.purse.dropin.partnerui.generic.googlepay.GooglePayValidationResult.redirectionUrl])
+     * isn't followed in this POC — see docs/architecture/redirect-handling.md, the same limitation
+     * as PayPal's [capturePaypal].
+     */
+    private fun captureGooglePay(token: String, selectedNetwork: String?) {
+        val dropin = activeDropin ?: return
+        val partnerWire = googlePayPartnerWire ?: return
+        showPayStatus(getString(R.string.googlepay_capturing))
+        Thread {
+            try {
+                val result = dropin.validateGooglePay(partnerWire, token, selectedNetwork)
+                runOnUiThread {
+                    if (result.isSuccess) {
+                        showPayStatus(getString(R.string.googlepay_success))
+                    } else {
+                        showPayStatus(getString(R.string.googlepay_declined, result.globalStatus))
+                    }
+                }
+            } catch (e: Exception) {
+                runOnUiThread { showPayStatus(getString(R.string.googlepay_error, e.message)) }
             }
         }.start()
     }

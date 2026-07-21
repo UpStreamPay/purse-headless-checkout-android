@@ -6,15 +6,21 @@ import android.widget.LinearLayout
 import android.widget.RadioButton
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
+import com.google.android.gms.wallet.button.ButtonConstants.ButtonTheme
+import com.google.android.gms.wallet.button.ButtonConstants.ButtonType
+import com.google.android.gms.wallet.button.ButtonOptions
+import com.google.android.gms.wallet.button.PayButton
 import com.google.android.material.button.MaterialButton
 import com.paypal.android.paymentbuttons.PayPalButton
 import eu.purse.dropin.DropinAndroid
 import eu.purse.dropin.core.environment.PurseEnvironment
+import eu.purse.dropin.partnerui.generic.googlepay.GooglePayMapper
 import eu.purse.dropin.payment.method.DisabledReason
 import eu.purse.dropin.payment.method.DropinPaymentMethod
 import eu.purse.dropin.payment.method.Method
 import eu.purse.dropin.payment.partner.Partner
 import eu.purse.dropin.vault.VaultVendor
+import org.json.JSONException
 import eu.purse.dropin_android.R
 import eu.purse.dropin_android.databinding.ItemPrimaryMethodBinding
 import eu.purse.dropin_android.databinding.ViewSecurefieldsFormBinding
@@ -45,6 +51,7 @@ internal class PrimaryMethodsView(
     private val onPrimaryValidChanged: (Boolean) -> Unit,
     private val onPrimarySubmitReady: (suspend () -> SubmitResult) -> Unit,
     private val onPaypalWallet: () -> Unit,
+    private val onGooglePay: () -> Unit,
 ) {
 
     // Per-method hooks that re-apply a recomputed disabled state to an already-rendered row/button in
@@ -91,21 +98,43 @@ internal class PrimaryMethodsView(
                 val buttonLayout = LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
                     if (offset == 1) marginStart = activity.dp(8)
                 }
-                // PayPal renders as the official branded PayPalButton (gold, PayPal wordmark) wired
-                // to the checkout flow. The other xpay methods (Google Pay) aren't implemented in
-                // this POC, so they stay plain, inert Material buttons.
-                val button: View = if (method.method == Method.Wallet && method.partner == Partner.Paypal) {
-                    PayPalButton(activity).apply {
-                        layoutParams = buttonLayout
-                        isEnabled = method.disabled == null
-                        setOnClickListener { onPaypalWallet() }
-                    }
-                } else {
-                    MaterialButton(activity).apply {
-                        text = methodTitle(method)
-                        isEnabled = method.disabled == null
-                        layoutParams = buttonLayout
-                    }
+                // PayPal renders as the official branded PayPalButton (gold, PayPal wordmark), and
+                // Google Pay as Google's own branded PayButton — both wired to their checkout
+                // flow. Any other xpay method stays a plain, inert Material button.
+                val button: View = when {
+                    method.method == Method.Wallet && method.partner == Partner.Paypal ->
+                        PayPalButton(activity).apply {
+                            layoutParams = buttonLayout
+                            isEnabled = method.disabled == null
+                            setOnClickListener { onPaypalWallet() }
+                        }
+                    method.method == Method.GooglePay ->
+                        PayButton(activity).apply {
+                            layoutParams = buttonLayout
+                            isEnabled = method.disabled == null
+                            // Chrome-only: the real per-session gateway config (gatewayMerchantId,
+                            // networks) only exists after `/init`, which runs on tap — see
+                            // DropinAndroid.createGooglePayRequest. This generic list is enough for
+                            // Google to decide how to render the button itself.
+                            try {
+                                initialize(
+                                    ButtonOptions.newBuilder()
+                                        .setButtonType(ButtonType.PAY)
+                                        .setButtonTheme(ButtonTheme.DARK)
+                                        .setAllowedPaymentMethods(GooglePayMapper.buttonAllowedPaymentMethodsJson().toString())
+                                        .build(),
+                                )
+                            } catch (e: JSONException) {
+                                // Leave the button uninitialized rather than crash the whole row.
+                            }
+                            setOnClickListener { onGooglePay() }
+                        }
+                    else ->
+                        MaterialButton(activity).apply {
+                            text = methodTitle(method)
+                            isEnabled = method.disabled == null
+                            layoutParams = buttonLayout
+                        }
                 }
                 // Let a later split recompute enable/disable this button in place.
                 disabledUpdaters[method.id] = { disabled -> button.isEnabled = disabled == null }

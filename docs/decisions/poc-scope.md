@@ -39,7 +39,7 @@ Drop-in is feasible — not a production-ready release.
 | Method | `protocols` key | Native mechanism | Depth | Redirect involved? |
 |---|---|---|---|---|
 | **CB** | `{partner}.creditcard` (`vault.vendor: "purse"`) | [SecureFields Android SDK](../integration/getting-started.md) (Maven) | **Full** — primary focus of this POC | No — SecureFields tokenizes in-app |
-| **Google Pay** | `{partner}.googlepay` | Google Pay API (`PaymentsClient`) | **Full** — required by acceptance criteria | No — Google Pay's sheet is a native dialog, not a redirect |
+| **Google Pay** | `{partner}.googlepay` | Google Pay API (`PaymentsClient`) — **implemented**, see [Partner: adyen](../partners/adyen.md#implemented-android) | **Full** — required by acceptance criteria | Not for the sheet itself — but `/validate` can chain a 3DS redirect (surfaced, not yet followed) |
 | **PayPal** | `paypal.wallet` | Custom Tabs / WebView redirect (see [Redirect Handling](../architecture/redirect-handling.md)) | **Starter** — end-to-end but not hardened | Yes — this is the open architectural question |
 | **Illicado** | `illicado.giftcard` | Native PAN + CVV form, no SDK | **Starter** — listed and capturable; full submit is a stretch goal | No |
 
@@ -60,9 +60,12 @@ platform pay sheet, redirect, plain form) side by side, not to fully productioni
   ([SDK-11769](https://upstreampay.atlassian.net/browse/SDK-11769)) purpose-built for this. It's
   the direct object of the POC's question ("réaliser un POC ... en m'appuyant sur le SDK Secure
   Fields Android existant").
-- **Google Pay** has no redirect and no Purse-specific SDK to build — it's Google's own
-  `PaymentsClient` API returning a token, then the existing generic `/init` + `/validate` calls.
-  Low incremental cost to take to "full" once CB and the session/protocols layer exist.
+- **Google Pay** has no redirect for its sheet and no Purse-specific SDK to build — it's Google's
+  own `PaymentsClient` API returning a token, then the existing generic `/init` + `/validate`
+  calls (its `/validate` can still chain a 3DS redirect, same as CB/PayPal — see [Redirect
+  Handling](../architecture/redirect-handling.md)). Low incremental cost to take to "full" once CB
+  and the session/protocols layer exist — now **implemented**, see [Partner:
+  adyen](../partners/adyen.md#implemented-android).
 - **PayPal** is the one method that requires a redirect out of the app and back — which is
   exactly the open question the ticket asks about. It gets "starter" depth: enough to exercise
   the redirect mechanism end-to-end, but see

@@ -12,6 +12,7 @@ securefields = "1.0.0"
 lifecycleRuntimeKtx = "2.10.0"
 coroutines = "1.10.2"
 paypalWebPayments = "2.3.0"
+playServicesWallet = "20.0.0"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -26,6 +27,7 @@ androidx-lifecycle-runtime-ktx = { group = "androidx.lifecycle", name = "lifecyc
 kotlinx-coroutines-android = { group = "org.jetbrains.kotlinx", name = "kotlinx-coroutines-android", version.ref = "coroutines" }
 paypal-web-payments = { group = "com.paypal.android", name = "paypal-web-payments", version.ref = "paypalWebPayments" }
 paypal-payment-buttons = { group = "com.paypal.android", name = "payment-buttons", version.ref = "paypalWebPayments" }
+play-services-wallet = { group = "com.google.android.gms", name = "play-services-wallet", version.ref = "playServicesWallet" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }

@@ -39,6 +39,11 @@ dependencies {
     // For the self-contained return Activity + ActivityResultContract.
     implementation(libs.androidx.appcompat)
 
+    // Google Pay: PaymentsClient, the branded PayButton, and the GetPaymentDataResult
+    // ActivityResultContract. `api` so the demo `:app` sees those types to render the button and
+    // register the launcher. See docs/partners/adyen.md.
+    api(libs.play.services.wallet)
+
     // org.json is provided by the Android platform at compile/runtime; tests pull in the real impl.
     testImplementation(libs.json)
     testImplementation(libs.junit)

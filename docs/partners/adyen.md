@@ -1,12 +1,15 @@
 # Partner: `adyen`
 
-Backs **Google Pay** (`googlepay`) in this POC.
+Backs **Google Pay** (`googlepay`) in this POC. **Implemented** end to end on Android using
+Google's own Google Pay API (`com.google.android.gms:play-services-wallet`) — no Purse-specific
+SDK, no redirect for the sheet itself.
 
 ---
 
 ## Table of Contents
 
 - [Role in this POC](#role-in-this-poc)
+- [Implemented (Android)](#implemented-android)
 - [Documentation](#documentation)
 - [Redirection study](#redirection-study)
 - [See also](#see-also)
@@ -23,6 +26,51 @@ plugin**, reused across any partner that offers `googlepay` (Adyen, or others) �
 `adyen-googlepay`-specific folder. Treat this page as documenting "Google Pay as currently wired
 in the reference implementation," which happens to be under Adyen in practice, not "something
 uniquely true of Adyen."
+
+## Implemented (Android)
+
+Built in `:partner-ui` (`eu.purse.dropin.partnerui.generic.googlepay`) as a **generic** package —
+mirroring web's `plugins/generics/googlepay` — reused across any partner offering `googlepay`, not
+an Adyen-specific one. Orchestrated by `:dropin`'s `DropinAndroid` and triggered from Google's own
+branded `PayButton` (`com.google.android.gms.wallet.button.PayButton`, rendered in the demo
+`:app`'s method list next to the PayPal button). The flow ports web's generic `googlepay` plugin
+(`getGooglePayConfiguration` + `onButtonClicked` in `usp-widget/packages/partner-ui/src/plugins/generics/googlepay`):
+
+1. **`/init`** — `DropinAndroid.createGooglePayRequest()` → `POST /init` for `adyen`/`googlepay`
+   (`GooglePayMapper.buildInitPayload`). Unlike PayPal's `client_id` (a session-level
+   `merchant_specifics` field), the gateway config needed for Google's `PaymentDataRequest` —
+   `gatewayMerchantId`, allowed card networks, merchant id/name — comes back from **this response**
+   (`plugin_result.logs.payment_methods`, an Adyen-specific JSON-encoded array; ports
+   `partners/adyen.ts`, with a `partners/default.ts`-style fallback for any other `googlepay`
+   partner reading `logs.payment_method_configuration`). This is the Google Pay analogue of
+   PayPal's `order_id`.
+2. **Sheet** — the app builds Google's `PaymentDataRequest` JSON from that config plus the
+   session's amount/currency (`GooglePayMapper.buildPaymentDataRequestJson`) and calls
+   `PaymentsClient.loadPaymentData()` (`GooglePayClient`, wrapping `Wallet.getPaymentsClient`) —
+   Google's own native payment sheet, no WebView. The result routes back via Google's own
+   `TaskResultContracts.GetPaymentDataResult` `ActivityResultContract`, registered in
+   `DropinActivity` — no custom return Activity or deep link needed, unlike PayPal's browser-switch.
+3. **`/validate`** — on success, `PaymentData.toJson()`'s `paymentMethodData.tokenizationData.token`
+   (plus the selected `cardNetwork`) is submitted via `DropinAndroid.validateGooglePay(...)` →
+   `POST /validate` (array body; ports web's `preValidation`/`getAdyenSession` shape: the token
+   travels as a JSON-encoded string in `partner_data.session`), reading `global_status` into a
+   `GooglePayValidationResult`.
+
+**No manifest work for the integrator:** the required
+`com.google.android.gms.wallet.api.enabled` meta-data ships in this module's own manifest and
+merges into the app.
+
+**Still open / not built here:**
+- The `/validate` response's chained 3-D Secure `redirection` (see [Redirection
+  study](#redirection-study) below) is surfaced (`GooglePayValidationResult.redirectionUrl`) but
+  not followed — same limitation as PayPal's `WalletValidationResult`, see [Redirect
+  Handling](../architecture/redirect-handling.md).
+- `countryCode` in the `PaymentDataRequest` isn't modeled anywhere in the session/
+  `MethodConfiguration` today; this port hardcodes `"FR"` (matching web's `partners/default.ts`)
+  rather than replicating web's Adyen variant, which reuses the UI locale for this field.
+- End-to-end tokenization is only exercisable on a device/emulator with Google Play services and a
+  test card configured; the unit tests cover the `/init`+`/validate` payload/parse contract
+  (`GooglePayMapperTest`).
 
 ## Documentation
 

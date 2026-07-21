@@ -6,13 +6,14 @@ Carte Bancaire (CB), Google Pay, PayPal, or Illicado, entirely with native UI �
 checkout page.
 
 > **Status: early POC, in progress.** The `:core`, `:partner-ui`, and `:dropin` SDK modules
-> (session decode + method model + payment splitter in `:dropin`; PayPal wallet in `:partner-ui`;
-> the Payment API client + environment in `:core`) and a working `:app` demo exist. PayPal (wallet)
-> pays end to end via the PayPal Android SDK; some pieces (card `/validate`, Google Pay, generic
-> redirect/3-D Secure) are still design-only. Each page states what's confirmed vs. still
-> open, and calls out what's implemented. See [POC scope](decisions/poc-scope.md) for what "done"
-> means for this ticket, and [Project Setup](internal/project-setup.md#still-to-do) for the current
-> build state.
+> (session decode + method model + payment splitter in `:dropin`; PayPal wallet and the generic
+> Google Pay flow in `:partner-ui`; the Payment API client + environment in `:core`) and a working
+> `:app` demo exist. PayPal (wallet) pays end to end via the PayPal Android SDK, and Google Pay
+> pays end to end via Google's own Google Pay API (`PaymentsClient`); some pieces (card
+> `/validate`, generic redirect/3-D Secure) are still design-only. Each page states what's
+> confirmed vs. still open, and calls out what's implemented. See [POC scope](decisions/poc-scope.md)
+> for what "done" means for this ticket, and [Project Setup](internal/project-setup.md#still-to-do)
+> for the current build state.
 
 The Drop-in mirrors the layered design of the existing web widget
 (`@upstreampay/dropin` → `@upstreampay/headless-checkout` → PSP plugins, in the sibling

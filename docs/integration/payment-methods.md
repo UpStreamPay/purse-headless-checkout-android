@@ -63,24 +63,42 @@ carries a `redirection` object that needs handling (see
 ## Google Pay (full)
 
 **`protocols.{partner}.googlepay`** (e.g. under `adyen`). No Purse-specific SDK — this is Google's
-own `PaymentsClient` API:
+own `PaymentsClient` API.
 
-1. Build a Google Pay `PaymentDataRequest` (allowed card networks derived the same way as CB's
-   `supported_brands`, plus Google Pay's own gateway token spec — typically
-   `gateway: "<the PSP behind this googlepay entry>"`, `gatewayMerchantId` from the session's
-   entity/merchant config).
-2. Call `PaymentsClient.loadPaymentData()` — this shows Google's native payment sheet; no
-   WebView, no redirect *for this step*.
-3. On success, `PaymentData.toJson()` contains a PSP-specific payment token (the Google Pay
-   token). Submit it as `payment_data` in `POST /init` for `method: "googlepay"`.
-4. Call `POST /validate`. **This step is confirmed, not just hypothetically, capable of
-   requiring a redirect** — the reference implementation's generic Google Pay plugin
+> **Implemented** in `:partner-ui` (`eu.purse.dropin.partnerui.generic.googlepay`, a **generic**
+> package reused across any partner offering `googlepay` — mirrors web's `plugins/generics/googlepay`)
+> — see [Partner: adyen](../partners/adyen.md#implemented-android). Summary of the native flow,
+> which turns out to mirror web's `getGooglePayConfiguration`/`onButtonClicked` (and, structurally,
+> PayPal wallet's own `/init`-then-approve-then-`/validate` shape) more closely than the order
+> below originally assumed:
+
+1. `POST /init` with `partner: "<the googlepay entry's partner, e.g. adyen>", method: "googlepay"`
+   (`GooglePayMapper.buildInitPayload`) — same call web makes from `getGooglePayConfiguration`.
+   The response's `plugin_result.logs.payment_methods` (Adyen; a JSON-encoded array — ports
+   `partners/adyen.ts`) or `logs.payment_method_configuration` (generic fallback; ports
+   `partners/default.ts`) carries the allowed card networks and Google Pay's own gateway token
+   spec — `gateway`, `gatewayMerchantId`, optional `merchantId`/`merchantName`. **This is the
+   Google Pay analogue of PayPal's `order_id`: the gateway config comes from the backend's `/init`
+   response, not a session-level `merchant_specifics` field** (unlike PayPal's `client_id`).
+2. Build a Google Pay `PaymentDataRequest` from that config plus the session's amount/currency
+   (`GooglePayMapper.buildPaymentDataRequestJson`) and call `PaymentsClient.loadPaymentData()`
+   (`GooglePayClient`) — this shows Google's native payment sheet; no WebView, no redirect *for
+   this step*. The result is resolved through Google's own `TaskResultContracts.GetPaymentDataResult`
+   `ActivityResultContract` — no custom return Activity, unlike PayPal's browser-switch.
+3. On success, `PaymentData.toJson()`'s `paymentMethodData.tokenizationData.token` (plus the
+   selected `cardNetwork`) is submitted as `partner_data.session`/`payment_data.card` in
+   `POST /validate` for `method: "googlepay"` (`GooglePayMapper.buildValidatePayload`/
+   `DropinAndroid.validateGooglePay`) — ports web's `preValidation`/`getAdyenSession`.
+4. **This step is confirmed, not just hypothetically, capable of requiring a redirect** — the
+   reference implementation's generic Google Pay plugin
    (`usp-widget/packages/partner-ui/src/plugins/generics/googlepay/index.ts`) already calls the
    redirect resolver on this response today, for a post-tokenization 3DS/SCA step-up. See
    [Partners — Adyen](../partners/adyen.md#redirection-study) for the code citation and what
    this means concretely: the [Redirect Handling](../architecture/redirect-handling.md) flow
    built for PayPal/CB applies to Google Pay's `/validate` call unchanged, and should not be
-   treated as an unlikely edge case.
+   treated as an unlikely edge case. This POC surfaces the chained redirect
+   (`GooglePayValidationResult.redirectionUrl`) without following it — the same starter-depth
+   limitation as PayPal's `WalletValidationResult`, since no generic redirect handler is built yet.
 
 ---
 

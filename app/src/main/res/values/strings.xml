@@ -41,6 +41,14 @@
     <string name="paypal_failed">PayPal failed: %1$s</string>
     <string name="paypal_error">PayPal error: %1$s</string>
 
+    <string name="googlepay_creating_request">Preparing Google Pay…</string>
+    <string name="googlepay_capturing">Confirming Google Pay payment…</string>
+    <string name="googlepay_success">Google Pay payment approved and captured.</string>
+    <string name="googlepay_declined">Google Pay payment not completed (status: %1$s).</string>
+    <string name="googlepay_canceled">Google Pay canceled.</string>
+    <string name="googlepay_failed">Google Pay failed: %1$s</string>
+    <string name="googlepay_error">Google Pay error: %1$s</string>
+
     <string name="method_amount_min">min %1$s</string>
     <string name="method_amount_max">max %1$s</string>
     <string name="method_no_methods">No payment methods available for this session.</string>

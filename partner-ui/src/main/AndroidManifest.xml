@@ -19,6 +19,16 @@
                 <data android:scheme="${applicationId}" />
             </intent-filter>
         </activity>
+
+        <!--
+          Declares Google Pay support for this app — required by the Google Pay API so it (and the
+          Play Store) know this app integrates it. Ships here, in :partner-ui, so the integrator
+          needs no manifest work of their own, same rationale as the PayPal return Activity above.
+          See docs/partners/adyen.md.
+        -->
+        <meta-data
+            android:name="com.google.android.gms.wallet.api.enabled"
+            android:value="true" />
     </application>
 
 </manifest>

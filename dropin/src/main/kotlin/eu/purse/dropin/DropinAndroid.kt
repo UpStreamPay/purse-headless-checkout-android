@@ -16,6 +16,9 @@ import eu.purse.dropin.session.SessionCodec
 import eu.purse.dropin.partnerui.partner.paypal.wallet.PaypalWalletMapper
 import eu.purse.dropin.partnerui.partner.paypal.wallet.WalletOrder
 import eu.purse.dropin.partnerui.partner.paypal.wallet.WalletValidationResult
+import eu.purse.dropin.partnerui.generic.googlepay.GooglePayMapper
+import eu.purse.dropin.partnerui.generic.googlepay.GooglePayRequest
+import eu.purse.dropin.partnerui.generic.googlepay.GooglePayValidationResult
 
 /**
  * Public entry point — decodes a Purse session and exposes its available payment methods.
@@ -103,6 +106,58 @@ class DropinAndroid private constructor(
     fun validatePaypal(stepId: String?): WalletValidationResult =
         PaypalWalletMapper.parseValidation(
             paymentApiClient().validate(PaypalWalletMapper.buildValidatePayload(session.amount, stepId)),
+        )
+
+    /**
+     * The partner backing this session's `googlepay` method (e.g. [Partner.Adyen]) — `null` when
+     * the session carries no Google Pay method. Google Pay has no dedicated Purse SDK: whichever
+     * partner offers `googlepay` in `protocols` is the gateway `/init`'s response configures
+     * against — see docs/partners/adyen.md.
+     */
+    val googlePayPartner: Partner?
+        get() = session.meansOfPayment.firstOrNull { it.method == Method.GooglePay }?.partner
+
+    /**
+     * Create the Google Pay request for this session's `googlepay` method — `POST /init`, then
+     * builds the `IsReadyToPayRequest`/`PaymentDataRequest` JSON from the response's gateway
+     * config. Mirrors web's `getGooglePayConfiguration`: unlike PayPal's `client_id`, Google Pay's
+     * `gatewayMerchantId` comes back from the backend's `/init` response itself, not a session
+     * field. Blocking network call — invoke off the main thread.
+     *
+     * @throws eu.purse.dropin.core.api.PaymentApiException on network/API failure, an unsuccessful
+     * init, or a response missing its gateway config.
+     * @throws IllegalStateException if this session carries no `googlepay` method.
+     */
+    fun createGooglePayRequest(): GooglePayRequest {
+        val partner = googlePayPartner ?: error("session carries no googlepay method")
+        val config = GooglePayMapper.parseInitConfig(
+            paymentApiClient().init(GooglePayMapper.buildInitPayload(session.amount, partner.wireValue)),
+            partner.wireValue,
+        )
+        return GooglePayRequest(
+            partnerWireValue = partner.wireValue,
+            isReadyToPayJson = GooglePayMapper.buildIsReadyToPayJson(config),
+            paymentDataRequestJson = GooglePayMapper.buildPaymentDataRequestJson(config, session.currency, session.amount),
+        )
+    }
+
+    /**
+     * Capture the Google Pay token — `POST /validate` for [partnerWireValue]/`googlepay`, carrying
+     * the token from the Google Pay sheet (`PaymentData`'s `tokenizationData.token`) and the
+     * [selectedNetwork] the shopper picked. Returns the [GooglePayValidationResult] (success + any
+     * chained 3DS redirect). Blocking — invoke off the main thread.
+     *
+     * @throws eu.purse.dropin.core.api.PaymentApiException on network/API failure.
+     */
+    fun validateGooglePay(
+        partnerWireValue: String,
+        googlePayToken: String,
+        selectedNetwork: String?,
+    ): GooglePayValidationResult =
+        GooglePayMapper.parseValidation(
+            paymentApiClient().validate(
+                GooglePayMapper.buildValidatePayload(session.amount, partnerWireValue, googlePayToken, selectedNetwork),
+            ),
         )
 
     /** A Payment API client scoped to this session (shared by the secondary + PayPal flows). */
