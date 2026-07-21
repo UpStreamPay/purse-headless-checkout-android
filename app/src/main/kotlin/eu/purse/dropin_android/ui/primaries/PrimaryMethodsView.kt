@@ -34,8 +34,11 @@ import eu.purse.securefields.config.SecureFieldsConfig
 import eu.purse.securefields.config.SecureFieldsFieldsConfig
 import eu.purse.securefields.config.VaultEnvironment
 import eu.purse.securefields.config.VaultFieldConfig
+import eu.purse.securefields.events.BrandDetectedPayload
+import eu.purse.securefields.events.BrandUserSelectionPayload
 import eu.purse.securefields.events.FormValidPayload
 import eu.purse.securefields.model.Brand
+import eu.purse.securefields.model.SubmitOptions
 import eu.purse.securefields.model.SubmitResult
 
 /**
@@ -49,7 +52,9 @@ import eu.purse.securefields.model.SubmitResult
 internal class PrimaryMethodsView(
     private val activity: AppCompatActivity,
     private val onPrimaryValidChanged: (Boolean) -> Unit,
-    private val onPrimarySubmitReady: (suspend () -> SubmitResult) -> Unit,
+    /** The suspend submit hook resolves to the tokenize result plus the resolved card scheme
+     * (e.g. `"CARTE_BANCAIRE"`) that was actually submitted for it — see [addSecureFieldsForm]. */
+    private val onPrimarySubmitReady: (suspend () -> Pair<SubmitResult, String?>) -> Unit,
     private val onPaypalWallet: () -> Unit,
     private val onGooglePay: () -> Unit,
 ) {
@@ -277,6 +282,13 @@ internal class PrimaryMethodsView(
             tenantId = dropin.vaultTenantId.orEmpty(),
             monitoringEnabled = false,
         )
+        // Tracks which brand to submit as, for a co-badged card (e.g. a French card that's both
+        // CB and VISA) — mirrors web vault-front's BrandSelection: default to the first brand
+        // SecureFields' own BIN lookup detects/matches, overridden if the shopper explicitly
+        // picks one (no brand-picker UI is built in this POC, so onBrandUserSelection is future
+        // -proofing rather than something reachable today — see docs/integration/payment-methods.md#cb-full).
+        var selectedBrand: Brand? = null
+
         // The form's validity is the primary's "valid" signal; the Activity's pay button (not a
         // per-form button) drives tokenization via the submit hook — mirroring web's single PayButton.
         sdk.addListener(object : SecureFieldsListener {
@@ -284,10 +296,47 @@ internal class PrimaryMethodsView(
                 cardFormValid = !payload.hasErrors
                 reportCardValidity()
             }
+            override fun onBrandDetected(payload: BrandDetectedPayload) {
+                selectedBrand = payload.brands.firstOrNull()
+            }
+            override fun onBrandNotDetected() {
+                selectedBrand = null
+            }
+            override fun onBrandUserSelection(payload: BrandUserSelectionPayload) {
+                selectedBrand = payload.selected
+            }
         })
         sdk.render()
-        onPrimarySubmitReady { sdk.submit() }
+        onPrimarySubmitReady {
+            // The resolved gateway scheme (e.g. "CARTE_BANCAIRE") — SecureFields' own `Brand` enum
+            // is a different, vault-internal vocabulary (e.g. `CB`) than what the Payment API's
+            // `selected_network` expects (matching session `vault.supported_brands`), so this
+            // needs its own conversion — see [toGatewayScheme].
+            val gatewayScheme = selectedBrand?.toGatewayScheme()
+            sdk.submit(SubmitOptions(selectedNetwork = gatewayScheme)) to gatewayScheme
+        }
         content.addView(form.root)
+    }
+
+    /**
+     * SecureFields' `Brand` (its own BIN-lookup vocabulary, e.g. `CB`/`AMEX`) → the gateway scheme
+     * string the Payment API expects for `payment_data.card.selected_network` (matching
+     * `MethodConfiguration.vault.supported_brands`, e.g. `"CARTE_BANCAIRE"`/`"AMERICAN_EXPRESS"`).
+     * Mirrors SecureFields Android's own internal (non-public) `schemeFor()` — see
+     * `vault-android/securefields/src/main/kotlin/eu/purse/securefields/internal/BrandDescription.kt`.
+     */
+    private fun Brand.toGatewayScheme(): String? = when (this) {
+        Brand.VISA -> "VISA"
+        Brand.MASTERCARD -> "MASTERCARD"
+        Brand.AMEX -> "AMERICAN_EXPRESS"
+        Brand.CB -> "CARTE_BANCAIRE"
+        Brand.DISCOVER -> "DISCOVER"
+        Brand.DINERS -> "DINERS_CLUB"
+        Brand.JCB -> "JCB"
+        Brand.MAESTRO -> "MAESTRO"
+        Brand.UNIONPAY -> "UNIONPAY"
+        Brand.ONEY -> "ONEY"
+        Brand.UNKNOWN -> null
     }
 
     /** The CB form is a usable primary only while it's both valid and still selectable. */

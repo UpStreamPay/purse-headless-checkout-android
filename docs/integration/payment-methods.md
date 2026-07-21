@@ -41,22 +41,31 @@ carries a `redirection` object that needs handling (see
 **`protocols.{partner}.creditcard`**, `vault.vendor: "purse"`. See
 [Getting Started](getting-started.md) for the full setup.
 
+> **Implemented** — `DropinAndroid.createCardInit()`/`validateCard(...)`, backed by
+> `eu.purse.dropin.partnerui.vault.purse.creditcard.CardMapper`, ports usp-widget's `purse` vault
+> bridge (`packages/partner-ui/src/plugins/vaults/purse/creditcard/bridge.ts`'s
+> `submitForResult`/`postValidate`) and the generic `plugins/generics/hostedfields` plugin it plugs
+> into. See [`DropinActivity.captureCard`](../../app/src/main/kotlin/eu/purse/dropin_android/DropinActivity.kt)
+> for the full flow below, wired end to end.
+
 1. Render SecureFields for the `creditcard` method's `supported_brands`
    ([Getting Started, Step 6](getting-started.md#step-6--initialize-securefields-for-that-method)).
 2. Call `secureFields.submit()`. On `SubmitResult.Success`, you get `vaultFormToken` and a
    `CardInfo` (BIN, detected brands, last four) — never the raw PAN or CVV. This is a call to
    SecureFields' own Vault tokenization endpoint (`/forms/secure-fields`), **separate from** the
    Drop-in's `/init`/`/validate` pair.
-3. Call the Drop-in's `POST /init` with `partner`/`method` for this entry and
-   `payment_data: { card: { vault_token: vaultFormToken } }` (exact field name to confirm against
-   the Orchestration API's card-payment schema for vault-backed tokens — the web codebase's
-   PSP-hosted (`pci_proxy`) card flow uses a differently-shaped `payment_data.card` object since it
-   never goes through a separate vault tokenization step; the `purse`-vendor shape doesn't have a
-   web precedent to copy verbatim since web's own vault-backed card capture uses the same
-   vault-front SDK inline, not a separate token hand-off).
-4. Call `POST /validate`. A CB payment normally resolves synchronously unless 3DS is triggered, in
-   which case handle the response's `redirection` object per
-   [Redirect Handling](../architecture/redirect-handling.md).
+3. Call the Drop-in's `POST /init` with `partner`/`method` for this entry — no card data yet
+   (mirrors web's `onSessionSet`, though this port times the call right after tokenization instead
+   of at session-render time); the response's `step_id` carries into step 4.
+4. Call `POST /validate` with **`payment_data.vault_vendor_token_id` set at the top level of
+   `payment_data` — not nested under `payment_data.card`** (a field name/shape confirmed by reading
+   `purseCreditCardBridge.submitForResult` + `handleExternal3ds` in
+   `usp-widget/packages/partner-ui/src/plugins/vaults/purse/creditcard/{bridge,utils}.ts`; an
+   earlier draft of this doc assumed `payment_data.card.vault_token`, which is wrong). `payment_data.card.bin`/`selected_network`
+   carry the non-sensitive metadata from `CardInfo`. A CB payment normally resolves synchronously
+   unless 3DS is triggered, in which case handle the response's `redirection` object per
+   [Redirect Handling](../architecture/redirect-handling.md) — surfaced today
+   (`CardValidationResult.redirectionUrl`) but not auto-followed, same as PayPal/Google Pay.
 
 ---
 

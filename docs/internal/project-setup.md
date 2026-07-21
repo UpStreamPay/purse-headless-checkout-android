@@ -275,21 +275,15 @@ cases), `PaymentSplitterTest` (the split math: fresh/partial/accumulating/over-c
 
 ## Still to do
 
-Already built: the `:core` Payment API client (`/init` + `/validate`), `:app` wired to `:dropin`,
-the Internet permission, a working demo harness (`MainActivity` + `DropinActivity`, View system),
-**CB card capture via the SecureFields Android SDK**, **PayPal (wallet) via the official PayPal
-Android SDK** (`/init` → approval → `/validate`, in `:partner-ui`), a **pay button** driven by
+Already built: the `:core` Payment API client (`/init` + `/validate` + `GET` session), `:app` wired
+to `:dropin`, the Internet permission, a working demo harness (`MainActivity` + `DropinActivity`,
+View system), **CB card capture + full `/init`+`/validate` submission** via the SecureFields
+Android SDK + `eu.purse.dropin.partnerui.vault.purse.creditcard.CardMapper`, **PayPal (wallet) via
+the official PayPal Android SDK** (`/init` → approval → `/validate`, in `:partner-ui`), **Google
+Pay** via `GooglePayMapper` (`/init` → sheet → `/validate`), a **pay button** driven by
 `PaymentSplitter`, and the `:core` / `:partner-ui` / `:dropin` module split with a domain-shaped
 package layout. `securefields-android`, `lifecycle-runtime-ktx`, `kotlinx-coroutines-android`, and
 `paypal-web-payments` are in `libs.versions.toml`. Still unbuilt:
-
-- **Card `/validate`** — the card pay button captures/tokenizes via SecureFields, but the `/init` +
-  `/validate` submission that turns that token into an authorized card payment isn't wired (PayPal
-  already exercises the `/validate` client). See
-  [Session & Protocols](../architecture/session-and-protocols.md#init-and-validate).
-- **Google Pay coordinator** — `PaymentsClient` (Google Pay) isn't built; its xpay button stays
-  inert. CB (SecureFields), the Illicado secondary `/init`, and PayPal (wallet) are wired today. See
-  [Payment Methods](../integration/payment-methods.md).
 - **Generic redirect / 3-D Secure** — PayPal uses its own SDK browser-switch, but a generic
   `DropinRedirectionHandler` (Custom Tabs / WebView) for `integration_mode: "redirection"` methods
   and chained `/validate` `redirection` (3DS) responses isn't built. PayPal's own `return_url` →

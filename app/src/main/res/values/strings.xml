@@ -13,8 +13,6 @@
     <string name="btn_init_dropin">Initialize Dropin SDK</string>
     <string name="error_required">Required</string>
 
-    <string name="result_header_session">Session:</string>
-
     <string name="dropin_title">Drop-in</string>
     <string name="section_payment_method">Payment method</string>
     <string name="section_secondaries">Gift cards and loyalty account</string>
@@ -29,8 +27,11 @@
     <string name="pay_button">Pay %1$s %2$s</string>
     <string name="pay_processing">Processing…</string>
     <string name="pay_secondaries_cover">Amount fully covered by gift cards. Submitting the payment (/validate) isn\'t wired in this POC yet.</string>
-    <string name="pay_primary_ok">Card tokenized (%1$s). Submitting the payment (/validate) isn\'t wired in this POC yet.</string>
     <string name="pay_primary_error">Payment failed: %1$s</string>
+    <string name="pay_card_capturing">Confirming card payment…</string>
+    <string name="pay_card_success">Card payment approved and captured.</string>
+    <string name="pay_card_declined">Card payment not completed (status: %1$s).</string>
+    <string name="pay_card_error">Card payment error: %1$s</string>
 
     <string name="paypal_no_client_id">PayPal isn\'t configured for this session (no client_id).</string>
     <string name="paypal_creating_order">Creating PayPal order…</string>
@@ -40,6 +41,13 @@
     <string name="paypal_canceled">PayPal payment canceled.</string>
     <string name="paypal_failed">PayPal failed: %1$s</string>
     <string name="paypal_error">PayPal error: %1$s</string>
+
+    <string name="alfred_session_id_hint">Session id (for alfred\'s GET /payment_session)</string>
+    <string name="get_session_via_alfred">Get Transactions</string>
+    <string name="alfred_session_fetching">Fetching via alfred…</string>
+    <string name="alfred_session_result">alfred GET /payment_session/%1$s:</string>
+    <string name="alfred_session_error">alfred error: %1$s</string>
+    <string name="alfred_session_id_required">Enter a session id first</string>
 
     <string name="googlepay_creating_request">Preparing Google Pay…</string>
     <string name="googlepay_capturing">Confirming Google Pay payment…</string>

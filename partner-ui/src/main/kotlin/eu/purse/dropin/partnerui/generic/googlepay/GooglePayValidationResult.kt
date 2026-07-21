@@ -11,9 +11,14 @@ package eu.purse.dropin.partnerui.generic.googlepay
  * auto-following it: no generic redirect handler is built yet (see
  * docs/architecture/redirect-handling.md). A native caller would open it (Custom Tab) and
  * re-validate once that lands.
+ *
+ * [rawResponse] is the full `/validate` response, pretty-printed — surfaced so an integrator (or
+ * this POC's own demo app) can inspect the real `results`/`redirection`/`global_status` shape
+ * during testing, rather than only the fields this mapper currently parses out.
  */
 data class GooglePayValidationResult(
     val isSuccess: Boolean,
     val globalStatus: String,
     val redirectionUrl: String?,
+    val rawResponse: String,
 )

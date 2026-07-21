@@ -467,16 +467,15 @@ shape:
 Response includes `plugin_result.logs` (method-specific — e.g. a PayPal `order_id`, or redirect
 data — see [Redirect Handling](redirect-handling.md)) and a call-level `status`.
 
-> **Amount units — still unverified.** `SecondaryTokenMapper.buildInitPayload` currently sends
-> `session.amount` **as-is** (a major-unit decimal — the same unit `PurseSessionParams` decodes,
-> e.g. `payment_min_amount: 0.01`), matching what web passes (`paymentSplitter.primaryReach`).
-> Note that web's `fromCents`/`toCents` round-trip in the splitter is **unit-preserving**, so it
-> does *not* by itself prove the absolute unit — and web's derived `PaymentSession.amountCts`
-> multiplies by **1000**, not 100 (`amountCts: Math.floor((legacySession.amount ?? 0) * 1000)` in
-> `usp-widget/packages/headless-checkout/src/session/payment/utils.ts`). That field isn't used in
-> any `/init`/`/validate` body here, but the mismatch means the exact amount encoding the API
-> expects is **not confirmed**. Verify against a real `/init` round-trip / with the backend team
-> before relying on it; if the API wants integer cents, adjust `buildInitPayload`.
+> **Amount units — resolved.** `SecondaryTokenMapper.buildInitPayload` sends `session.amount`
+> **as-is** (a major-unit decimal — the same unit `PurseSessionParams` decodes, e.g.
+> `payment_min_amount: 0.01`), matching what web passes (`paymentSplitter.primaryReach`). This is
+> confirmed correct: Purse's own published [Payment API v1
+> spec](https://docs.purse.tech/openapi/payment-api-v1) (the API generation `/init`/`/validate`
+> belong to — see [Pain Points Recap, point
+> 10](../decisions/pain-points-recap.md)) gives major-unit decimal examples (`"amount": 199.99`).
+> Note this is v1-specific: the current, non-deprecated **v2** API (`/v2/payments`) uses **minor
+> units/cents** instead (`4299` = €42.99) — a different convention, not a mistake in either spec.
 
 `/validate` is called once the shopper has completed whatever the method needs (nothing further
 for CB/Illicado, PayPal approval for PayPal, a 3DS challenge if triggered). It accepts an array —
@@ -490,6 +489,20 @@ primary in a single payment ("split"):
   "global_status": "SUCCESS"
 }
 ```
+
+**Implemented** — `GET /{entityId}/sessions/{sessionId}` (no request body) is a fourth call this
+POC's SDK now exposes: `PaymentApiClient.getSession()` / `DropinAndroid.getSessionTransactions()`.
+It returns a JSON array of every transaction (`/init`/`/validate` call) made against the session so
+far, each with its own `status`. Purse's own published [simple-payment
+tutorial](https://docs.purse.tech/docs/integrate/purse-api/tutorials/simple-payment) calls this
+out as the pattern to follow after a capture: don't trust a locally-held `/validate` result alone,
+re-query the session as the source of truth. `:app` doesn't wire this SDK method into the checkout
+flow automatically (it was tried and reverted — displaying it after every capture cluttered the
+payment-status UI); instead `DropinActivity` ships a standalone debug tool, mirroring
+`usp-widget`'s own demo confirmation page, that calls the **same endpoint via alfred**
+(`GET {alfredBaseUrl}/payment_session/{id}` — see [Testing with
+alfred](../internal/testing-with-alfred.md)) for an arbitrary session id, independent of any
+payment made in the app.
 
 ---
 

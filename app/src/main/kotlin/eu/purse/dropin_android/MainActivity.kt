@@ -26,6 +26,12 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
 
+    // The orchestration session's own top-level `id` (the v2 ClientSession id `POST
+    // /orchestration_session` itself returns — distinct from `widget.data`'s `payment_session.id`,
+    // see docs/decisions/pain-points-recap.md) — kept around only so DropinActivity's alfred debug
+    // tool has a sensible default to fall back to, mirroring usp-widget's demo confirmation page.
+    private var lastOrchestrationSessionId: String? = null
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -66,8 +72,9 @@ class MainActivity : AppCompatActivity() {
                 // fromLegacyOrder on its request body itself, so we post the unwrapped legacy order.
                 val orderResponse = httpGet("$baseUrl/order")
                 val legacyOrder = JSONObject(orderResponse).getJSONObject("order")
-                val sessionResponse = httpPost("$baseUrl/orchestration_session", legacyOrder.toString())
-                val widgetData = JSONObject(sessionResponse).getJSONObject("widget").getString("data")
+                val sessionResponse = JSONObject(httpPost("$baseUrl/orchestration_session", legacyOrder.toString()))
+                val widgetData = sessionResponse.getJSONObject("widget").getString("data")
+                lastOrchestrationSessionId = sessionResponse.optString("id").takeIf { it.isNotBlank() }
                 runOnUiThread {
                     binding.widgetDataInput.setText(widgetData)
                     binding.widgetDataLayout.error = null
@@ -95,6 +102,7 @@ class MainActivity : AppCompatActivity() {
         startActivity(
             Intent(this, DropinActivity::class.java)
                 .putExtra(DropinActivity.EXTRA_WIDGET_DATA, widgetData)
+                .putExtra(DropinActivity.EXTRA_ORCHESTRATION_SESSION_ID, lastOrchestrationSessionId)
         )
     }
 

@@ -36,35 +36,58 @@ class PaymentApiClient(
      */
     fun validate(payload: JSONArray): JSONObject = post("/validate", payload.toString())
 
+    /**
+     * `GET /{entityId}/sessions/{sessionId}` — every transaction (`/init`/`/validate` call) made
+     * so far against this session, each with its own `status`. This is the source of truth to
+     * re-query after a capture rather than trusting a locally-held `/validate` result alone —
+     * confirmed against Purse's own published spec/tutorial (see
+     * https://docs.purse.tech/docs/integrate/purse-api/tutorials/simple-payment and
+     * docs/architecture/session-and-protocols.md#init-and-validate).
+     */
+    fun getSession(): JSONArray {
+        val responseBody = execute("GET", path = "", body = null)
+        return try {
+            JSONArray(responseBody)
+        } catch (e: JSONException) {
+            throw PaymentApiException("Payment API GET session returned non-JSON: ${e.message}", e)
+        }
+    }
+
     private fun post(path: String, body: String): JSONObject {
+        val responseBody = execute("POST", path, body)
+        return try {
+            JSONObject(responseBody)
+        } catch (e: JSONException) {
+            throw PaymentApiException("Payment API $path returned non-JSON: ${e.message}", e)
+        }
+    }
+
+    private fun execute(method: String, path: String, body: String?): String {
         val url = "$root/$entityId/sessions/$sessionId$path"
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            requestMethod = "POST"
+            requestMethod = method
             connectTimeout = 15_000
             readTimeout = 15_000
-            doOutput = true
-            setRequestProperty("Content-Type", "application/json")
             setRequestProperty("x-api-key", apiKey)
+            if (body != null) {
+                doOutput = true
+                setRequestProperty("Content-Type", "application/json")
+            }
         }
-        val body = try {
-            connection.outputStream.use { it.write(body.toByteArray()) }
+        return try {
+            body?.let { payload -> connection.outputStream.use { it.write(payload.toByteArray()) } }
             // Web's FetchPaymentAPI treats status < 400 as success.
             val code = connection.responseCode
             val stream = if (code < 400) connection.inputStream else connection.errorStream
             val responseBody = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (code >= 400) {
-                throw PaymentApiException("Payment API $path failed: HTTP $code $responseBody")
+                throw PaymentApiException("Payment API $method $path failed: HTTP $code $responseBody")
             }
             responseBody
         } catch (e: IOException) {
-            throw PaymentApiException("Payment API $path failed: ${e.message}", e)
+            throw PaymentApiException("Payment API $method $path failed: ${e.message}", e)
         } finally {
             connection.disconnect()
-        }
-        return try {
-            JSONObject(body)
-        } catch (e: JSONException) {
-            throw PaymentApiException("Payment API $path returned non-JSON: ${e.message}", e)
         }
     }
 }

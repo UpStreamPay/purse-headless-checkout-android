@@ -19,6 +19,11 @@ import eu.purse.dropin.partnerui.partner.paypal.wallet.WalletValidationResult
 import eu.purse.dropin.partnerui.generic.googlepay.GooglePayMapper
 import eu.purse.dropin.partnerui.generic.googlepay.GooglePayRequest
 import eu.purse.dropin.partnerui.generic.googlepay.GooglePayValidationResult
+import eu.purse.dropin.partnerui.vault.purse.creditcard.CardInit
+import eu.purse.dropin.partnerui.vault.purse.creditcard.CardMapper
+import eu.purse.dropin.partnerui.vault.purse.creditcard.CardValidationResult
+import eu.purse.dropin.vault.VaultVendor
+import org.json.JSONArray
 
 /**
  * Public entry point — decodes a Purse session and exposes its available payment methods.
@@ -159,6 +164,62 @@ class DropinAndroid private constructor(
                 GooglePayMapper.buildValidatePayload(session.amount, partnerWireValue, googlePayToken, selectedNetwork),
             ),
         )
+
+    /**
+     * The session's `creditcard` method backed by Purse's own vault (`vault.vendor == "purse"`) —
+     * the one CB targets, per docs/integration/getting-started.md#step-5. `null` when absent.
+     */
+    val cardMethod: DropinPaymentMethod?
+        get() = session.meansOfPayment.firstOrNull {
+            it.method == Method.CreditCard && it.configuration.vault?.vendor == VaultVendor.PURSE
+        }
+
+    /**
+     * Register the card method for this session — `POST /init` for [cardMethod]'s partner/
+     * `creditcard` — returning the [CardInit] (just a `step_id`) to carry into [validateCard].
+     * Mirrors web's `onSessionSet` init call, timed here to run right after SecureFields
+     * tokenizes instead — see [eu.purse.dropin.partnerui.vault.purse.creditcard.CardMapper].
+     * Blocking network call — invoke off the main thread.
+     *
+     * @throws eu.purse.dropin.core.api.PaymentApiException on network/API failure or an unsuccessful init.
+     * @throws IllegalStateException if this session carries no purse-vault `creditcard` method.
+     */
+    fun createCardInit(): CardInit {
+        val partner = cardMethod?.partner ?: error("session carries no purse-vault creditcard method")
+        return CardMapper.parseInit(paymentApiClient().init(CardMapper.buildInitPayload(session.amount, partner.wireValue)))
+    }
+
+    /**
+     * Capture the tokenized card — `POST /validate` for [cardMethod]'s partner/`creditcard`,
+     * carrying the SecureFields vault token ([vaultVendorTokenId], from
+     * `SubmitResult.Success.vaultFormToken`), its non-sensitive metadata ([bin]/[selectedNetwork],
+     * from `SubmitResult.Success.card`), and the [stepId] from [createCardInit]. Returns the
+     * [CardValidationResult] (success + any chained 3DS redirect). Blocking — invoke off the main
+     * thread.
+     *
+     * @throws eu.purse.dropin.core.api.PaymentApiException on network/API failure.
+     * @throws IllegalStateException if this session carries no purse-vault `creditcard` method.
+     */
+    fun validateCard(vaultVendorTokenId: String, bin: String?, selectedNetwork: String?, stepId: String?): CardValidationResult {
+        val partner = cardMethod?.partner ?: error("session carries no purse-vault creditcard method")
+        return CardMapper.parseValidation(
+            paymentApiClient().validate(
+                CardMapper.buildValidatePayload(session.amount, partner.wireValue, vaultVendorTokenId, bin, selectedNetwork, stepId),
+            ),
+        )
+    }
+
+    /**
+     * Re-query this session's transactions — `GET /{entityId}/sessions/{sessionId}` — one entry
+     * per `/init`/`/validate` call made so far, each with its own `status`. This is the source of
+     * truth to check after a capture rather than trusting a locally-held `/validate` result alone,
+     * per Purse's own published guidance:
+     * https://docs.purse.tech/docs/integrate/purse-api/tutorials/simple-payment. Blocking network
+     * call — invoke off the main thread.
+     *
+     * @throws eu.purse.dropin.core.api.PaymentApiException on network/API failure.
+     */
+    fun getSessionTransactions(): JSONArray = paymentApiClient().getSession()
 
     /** A Payment API client scoped to this session (shared by the secondary + PayPal flows). */
     private fun paymentApiClient(): PaymentApiClient = PaymentApiClient(

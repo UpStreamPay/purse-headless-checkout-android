@@ -34,10 +34,16 @@ import eu.purse.dropin_android.ui.components.sectionTitle
 import eu.purse.dropin_android.ui.primaries.PrimaryMethodsView
 import eu.purse.dropin_android.ui.secondaries.SecondaryMethodsView
 import eu.purse.securefields.model.SubmitResult
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONException
 import org.json.JSONObject
+import java.io.IOException
 import java.math.BigDecimal
+import java.net.HttpURLConnection
+import java.net.URL
+import java.util.Base64
 
 /**
  * The Drop-in page: decodes the `widget.data` handed over by [MainActivity], groups the session's
@@ -61,7 +67,7 @@ class DropinActivity : AppCompatActivity() {
     private var split = PaymentSplitter(BigDecimal.ZERO)
     private var currency: String = ""
     private var primaryValid: Boolean = false
-    private var primarySubmit: (suspend () -> SubmitResult)? = null
+    private var primarySubmit: (suspend () -> Pair<SubmitResult, String?>)? = null
 
     // The active decoded session, plus the PayPal handoff state — the init's step_id links the
     // /init that created the order to the /validate that captures it.
@@ -121,18 +127,90 @@ class DropinActivity : AppCompatActivity() {
             binding.sessionSummaryText.text = getString(R.string.session_error, e.message)
             binding.dropinContainer.removeAllViews()
         }
+
+        // Debug tool mirroring usp-widget's demo confirmation page — see [getSessionViaAlfred].
+        binding.alfredSessionIdInput.setText(resolveDefaultAlfredSessionId(widgetData))
+        binding.getSessionViaAlfredButton.setOnClickListener { getSessionViaAlfred() }
     }
 
-    private fun renderSession(dropin: DropinAndroid) {
-        binding.sessionSummaryText.text = buildString {
-            appendLine(getString(R.string.result_header_session))
-            appendLine("  id: ${dropin.session.id}")
-            appendLine("  amount: ${dropin.session.amount} ${dropin.session.currency}")
-            appendLine("  isInformationRequest: ${dropin.isInformationRequest}")
-            appendLine("  vaultTenantId: ${dropin.vaultTenantId}")
-            appendLine("  entityId: ${dropin.sessionParams.entityId}")
-            append("  apiRoot: ${dropin.paymentApiRoot}")
+    /**
+     * Mirrors `resolveDefaultSessionId` in `usp-widget/sites/demo/src/routes/widgets/confirmation/+page.svelte`:
+     * prefer a `legacy_payment_session_id` field on the decoded `widget.data` blob (a field this
+     * POC's own `SessionCodec` doesn't model — it isn't in the SDK's published types either, see
+     * docs/decisions/pain-points-recap.md) and fall back to the *orchestration* session's own `id`
+     * (`POST /orchestration_session`'s top-level `id` — the v2 ClientSession id, distinct from
+     * `payment_session.id`, which this function deliberately does **not** fall back to, matching
+     * the reference page). Empty if neither is available — the field stays editable either way.
+     */
+    private fun resolveDefaultAlfredSessionId(widgetData: String): String {
+        val legacyId = try {
+            val decoded = String(Base64.getDecoder().decode(widgetData), Charsets.UTF_8)
+            JSONObject(decoded).optStringOrNull("legacy_payment_session_id")
+        } catch (e: Exception) {
+            null
         }
+        return legacyId ?: intent.getStringExtra(EXTRA_ORCHESTRATION_SESSION_ID).orEmpty()
+    }
+
+    /**
+     * The alfred call the reference confirmation page's "Get Transactions" button makes:
+     * `GET {alfredBaseUrl}/payment_session/{id}`, which alfred forwards to the real Payment API's
+     * `GET /{entity}/sessions/{session}` using its own server-side credentials — see
+     * `usp-widget/packages/alfred/routes/payment.mjs` + `services/fetcher.mjs`. The session id is
+     * whatever is currently typed into the field (editable, not necessarily this Activity's own
+     * session). Result renders in its own view directly below the row, not in [showPayStatus].
+     */
+    private fun getSessionViaAlfred() {
+        val sessionId = binding.alfredSessionIdInput.text?.toString()?.trim().orEmpty()
+        if (sessionId.isEmpty()) {
+            showAlfredResult(getString(R.string.alfred_session_id_required))
+            return
+        }
+        showAlfredResult(getString(R.string.alfred_session_fetching))
+        Thread {
+            try {
+                val response = alfredHttpGet("${alfredBaseUrl()}/payment_session/$sessionId")
+                val pretty = JSONObject(response).toString(2)
+                runOnUiThread { showAlfredResult("${getString(R.string.alfred_session_result, sessionId)}\n$pretty") }
+            } catch (e: Exception) {
+                runOnUiThread { showAlfredResult(getString(R.string.alfred_session_error, e.message)) }
+            }
+        }.start()
+    }
+
+    private fun showAlfredResult(text: String) {
+        binding.alfredSessionResult.text = text
+        binding.alfredSessionResult.isVisible = true
+    }
+
+    /** Same env-driven base URL as [MainActivity.alfredBaseUrl] — see docs/internal/testing-with-alfred.md. */
+    private fun alfredBaseUrl(): String =
+        BuildConfig.ALFRED_BASE_URL.trim().trimEnd('/').takeIf { it.isNotBlank() }
+            ?: "http://10.0.2.2:9001"
+
+    private fun alfredHttpGet(urlString: String): String {
+        val connection = URL(urlString).openConnection() as HttpURLConnection
+        connection.requestMethod = "GET"
+        connection.connectTimeout = 10_000
+        connection.readTimeout = 10_000
+        return try {
+            val code = connection.responseCode
+            val stream = if (code in 200..299) connection.inputStream else connection.errorStream
+            val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
+            if (code !in 200..299) throw IOException("HTTP $code from $urlString: $body")
+            body
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun JSONObject.optStringOrNull(name: String): String? =
+        if (has(name) && !isNull(name)) getString(name) else null
+
+    private fun renderSession(dropin: DropinAndroid) {
+        // Hidden by default — this raw session dump is debug-only noise for the checkout UI; the
+        // pay/PayPal/Google Pay/Get Transactions buttons below are unaffected.
+        binding.sessionSummaryText.isVisible = false
 
         // Reset payment state for this session (a fresh splitter owes the full amount).
         split = PaymentSplitter(dropin.session.amount)
@@ -220,19 +298,57 @@ class DropinActivity : AppCompatActivity() {
             return
         }
         val submit = primarySubmit ?: return
+        val dropin = activeDropin ?: return
         if (!primaryValid) return
         binding.payButton.isEnabled = false
         showPayStatus(getString(R.string.pay_processing))
-        // Capture the card (tokenize). The subsequent /init + /validate submission isn't built yet.
         lifecycleScope.launch {
-            when (val result = submit()) {
-                is SubmitResult.Success ->
-                    showPayStatus(getString(R.string.pay_primary_ok, result.vaultFormToken))
+            val (result, selectedNetwork) = submit()
+            when (result) {
+                is SubmitResult.Success -> captureCard(dropin, result, selectedNetwork)
                 is SubmitResult.Error -> {
                     showPayStatus(getString(R.string.pay_primary_error, result.message))
                     updatePayState()
                 }
             }
+        }
+    }
+
+    /**
+     * CB, steps 2–3 after SecureFields tokenizes: `/init` (registers the method, returns a
+     * `step_id`) then `/validate` (carrying the vault token) — mirrors usp-widget's `purse` vault
+     * bridge (`packages/partner-ui/src/plugins/vaults/purse/creditcard/bridge.ts`'s
+     * `submitForResult`/`postValidate`), simplified to run both calls right after tokenization
+     * instead of `/init` at session-render time — see
+     * [eu.purse.dropin.partnerui.vault.purse.creditcard.CardMapper]. [selectedNetwork] is the same
+     * resolved gateway scheme (e.g. `"CARTE_BANCAIRE"`) already submitted to SecureFields' own
+     * tokenization call — see [PrimaryMethodsView.addSecureFieldsForm], **not**
+     * `tokenized.card?.detectedBrands` (a co-badged card can match more than one brand; that list
+     * is what's detected, not necessarily what's resolved/submitted). A chained 3-D Secure redirect
+     * (`CardValidationResult.redirectionUrl`) isn't followed in this POC — same limitation as
+     * PayPal/Google Pay, see docs/architecture/redirect-handling.md.
+     */
+    private suspend fun captureCard(dropin: DropinAndroid, tokenized: SubmitResult.Success, selectedNetwork: String?) {
+        showPayStatus(getString(R.string.pay_card_capturing))
+        try {
+            val result = withContext(Dispatchers.IO) {
+                val stepId = dropin.createCardInit().stepId
+                dropin.validateCard(
+                    vaultVendorTokenId = tokenized.vaultFormToken,
+                    bin = tokenized.card?.bin,
+                    selectedNetwork = selectedNetwork,
+                    stepId = stepId,
+                )
+            }
+            if (result.isSuccess) {
+                showPayStatus(getString(R.string.pay_card_success))
+            } else {
+                showPayStatus(getString(R.string.pay_card_declined, result.globalStatus))
+                updatePayState()
+            }
+        } catch (e: Exception) {
+            showPayStatus(getString(R.string.pay_card_error, e.message))
+            updatePayState()
         }
     }
 
@@ -288,11 +404,12 @@ class DropinActivity : AppCompatActivity() {
             try {
                 val result = dropin.validatePaypal(paypalStepId)
                 runOnUiThread {
-                    if (result.isSuccess) {
-                        showPayStatus(getString(R.string.paypal_success))
+                    val summary = if (result.isSuccess) {
+                        getString(R.string.paypal_success)
                     } else {
-                        showPayStatus(getString(R.string.paypal_declined, result.globalStatus))
+                        getString(R.string.paypal_declined, result.globalStatus)
                     }
+                    showPayStatus(summary)
                 }
             } catch (e: Exception) {
                 runOnUiThread { showPayStatus(getString(R.string.paypal_error, e.message)) }
@@ -360,11 +477,12 @@ class DropinActivity : AppCompatActivity() {
             try {
                 val result = dropin.validateGooglePay(partnerWire, token, selectedNetwork)
                 runOnUiThread {
-                    if (result.isSuccess) {
-                        showPayStatus(getString(R.string.googlepay_success))
+                    val summary = if (result.isSuccess) {
+                        getString(R.string.googlepay_success)
                     } else {
-                        showPayStatus(getString(R.string.googlepay_declined, result.globalStatus))
+                        getString(R.string.googlepay_declined, result.globalStatus)
                     }
+                    showPayStatus(summary)
                 }
             } catch (e: Exception) {
                 runOnUiThread { showPayStatus(getString(R.string.googlepay_error, e.message)) }
@@ -392,6 +510,11 @@ class DropinActivity : AppCompatActivity() {
 
     companion object {
         const val EXTRA_WIDGET_DATA = "widget_data"
+
+        /** The orchestration session's own `id`, passed by [MainActivity] — see
+         * [resolveDefaultAlfredSessionId]. Absent when `widget.data` was pasted in by hand rather
+         * than minted via "Create session". */
+        const val EXTRA_ORCHESTRATION_SESSION_ID = "orchestration_session_id"
 
         /** Methods the POC actually implements — everything else is filtered out of the list. */
         private val SUPPORTED_METHODS = setOf(

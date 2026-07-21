@@ -239,6 +239,7 @@ object GooglePayMapper {
             isSuccess = globalStatus.equals("SUCCESS", ignoreCase = true),
             globalStatus = globalStatus,
             redirectionUrl = redirectionUrl,
+            rawResponse = data.toString(2),
         )
     }
 

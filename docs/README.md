@@ -67,12 +67,29 @@ endpoints, and the three layers of status/lifecycle state.
 
 ---
 
+## I want a sequence diagram for each payment method
+
+**[Payment Flow Diagrams](architecture/payment-flows.md)** — a Mermaid sequence diagram per
+handled method (CB, Google Pay, PayPal, Illicado), showing what's implemented today vs. what a
+redirect/3DS branch would still need.
+
+---
+
 ## I need to handle PayPal or 3DS redirects
 
 **[Redirect Handling](architecture/redirect-handling.md)** — answers the open question from
 SDK-12039 ("comment gérer la redirection (intent)"): the web's generic redirect contract, and
 the Android-native translation (Custom Tabs vs. WebView) with what still needs backend
 confirmation.
+
+---
+
+## I want the recap of pain points and what's still genuinely unresolved
+
+**[Pain Points Recap](decisions/pain-points-recap.md)** — a consolidated retro on what's actually
+hard about a native mobile Drop-in vs. the web reference, including questioning this POC's own
+proposed approach, and the concrete list of what the Payment API team needs to confirm before
+`/validate` + redirects can move past "starter" depth.
 
 ---
 
