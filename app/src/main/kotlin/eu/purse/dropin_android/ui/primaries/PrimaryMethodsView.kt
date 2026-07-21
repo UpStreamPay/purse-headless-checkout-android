@@ -47,6 +47,36 @@ internal class PrimaryMethodsView(
     private val onPaypalWallet: () -> Unit,
 ) {
 
+    // Per-method hooks that re-apply a recomputed disabled state to an already-rendered row/button in
+    // place — mirroring web's reactive `updateMopDisabledState` disabling a mop without tearing down
+    // its mounted form. Keyed by method id, rebuilt on each full render pass (see [reset]).
+    private val disabledUpdaters = linkedMapOf<String, (DisabledReason?) -> Unit>()
+
+    // The single SecureFields (CB) form's state. The form reports its own validity, but a primary is
+    // only usable while it's also selectable, so the "valid primary" signal is `formValid && enabled`
+    // — otherwise a gift card that drops the remaining amount below CB's min would still leave the
+    // pay button live for a disabled method.
+    private var cardMethodId: String? = null
+    private var cardFormValid = false
+    private var cardDisabled = false
+
+    /** Clear the per-method hooks before a fresh render pass (a new session, or a re-render). */
+    fun reset() {
+        disabledUpdaters.clear()
+        cardMethodId = null
+        cardFormValid = false
+        cardDisabled = false
+    }
+
+    /**
+     * Re-apply the disabled state carried by each of [methods] to its rendered row/button — called
+     * after the split changes (a secondary applied) with `dropin.methodsForPrimaryReach(remaining)`.
+     * Methods with no rendered row (e.g. not in this group) are ignored.
+     */
+    fun applyDisabledStates(methods: List<DropinPaymentMethod>) {
+        methods.forEach { disabledUpdaters[it.id]?.invoke(it.disabled) }
+    }
+
     /** xpay methods (Google Pay, popup PayPal) as full-width buttons, two per row. */
     fun renderXpay(container: ViewGroup, methods: List<DropinPaymentMethod>) {
         var index = 0
@@ -77,6 +107,8 @@ internal class PrimaryMethodsView(
                         layoutParams = buttonLayout
                     }
                 }
+                // Let a later split recompute enable/disable this button in place.
+                disabledUpdaters[method.id] = { disabled -> button.isEnabled = disabled == null }
                 row.addView(button)
             }
             container.addView(row)
@@ -116,14 +148,6 @@ internal class PrimaryMethodsView(
             item.primaryBadges.isVisible = brands.isNotEmpty()
             item.primaryBadges.text = brands.joinToString(" · ") { it.wireValue }
 
-            val details = buildList {
-                method.minAmount?.let { add(activity.getString(R.string.method_amount_min, it.toPlainString())) }
-                method.maxAmount?.let { add(activity.getString(R.string.method_amount_max, it.toPlainString())) }
-                method.disabled?.let { add(describeDisabled(it)) }
-            }
-            item.primaryDetails.isVisible = details.isNotEmpty()
-            item.primaryDetails.text = details.joinToString("\n")
-
             // The CB (creditcard) method is vault-backed when its config vault vendor isn't `none`
             // (see usp-widget headless-checkout primaries.ts). For the Purse vault that means
             // capturing the card with the SecureFields SDK, rendered inline in the opened row.
@@ -139,15 +163,42 @@ internal class PrimaryMethodsView(
                 item.primaryNote.setText(R.string.primary_not_wired)
             }
 
-            val disabled = method.disabled != null
-            item.primaryRadio.isEnabled = !disabled
-            item.root.alpha = if (disabled) 0.6f else 1f
+            // Re-applies a (possibly recomputed) disabled state to this row: detail lines, radio,
+            // dimming, and collapsing a now-unusable row. Registered so a later split recompute can
+            // call it in place without re-mounting the SecureFields form (see [applyDisabledStates]).
+            var rowDisabled: DisabledReason? = method.disabled
+            fun applyRowDisabled(disabled: DisabledReason?) {
+                rowDisabled = disabled
+                val off = disabled != null
+                val details = buildList {
+                    method.minAmount?.let { add(activity.getString(R.string.method_amount_min, it.toPlainString())) }
+                    method.maxAmount?.let { add(activity.getString(R.string.method_amount_max, it.toPlainString())) }
+                    disabled?.let { add(describeDisabled(it)) }
+                }
+                item.primaryDetails.isVisible = details.isNotEmpty()
+                item.primaryDetails.text = details.joinToString("\n")
+                item.primaryRadio.isEnabled = !off
+                item.root.alpha = if (off) 0.6f else 1f
+                if (off) {
+                    // A row disabled mid-flow (its min no longer met, or payment now fulfilled)
+                    // collapses; if it's the card form, it also stops counting as a valid primary.
+                    item.primaryContent.isVisible = false
+                    item.primaryRadio.isChecked = false
+                }
+                if (method.id == cardMethodId) {
+                    cardDisabled = off
+                    reportCardValidity()
+                }
+            }
+
             item.primaryContent.isVisible = false
             item.primaryHeader.setOnClickListener {
-                if (disabled) return@setOnClickListener
+                if (rowDisabled != null) return@setOnClickListener
                 select(if (rows.any { it.id == method.id && it.content.isVisible }) null else method.id)
             }
             rows.add(PrimaryRow(method.id, item.primaryContent, item.primaryRadio))
+            disabledUpdaters[method.id] = ::applyRowDisabled
+            applyRowDisabled(method.disabled)
             list.addView(item.root)
         }
         container.addView(card)
@@ -171,6 +222,7 @@ internal class PrimaryMethodsView(
         method: DropinPaymentMethod,
         dropin: DropinAndroid,
     ) {
+        cardMethodId = method.id
         val form = ViewSecurefieldsFormBinding.inflate(activity.layoutInflater, content, false)
 
         // Session's supported_brands (CardBrand) → SecureFields' Brand; fall back to a sane default.
@@ -200,13 +252,17 @@ internal class PrimaryMethodsView(
         // per-form button) drives tokenization via the submit hook — mirroring web's single PayButton.
         sdk.addListener(object : SecureFieldsListener {
             override fun onFormValid(payload: FormValidPayload) {
-                onPrimaryValidChanged(!payload.hasErrors)
+                cardFormValid = !payload.hasErrors
+                reportCardValidity()
             }
         })
         sdk.render()
         onPrimarySubmitReady { sdk.submit() }
         content.addView(form.root)
     }
+
+    /** The CB form is a usable primary only while it's both valid and still selectable. */
+    private fun reportCardValidity() = onPrimaryValidChanged(cardFormValid && !cardDisabled)
 
     /** Drop-in's [PurseEnvironment] (Payment API) → SecureFields' own [VaultEnvironment] (vault
      * gateway). Distinct enums — see docs/integration/getting-started.md. */

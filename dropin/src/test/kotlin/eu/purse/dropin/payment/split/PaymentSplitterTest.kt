@@ -54,7 +54,8 @@ class PaymentSplitterTest {
         splitter.applySecondary(BigDecimal("50.00"))
 
         assertTrue(splitter.isFulfilled)
-        assertEquals(BigDecimal.ZERO, splitter.remaining)
+        // Value-equal to zero; `remaining` keeps the order's 2-dp scale (it drives a "0.00 EUR" label).
+        assertEquals(BigDecimal("0.00"), splitter.remaining)
     }
 
     @Test
@@ -65,7 +66,7 @@ class PaymentSplitterTest {
         splitter.applySecondary(BigDecimal("90.00"))
 
         assertEquals(BigDecimal("50.00"), splitter.secondaryContribution)
-        assertEquals(BigDecimal.ZERO, splitter.remaining)
+        assertEquals(BigDecimal("0.00"), splitter.remaining)
         assertTrue(splitter.isFulfilled)
     }
 }

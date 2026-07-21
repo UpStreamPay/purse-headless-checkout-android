@@ -5,6 +5,8 @@ import eu.purse.dropin.core.api.PaymentApiClient
 import eu.purse.dropin.core.environment.PurseEnvironment
 import eu.purse.dropin.payment.method.DropinPaymentMethod
 import eu.purse.dropin.payment.method.Method
+import eu.purse.dropin.payment.method.MethodAvailability
+import java.math.BigDecimal
 import eu.purse.dropin.payment.partner.Partner
 import eu.purse.dropin.session.PaymentSession
 import eu.purse.dropin.session.PurseSessionParams
@@ -32,6 +34,19 @@ class DropinAndroid private constructor(
     val paymentMethods: List<DropinPaymentMethod> get() = session.meansOfPayment
 
     val isInformationRequest: Boolean get() = session.isInformationRequest
+
+    /**
+     * [paymentMethods] with their disabled states recomputed against [primaryReach] — the amount a
+     * primary would still have to pay once applied secondaries are subtracted (pass
+     * [eu.purse.dropin.payment.split.PaymentSplitter.remaining]). Mirrors web re-running
+     * `updateMopDisabledState` whenever the splitter's `primaryReach` changes: the Drop-in UI calls
+     * this after every applied secondary to re-evaluate which methods are still selectable (a
+     * primary below its `payment_min_amount`, or every method once the amount is fully covered).
+     *
+     * Amounts are in major currency units, the same convention as the session amounts.
+     */
+    fun methodsForPrimaryReach(primaryReach: BigDecimal): List<DropinPaymentMethod> =
+        MethodAvailability.recompute(session.meansOfPayment, session.isInformationRequest, primaryReach)
 
     /**
      * Tenant id for `SecureFieldsAndroid.init()` / `rememberSecureFields()`, when this session

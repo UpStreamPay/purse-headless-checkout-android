@@ -1,5 +1,12 @@
 package eu.purse.dropin.payment.method.secondary
 
+import eu.purse.dropin.payment.method.DropinPaymentMethod
+import eu.purse.dropin.payment.method.Method
+import eu.purse.dropin.payment.method.MethodConfiguration
+import eu.purse.dropin.payment.method.MethodSettings
+import eu.purse.dropin.payment.method.RegistrationMode
+import eu.purse.dropin.payment.method.SecondaryMethod
+import eu.purse.dropin.payment.partner.Partner
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull

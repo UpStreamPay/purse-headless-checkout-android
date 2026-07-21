@@ -14,7 +14,9 @@ import java.math.BigDecimal
  *
  * `PaymentSessionBuilder` computes each method's build-time disabled state against the full amount
  * (no split has happened yet); recomputing those against a live [PaymentSplitter] as the shopper
- * adds secondaries is future work — see docs/architecture/session-and-protocols.md.
+ * adds secondaries is done via [eu.purse.dropin.payment.method.MethodAvailability] /
+ * [eu.purse.dropin.DropinAndroid.methodsForPrimaryReach] (pass [remaining]) — see
+ * docs/architecture/session-and-protocols.md#method-availability-rules-disabled-states.
  *
  * Not thread-safe: drive it from a single (UI) thread. Amounts are in major currency units, the
  * same convention as the session amounts.

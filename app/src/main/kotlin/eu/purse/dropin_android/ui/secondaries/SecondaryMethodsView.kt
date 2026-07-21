@@ -5,6 +5,7 @@ import android.view.ViewGroup
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.isVisible
 import eu.purse.dropin.DropinAndroid
+import eu.purse.dropin.payment.method.DisabledReason
 import eu.purse.dropin.payment.method.DropinPaymentMethod
 import eu.purse.dropin.payment.method.secondary.SecondaryConfig
 import eu.purse.dropin_android.R
@@ -26,6 +27,22 @@ internal class SecondaryMethodsView(
     private val onSecondaryApplied: (BigDecimal) -> Unit,
 ) {
 
+    // Per-method hooks to re-apply a recomputed disabled state in place — the mirror of the primary
+    // side. When the split fulfils the order, the engine marks the remaining secondaries
+    // `PaymentFulfilled` (nothing left to cover), so we grey the accordion and block adding more.
+    private val disabledUpdaters = linkedMapOf<String, (DisabledReason?) -> Unit>()
+
+    /** Clear the per-method hooks before a fresh render pass. */
+    fun reset() = disabledUpdaters.clear()
+
+    /**
+     * Re-apply the disabled state carried by each of [methods] to its rendered accordion — called
+     * with `dropin.methodsForPrimaryReach(remaining)` after every applied secondary.
+     */
+    fun applyDisabledStates(methods: List<DropinPaymentMethod>) {
+        methods.forEach { disabledUpdaters[it.id]?.invoke(it.disabled) }
+    }
+
     fun accordion(
         method: DropinPaymentMethod,
         parent: ViewGroup,
@@ -44,18 +61,24 @@ internal class SecondaryMethodsView(
 
         val config = SecondaryConfig.forMethod(method)
         if (config == null) {
-            // No client-side config for this partner in the POC — show the header only.
+            // No client-side config for this partner in the POC — show the header only. Still track
+            // its disabled state so a fulfilled split can grey it out alongside the rest.
             item.secondaryForm.isVisible = false
+            disabledUpdaters[method.id] = { disabled -> item.root.alpha = if (disabled != null) 0.6f else 1f }
             return item.root
         }
 
         fun pan() = item.giftcardPanInput.text?.toString().orEmpty().trim()
         fun cvv() = item.giftcardCvvInput.text?.toString().orEmpty().trim()
 
+        // Set by [applyDisabledStates] once the split changes; while non-null this accordion can't
+        // add another card (typically `PaymentFulfilled` — the order is already covered).
+        var disabledReason: DisabledReason? = method.disabled
+
         fun refresh() {
             val withCvv = config.requiresCvv(pan())
             item.giftcardCvvLayout.isVisible = withCvv
-            item.useCardButton.isEnabled =
+            item.useCardButton.isEnabled = disabledReason == null &&
                 config.validatePan(pan()) && (!withCvv || config.validateCvv(cvv()))
             item.giftcardPanLayout.error = null
         }
@@ -63,6 +86,17 @@ internal class SecondaryMethodsView(
         val watcher = afterTextChanged { refresh() }
         item.giftcardPanInput.addTextChangedListener(watcher)
         item.giftcardCvvInput.addTextChangedListener(watcher)
+
+        // A fulfilled split greys this accordion, collapses it, and blocks adding another card.
+        disabledUpdaters[method.id] = { disabled ->
+            disabledReason = disabled
+            item.root.alpha = if (disabled != null) 0.6f else 1f
+            if (disabled != null) {
+                item.secondaryContent.isVisible = false
+                item.secondaryCaret.text = CARET_COLLAPSED
+            }
+            refresh()
+        }
         refresh()
 
         item.useCardButton.setOnClickListener {

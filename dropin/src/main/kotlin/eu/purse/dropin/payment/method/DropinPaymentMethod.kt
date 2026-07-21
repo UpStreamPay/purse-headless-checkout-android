@@ -19,6 +19,14 @@ sealed class DropinPaymentMethod {
 
     val minAmount: BigDecimal? get() = configuration.settings.paymentMinAmount
     val maxAmount: BigDecimal? get() = configuration.settings.paymentMaxAmount
+
+    /**
+     * The same method with a recomputed [disabled] state — used when the live split changes what a
+     * primary still has to pay (see [eu.purse.dropin.payment.method.MethodAvailability]). The models
+     * are immutable, so this returns a copy rather than mutating in place (web mutates each mop's
+     * `disabledState` in `updateMopDisabledState`; here the UI diffs the new list against the old).
+     */
+    abstract fun withDisabled(disabled: DisabledReason?): DropinPaymentMethod
 }
 
 /** Rendered as a radio-style list entry — CB, Google Pay, PayPal in this POC. */
@@ -28,7 +36,9 @@ data class PrimaryMethod(
     override val method: Method,
     override val configuration: MethodConfiguration,
     override val disabled: DisabledReason?,
-) : DropinPaymentMethod()
+) : DropinPaymentMethod() {
+    override fun withDisabled(disabled: DisabledReason?) = copy(disabled = disabled)
+}
 
 /** Rendered in an accordion above the primaries list — Illicado in this POC. */
 data class SecondaryMethod(
@@ -37,4 +47,6 @@ data class SecondaryMethod(
     override val method: Method,
     override val configuration: MethodConfiguration,
     override val disabled: DisabledReason?,
-) : DropinPaymentMethod()
+) : DropinPaymentMethod() {
+    override fun withDisabled(disabled: DisabledReason?) = copy(disabled = disabled)
+}

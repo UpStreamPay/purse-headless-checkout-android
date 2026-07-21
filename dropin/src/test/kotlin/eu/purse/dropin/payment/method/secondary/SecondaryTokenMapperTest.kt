@@ -1,5 +1,6 @@
 package eu.purse.dropin.payment.method.secondary
 
+import eu.purse.dropin.core.api.PaymentApiException
 import eu.purse.dropin.payment.method.DropinPaymentMethod
 import eu.purse.dropin.payment.method.Method
 import eu.purse.dropin.payment.method.MethodConfiguration

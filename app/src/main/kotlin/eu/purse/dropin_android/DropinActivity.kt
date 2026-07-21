@@ -76,7 +76,7 @@ class DropinActivity : AppCompatActivity() {
     private val secondaryMethods by lazy {
         SecondaryMethodsView(
             activity = this,
-            onSecondaryApplied = { balance -> split.applySecondary(balance); updatePayState() },
+            onSecondaryApplied = { balance -> onSecondaryApplied(balance) },
         )
     }
 
@@ -127,6 +127,9 @@ class DropinActivity : AppCompatActivity() {
 
         val container = binding.dropinContainer
         container.removeAllViews()
+        // Fresh render pass — drop any disabled-state hooks registered for the previous session.
+        primaryMethods.reset()
+        secondaryMethods.reset()
 
         if (supported.isEmpty()) {
             container.addView(emptyMethodsView())
@@ -165,6 +168,23 @@ class DropinActivity : AppCompatActivity() {
     private fun updatePayState() {
         binding.payButton.text = getString(R.string.pay_button, split.remaining.toPlainString(), currency)
         binding.payButton.isEnabled = split.isFulfilled || primaryValid
+    }
+
+    /**
+     * A secondary (gift card) was tokenized and applied: fold its balance into the [split], then
+     * recompute every method's disabled state against the new remaining amount and push it to the
+     * rendered rows — the app-side mirror of web re-running `updateMopDisabledState` on each
+     * `primaryReach` change. A primary now below its min shows `MinAmountNotMet`; once the split is
+     * fulfilled, everything shows `PaymentFulfilled` and the pay button pays with secondaries alone.
+     */
+    private fun onSecondaryApplied(balance: BigDecimal) {
+        split.applySecondary(balance)
+        activeDropin?.let { dropin ->
+            val methods = dropin.methodsForPrimaryReach(split.remaining)
+            secondaryMethods.applyDisabledStates(methods)
+            primaryMethods.applyDisabledStates(methods)
+        }
+        updatePayState()
     }
 
     private fun onPay() {

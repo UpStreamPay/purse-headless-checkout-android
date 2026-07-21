@@ -1,8 +1,7 @@
 package eu.purse.dropin.session
 
-import eu.purse.dropin.payment.method.DisabledReason
 import eu.purse.dropin.payment.method.DropinPaymentMethod
-import eu.purse.dropin.payment.method.MethodConfiguration
+import eu.purse.dropin.payment.method.MethodAvailability
 import eu.purse.dropin.payment.method.PrimaryMethod
 import eu.purse.dropin.payment.method.RegistrationMode
 import eu.purse.dropin.payment.method.SecondaryMethod
@@ -50,7 +49,7 @@ object PaymentSessionBuilder {
                 }
 
                 val id = "${partner.wireValue}-${method.wireValue}"
-                val disabled = computeDisabledState(configuration, isInformationRequest, primaryReach)
+                val disabled = MethodAvailability.disabledFor(configuration, isInformationRequest, primaryReach)
 
                 items += if (configuration.isSecondary) {
                     SecondaryMethod(id, partner, method, configuration, disabled)
@@ -60,31 +59,6 @@ object PaymentSessionBuilder {
             }
         }
         return items.sortedWith(POSITION_COMPARATOR)
-    }
-
-    /**
-     * The amount-driven subset of web's `updateMopDisabledState` — see
-     * docs/architecture/session-and-protocols.md#method-availability-rules-disabled-states.
-     * `primaryReach` here is the full session amount, since no split/payment has happened yet;
-     * recomputing this against a live splitter as the user builds a split payment is future work.
-     */
-    private fun computeDisabledState(
-        configuration: MethodConfiguration,
-        isInformationRequest: Boolean,
-        primaryReach: BigDecimal,
-    ): DisabledReason? {
-        if (isInformationRequest) return null
-
-        val minAmount = configuration.settings.paymentMinAmount
-        val maxAmount = configuration.settings.paymentMaxAmount
-
-        return when {
-            primaryReach.signum() == 0 -> DisabledReason.PaymentFulfilled
-            minAmount != null && primaryReach < minAmount -> DisabledReason.MinAmountNotMet(minAmount, primaryReach)
-            maxAmount != null && primaryReach > maxAmount && !configuration.isSecondary ->
-                DisabledReason.MaxAmountExceeded(maxAmount)
-            else -> null
-        }
     }
 
     /** Ascending by `position`; entries without one sort last, matching web's `positionSort`. */

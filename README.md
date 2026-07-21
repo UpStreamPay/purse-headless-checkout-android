@@ -12,9 +12,11 @@ SDK](https://upstreampay.atlassian.net/browse/SDK-11769) for card capture.
 > capture uses the SecureFields Android SDK**, Illicado gift-card entry works end to end against
 > `/init`, **PayPal (wallet) pays via the official PayPal Android SDK** (`/init` → approval →
 > `/validate`), and a **pay button** reflects web's completion rule (secondaries cover the amount,
-> or a primary is valid). Still to build: `/validate` for the card pay button (it tokenizes but
-> doesn't submit yet), the Google Pay coordinator, live split orchestration, and generic
-> redirect/3-D Secure handling — see
+> or a primary is valid). As gift cards are added the method list **re-evaluates live** against the
+> remaining amount (web's `updateMopDisabledState`): a primary below its min disables, and once
+> secondaries cover the whole amount every method reads as fulfilled. Still to build: `/validate`
+> for the card pay button (it tokenizes but doesn't submit yet), the combined secondary+primary
+> `/validate` submission, the Google Pay coordinator, and generic redirect/3-D Secure handling — see
 > [Still to do](docs/internal/project-setup.md#still-to-do). The `/docs` folder documents the target
 > architecture, derived from the web Drop-in (`@upstreampay/dropin` / `@upstreampay/headless-checkout`
 > in the sibling `usp-widget` repo) and the SecureFields Android SDK (sibling `vault-android` repo).

@@ -367,13 +367,22 @@ sealed class with just `PaymentFulfilled`, `MinAmountNotMet(minAmount, restToPay
 `MaxAmountExceeded(maxAmount)` (both carrying `BigDecimal`, not `Long`) — the technical-failure
 codes above (`TokenInitFailed`, `PluginIncompatible`, ...) only make sense once a method is
 actually being rendered/submitted, which is future work once `methods/` coordinators exist (see
-[Project Setup](../internal/project-setup.md#still-to-do)). `PaymentSessionBuilder`'s
-`computeDisabledState()` follows this precedence, computed once at session-build time against the
-full session amount as `primaryReach` (recomputing it live against an actual split, as web does
-on every `primaryReach` change via `updateMopDisabledState` in
-`usp-widget/packages/headless-checkout/src/session/payment/payment.ts`, is also future work —
-this POC doesn't implement split payments, see [POC
-Scope](../decisions/poc-scope.md#explicitly-out-of-scope)):
+[Project Setup](../internal/project-setup.md#still-to-do)). The precedence itself lives in
+`eu.purse.dropin.payment.method.MethodAvailability.disabledFor()`, and is applied in two places
+against the same rule — mirroring web computing it at build time and then re-running
+`updateMopDisabledState` on every `primaryReach` change
+(`usp-widget/packages/headless-checkout/src/session/payment/payment.ts`):
+
+- `PaymentSessionBuilder` calls it **once at session-build time** with `primaryReach` = the full
+  session amount (no split has happened yet);
+- as the shopper adds secondaries, `MethodAvailability.recompute()` (exposed as
+  `DropinAndroid.methodsForPrimaryReach(remaining)`) re-runs it **live** against the
+  `PaymentSplitter`'s dropping `remaining`, so a primary below its min switches to `MinAmountNotMet`
+  and, once secondaries cover the whole amount, every method becomes `PaymentFulfilled`. The demo
+  app pushes each recompute onto the already-rendered rows in place (without re-mounting the
+  SecureFields form).
+
+The precedence:
 
 1. **Any existing disabled reason that isn't one of the three below is left untouched** — a
    fatal/technical error is never silently overwritten by an amount recalculation.

@@ -295,10 +295,12 @@ package layout. `securefields-android`, `lifecycle-runtime-ktx`, `kotlinx-corout
   and chained `/validate` `redirection` (3DS) responses isn't built. PayPal's own `return_url` →
   app-deep-link also needs backend confirmation. See
   [Redirect Handling](../architecture/redirect-handling.md).
-- **Live split recomputation** — `PaymentSplitter` tracks a secondary's balance contribution and the
-  pay button reads `remaining`/`isFulfilled` from it, but `PaymentSessionBuilder` still computes each
-  method's disabled state against the full amount (not against the live splitter as secondaries are
-  added), and there's no partial-capture or multi-source submission yet.
+- **Combined split submission** — `PaymentSplitter` tracks a secondary's balance contribution, the
+  pay button reads `remaining`/`isFulfilled` from it, and method disabled states now recompute
+  against the live splitter as secondaries are added (`MethodAvailability` /
+  `DropinAndroid.methodsForPrimaryReach`, mirroring web's `updateMopDisabledState`). What's still
+  missing is the actual multi-source `/validate` — capturing a secondary + primary together in one
+  payment (the `results` array), and partial capture.
 - **Remaining dependencies** — `play-services-wallet` (and Compose, if the demo moves off the View
   system) when the Google Pay coordinator needs them. `androidx.browser` isn't needed for PayPal —
   the PayPal SDK bundles its own browser-switch.
