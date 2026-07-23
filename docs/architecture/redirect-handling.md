@@ -18,6 +18,7 @@ any future redirect-based method) using an Android Intent.
 ## Table of Contents
 
 - [Why this needs its own design](#why-this-needs-its-own-design)
+- [What "no redirect" means for a mobile SDK](#what-no-redirect-means-for-a-mobile-sdk)
 - [The redirect contract](#the-redirect-contract)
 - [The session-level fallback and the error path](#the-session-level-fallback-and-the-error-path)
 - [Android translation](#android-translation)
@@ -38,6 +39,33 @@ There is no full-page-redirect PayPal implementation in `usp-widget` to copy. A 
 redirect mechanism *does* exist in the web codebase (used for 3DS bank pages and any
 `should_submit_widget` fallback) — that's what this doc adapts for Android, since Android has no
 equivalent of "open a popup on the same page."
+
+---
+
+## What "no redirect" means for a mobile SDK
+
+Worth stating explicitly, since it's easy to over-scope this whole doc: **most payments need
+none of this.** Per Purse's own [simple-payment
+tutorial](https://docs.purse.tech/docs/integrate/purse-api/tutorials/simple-payment), a redirect
+back to `shopper_redirection_url` exists because the shopper is inside a **browser page** that has
+to navigate to *something* when checkout ends — that's a structural property of a web/hosted-page
+integration, not a property of "how a payment resolves." Web's own fallback
+(`session.success`/`session.redirection`, see [below](#the-session-level-fallback-and-the-error-path))
+is the same idea: even a payment that never needed an external redirect still has to land the
+browser tab somewhere.
+
+A native app has no browser tab to land. When `/validate` resolves without requiring the shopper to
+go anywhere externally — no `redirection.url`, no partner-owned approval step still pending — the
+Drop-in's job is simply to **return the result to the host app** (a callback, a return value, a
+UI update) and stop. That's already what this repo's `capturePaypal`/`captureGooglePay`/
+`captureCard` do in `DropinActivity`: on success or a plain decline, they just report the outcome —
+there's no attempt to "redirect to nowhere." Nothing below this point needs to run at all for CB
+without 3DS, Illicado, or Google Pay/PayPal without a chained challenge.
+
+The rest of this doc — Custom Tabs, WebView, the return-path deep link — is scoped to the
+**minority** of cases where the shopper genuinely has to interact with something outside the app:
+PayPal's own approval step, and a chained 3DS/SCA challenge on any method. Read the sections below
+as "what to do when there actually is somewhere to go," not "what every payment has to do."
 
 ---
 
@@ -114,18 +142,17 @@ the real fallback order at this layer is: **`/validate` response's `redirection.
 session's own `redirection` field → nothing (silently do nothing)**.
 
 **On a `/validate` call that errors outright** (rather than returning a redirect requirement),
-the same fallback pair is used but dispatched differently — a **plain top-level navigation**
-(`window.location.href = url`), not `submitRedirectionForm`, so a POST-form redirect is not
-possible on the error path even if one were provided. On Android this maps to a plain Custom
-Tabs/browser launch regardless of whether the underlying method would otherwise have needed a
-WebView POST.
+web dispatches the same fallback pair differently — a **plain top-level navigation**
+(`window.location.href = url`), not `submitRedirectionForm` — again because a browser page always
+has to land somewhere, even on error. That reasoning doesn't transfer to Android: per [What "no
+redirect" means for a mobile SDK](#what-no-redirect-means-for-a-mobile-sdk), an error with no
+`redirection.url` and no partner-specific approval step pending is just an error to report to the
+host app, not something requiring a Custom Tabs/browser launch. Only open a Custom Tab when there's
+an actual URL that resolves to a real next step for the shopper.
 
-For this POC: Illicado (this POC's only secondary-only-payment case) has no known redirect step
-of its own (see [Payment Methods — Illicado](../integration/payment-methods.md#illicado-starter)),
-so this fallback layer is mostly a defensive corner case rather than something Illicado is
-expected to trigger — but the `/validate`-error path (plain navigation, session `redirection`
-fallback) applies to *any* method, including CB and PayPal, and is worth implementing generically
-rather than only for the redirect-required success path.
+For this POC: Illicado (this POC's only secondary-only-payment case) has no known redirect step of
+its own (see [Payment Methods — Illicado](../integration/payment-methods.md#illicado-starter)), so
+this fallback layer is a defensive corner case, not something Illicado is expected to trigger.
 
 ---
 
@@ -137,8 +164,23 @@ rather than only for the redirect-required success path.
 | `submitRedirectionForm` (hidden `<form>` + `.submit()`) | POST navigation with form fields | **WebView**, loading the URL via `postUrl()` with the form fields encoded as the POST body — Custom Tabs cannot POST |
 | `submitStringRedirectionForm` (inject HTML string, auto-submit) | Same as above, but the form HTML comes from the server | **WebView**, via `loadDataWithBaseURL()` on the provided HTML, letting the page's own `<form>.submit()` (or `onload` auto-submit script) fire the POST |
 
+> **Update — implemented.** The interface below was this doc's original proposal; the actual
+> implementation is `eu.purse.dropin.partnerui.redirect.RedirectionResolver` (`:partner-ui`),
+> which resolves a `/validate` response into a sealed `RedirectAction` (`Get`/`PostForm`/
+> `PostHtml`) using the exact same priority order as web's `manageRedirection`, and
+> `eu.purse.dropin.partnerui.generic.redirection.RedirectionCheckoutActivity`/
+> `RedirectionCheckoutContract`, which dispatch a `RedirectAction` to Custom Tabs or a WebView and
+> return once the shopper comes back via this app's own `${applicationId}.redirect` deep link
+> (distinct from PayPal's own `${applicationId}` scheme — see [Partner:
+> paypal](../partners/paypal.md) for why PayPal needs its own). Currently wired into Google Pay's
+> capture flow (`DropinActivity.captureGooglePay`) — see [Partner:
+> adyen](../partners/adyen.md#sequence-diagram). Reusing it for PayPal's own chained-3DS case, CB's
+> future chained 3DS, and a `integration_mode: "redirection"` method (see
+> docs/decisions/pain-points-recap.md, Pain point 3) is call-site wiring, not a redesign.
+
 Proposed Kotlin interface, mirroring `RedirectionHandler` in
-`usp-widget/packages/common/src/Redirection.ts`:
+`usp-widget/packages/common/src/Redirection.ts` — kept here for the historical mapping from web's
+naming to Android's, though the actual shipped type is `RedirectAction` above, not this interface:
 
 ```kotlin
 interface DropinRedirectionHandler {

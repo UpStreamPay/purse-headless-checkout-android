@@ -8,6 +8,7 @@ list per the acceptance criteria (see [POC Scope](../decisions/poc-scope.md)).
 ## Table of Contents
 
 - [Role in this POC](#role-in-this-poc)
+- [Sequence diagram](#sequence-diagram)
 - [Documentation](#documentation)
 - [Redirection study](#redirection-study)
 - [See also](#see-also)
@@ -22,6 +23,30 @@ entirely inside `headless-checkout`'s secondaries layer (PAN + CVV form, no SDK,
 [Payment Methods — Illicado](../integration/payment-methods.md#illicado-starter)), which is
 exactly why it needs no partner-specific UI plugin: there's no partner-hosted form or SDK to
 bridge to.
+
+## Sequence diagram
+
+```mermaid
+sequenceDiagram
+    actor Shopper
+    participant App as Drop-in (:app)
+    participant PayAPI as Payment API
+    participant Illicado as Illicado (intermediary, opaque)
+
+    Shopper->>App: Enter PAN + CVV
+    App->>App: validatePan / validateCvv (client-side regex)
+    App->>PayAPI: POST /init (payment_data.card: number, csc)
+    PayAPI->>Illicado: resolve balance (server-side)
+    Illicado-->>PayAPI: balance, name, expiry
+    PayAPI-->>App: SecondaryToken
+    App->>PayAPI: POST /validate
+    PayAPI-->>App: global_status
+```
+
+**Status:** `/init` (tokenization) works today; no redirect code path exists anywhere in the
+reference implementation for this method, and none is expected — but that's an acknowledged blind
+spot behind the Illicado intermediary, not a confirmed absence — see [Redirection
+study](#redirection-study) below.
 
 ## Documentation
 

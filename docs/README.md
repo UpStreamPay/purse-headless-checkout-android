@@ -69,9 +69,10 @@ endpoints, and the three layers of status/lifecycle state.
 
 ## I want a sequence diagram for each payment method
 
-**[Payment Flow Diagrams](architecture/payment-flows.md)** — a Mermaid sequence diagram per
-handled method (CB, Google Pay, PayPal, Illicado), showing what's implemented today vs. what a
-redirect/3DS branch would still need.
+Each [partner page](partners/README.md) has its own "Sequence diagram" section — [`purse`](partners/purse.md#sequence-diagram)
+(CB), [`adyen`](partners/adyen.md#sequence-diagram) (Google Pay), [`paypal`](partners/paypal.md#sequence-diagram),
+and [`illicado`](partners/illicado.md#sequence-diagram) — a Mermaid diagram showing what's
+implemented today vs. what a redirect/3DS branch would still need.
 
 ---
 

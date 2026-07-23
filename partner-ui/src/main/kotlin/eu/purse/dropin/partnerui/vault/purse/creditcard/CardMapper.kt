@@ -1,6 +1,7 @@
 package eu.purse.dropin.partnerui.vault.purse.creditcard
 
 import eu.purse.dropin.core.api.PaymentApiException
+import eu.purse.dropin.partnerui.redirect.RedirectionResolver
 import org.json.JSONArray
 import org.json.JSONObject
 import java.math.BigDecimal
@@ -104,23 +105,18 @@ object CardMapper {
 
     /**
      * Parses the `/validate` response `{results, redirection, global_status}` into a
-     * [CardValidationResult] — identical logic to
-     * [eu.purse.dropin.partnerui.partner.paypal.wallet.PaypalWalletMapper.parseValidation].
+     * [CardValidationResult]. [partnerWireValue] is needed to find this method's own entry in
+     * `results` — see [eu.purse.dropin.partnerui.redirect.RedirectionResolver].
      */
-    fun parseValidation(data: JSONObject): CardValidationResult {
+    fun parseValidation(data: JSONObject, partnerWireValue: String): CardValidationResult {
         val globalStatus = data.optString("global_status")
-        val redirectionUrl = data.optJSONObject("redirection")?.optStringOrNull("url")
         return CardValidationResult(
             isSuccess = globalStatus.equals("SUCCESS", ignoreCase = true),
             globalStatus = globalStatus,
-            redirectionUrl = redirectionUrl,
+            redirectAction = RedirectionResolver.resolve(data, partnerWireValue, METHOD, sessionFallbackUrl = null),
             rawResponse = data.toString(2),
         )
     }
-
-    /** Local null-safe string read (the `:dropin` JsonExtensions aren't visible from here). */
-    private fun JSONObject.optStringOrNull(name: String): String? =
-        if (has(name) && !isNull(name)) getString(name) else null
 
     /** Reads a field that may be a JSON string OR number (e.g. `step_id`) as its string form. */
     private fun JSONObject.optNumberOrStringOrNull(name: String): String? =

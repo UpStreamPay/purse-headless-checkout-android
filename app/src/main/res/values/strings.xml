@@ -56,6 +56,9 @@
     <string name="googlepay_canceled">Google Pay canceled.</string>
     <string name="googlepay_failed">Google Pay failed: %1$s</string>
     <string name="googlepay_error">Google Pay error: %1$s</string>
+    <string name="googlepay_redirect_required">Google Pay requires one more step (3-D Secure)…</string>
+    <string name="googlepay_redirect_canceled">3-D Secure step canceled.</string>
+    <string name="googlepay_redirect_failed">3-D Secure step failed: %1$s</string>
 
     <string name="method_amount_min">min %1$s</string>
     <string name="method_amount_max">max %1$s</string>

@@ -1,6 +1,7 @@
 package eu.purse.dropin.partnerui.vault.purse.creditcard
 
 import eu.purse.dropin.core.api.PaymentApiException
+import eu.purse.dropin.partnerui.redirect.RedirectAction
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -93,11 +94,12 @@ class CardMapperTest {
     fun `parseValidation maps a SUCCESS global_status to success`() {
         val result = CardMapper.parseValidation(
             JSONObject("""{ "global_status": "SUCCESS", "results": [] }"""),
+            partnerWireValue = "purse",
         )
 
         assertTrue(result.isSuccess)
         assertEquals("SUCCESS", result.globalStatus)
-        assertNull(result.redirectionUrl)
+        assertNull(result.redirectAction)
     }
 
     @Test
@@ -106,9 +108,10 @@ class CardMapperTest {
             JSONObject(
                 """{ "global_status": "WAITING", "redirection": { "url": "https://3ds.example/step" } }""",
             ),
+            partnerWireValue = "purse",
         )
 
         assertFalse(result.isSuccess)
-        assertEquals("https://3ds.example/step", result.redirectionUrl)
+        assertEquals(RedirectAction.Get("https://3ds.example/step"), result.redirectAction)
     }
 }

@@ -1,6 +1,7 @@
 package eu.purse.dropin.partnerui.generic.googlepay
 
 import eu.purse.dropin.core.api.PaymentApiException
+import eu.purse.dropin.partnerui.redirect.RedirectAction
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -202,11 +203,12 @@ class GooglePayMapperTest {
     fun `parseValidation maps a SUCCESS global_status to success`() {
         val result = GooglePayMapper.parseValidation(
             JSONObject("""{ "global_status": "SUCCESS", "results": [] }"""),
+            partnerWireValue = "adyen",
         )
 
         assertTrue(result.isSuccess)
         assertEquals("SUCCESS", result.globalStatus)
-        assertNull(result.redirectionUrl)
+        assertNull(result.redirectAction)
     }
 
     @Test
@@ -215,10 +217,11 @@ class GooglePayMapperTest {
             JSONObject(
                 """{ "global_status": "PENDING", "redirection": { "url": "https://3ds.example/step" } }""",
             ),
+            partnerWireValue = "adyen",
         )
 
         assertFalse(result.isSuccess)
-        assertEquals("https://3ds.example/step", result.redirectionUrl)
+        assertEquals(RedirectAction.Get("https://3ds.example/step"), result.redirectAction)
     }
 
     private fun org.json.JSONArray.toStringList(): List<String> = (0 until length()).map { getString(it) }

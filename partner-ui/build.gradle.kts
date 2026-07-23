@@ -38,6 +38,9 @@ dependencies {
     api(libs.paypal.payment.buttons)
     // For the self-contained return Activity + ActivityResultContract.
     implementation(libs.androidx.appcompat)
+    // Custom Tabs, for the generic redirect return Activity's GET case — see
+    // docs/architecture/redirect-handling.md#android-translation.
+    implementation(libs.androidx.browser)
 
     // Google Pay: PaymentsClient, the branded PayButton, and the GetPaymentDataResult
     // ActivityResultContract. `api` so the demo `:app` sees those types to render the button and

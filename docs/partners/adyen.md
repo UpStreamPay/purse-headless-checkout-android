@@ -10,6 +10,7 @@ SDK, no redirect for the sheet itself.
 
 - [Role in this POC](#role-in-this-poc)
 - [Implemented (Android)](#implemented-android)
+- [Sequence diagram](#sequence-diagram)
 - [Documentation](#documentation)
 - [Redirection study](#redirection-study)
 - [See also](#see-also)
@@ -62,15 +63,61 @@ merges into the app.
 
 **Still open / not built here:**
 - The `/validate` response's chained 3-D Secure `redirection` (see [Redirection
-  study](#redirection-study) below) is surfaced (`GooglePayValidationResult.redirectionUrl`) but
-  not followed — same limitation as PayPal's `WalletValidationResult`, see [Redirect
-  Handling](../architecture/redirect-handling.md).
+  study](#redirection-study) below) is now **followed**: `GooglePayMapper`/`GooglePayValidationResult`
+  resolve it into a `RedirectAction` via `eu.purse.dropin.partnerui.redirect.RedirectionResolver`,
+  and `DropinActivity` opens it via `RedirectionCheckoutContract` (Custom Tabs for a GET, WebView
+  for a POST form), re-calling `/validate` on return. Untested on a device against a real 3DS
+  challenge — see docs/decisions/pain-points-recap.md.
 - `countryCode` in the `PaymentDataRequest` isn't modeled anywhere in the session/
   `MethodConfiguration` today; this port hardcodes `"FR"` (matching web's `partners/default.ts`)
   rather than replicating web's Adyen variant, which reuses the UI locale for this field.
 - End-to-end tokenization is only exercisable on a device/emulator with Google Play services and a
   test card configured; the unit tests cover the `/init`+`/validate` payload/parse contract
   (`GooglePayMapperTest`).
+
+## Sequence diagram
+
+```mermaid
+sequenceDiagram
+    actor Shopper
+    participant App as Drop-in (:app)
+    participant GPay as Google PaymentsClient
+    participant PayAPI as Payment API
+    participant Adyen as Adyen (server-side)
+
+    App->>PayAPI: POST /init (partner, method=googlepay)
+    PayAPI->>Adyen: resolve gateway config
+    Adyen-->>PayAPI: gatewayMerchantId, allowed networks
+    PayAPI-->>App: plugin_result.logs (gateway config)
+    App->>GPay: loadPaymentData(PaymentDataRequest)
+    GPay-->>Shopper: native Google Pay sheet
+    Shopper->>GPay: pick card, authorize
+    GPay-->>App: PaymentData (tokenizationData.token)
+    App->>PayAPI: POST /validate (token, selected_network)
+    PayAPI->>Adyen: capture
+    Adyen-->>PayAPI: result
+
+    alt 3DS / SCA step-up (confirmed real trigger)
+        PayAPI-->>App: redirection.url
+        App->>App: RedirectionResolver.resolve(...) -> RedirectAction
+        App->>Shopper: Custom Tab / WebView (RedirectionCheckoutActivity)
+        Shopper-->>App: return via ${applicationId}.redirect deep link
+        App->>PayAPI: POST /validate (re-validate)
+    else success
+        PayAPI-->>App: global_status = SUCCESS
+    end
+```
+
+**Status:** implemented end-to-end for the non-3DS path (see [Implemented
+(Android)](#implemented-android) above). This is the one method in scope with a **confirmed, not
+hypothetical**, live redirect trigger on web today. The 3DS branch above is now wired
+(`RedirectionResolver`, `RedirectionCheckoutActivity`/`Contract` in `:partner-ui`) but has never
+been exercised against a real 3DS-triggering sandbox card — see
+docs/decisions/pain-points-recap.md. `DropinAndroid.getSessionTransactions()`
+(`GET /sessions/{sessionId}`, Purse's own published re-query-as-source-of-truth pattern) exists in
+the SDK but isn't auto-fired after this flow — see [Session &
+Protocols](../architecture/session-and-protocols.md#init-and-validate) for the standalone alfred
+debug tool instead.
 
 ## Documentation
 

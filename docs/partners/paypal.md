@@ -10,6 +10,7 @@ buyer to leave and return to the app (the ticket's own open question).
 
 - [Role in this POC](#role-in-this-poc)
 - [Implemented (Android)](#implemented-android)
+- [Sequence diagram](#sequence-diagram)
 - [Documentation](#documentation)
 - [Redirection study](#redirection-study)
 - [See also](#see-also)
@@ -57,6 +58,44 @@ ships in `:partner-ui`'s own manifest and merges into the app.
 - BNPL ("Pay Later") stays out of scope.
 - End-to-end approval is only exercisable on a device against a PayPal-enabled session; the unit
   tests cover the `/init`+`/validate` payload/parse contract (`PaypalWalletMapperTest`).
+
+## Sequence diagram
+
+```mermaid
+sequenceDiagram
+    actor Shopper
+    participant App as Drop-in (:app)
+    participant PP as PaypalCheckoutActivity<br/>(PayPalWebCheckoutClient)
+    participant PayAPI as Payment API
+    participant Paypal as PayPal (Orders API)
+
+    App->>PayAPI: POST /init (partner=paypal, method=wallet)
+    PayAPI->>Paypal: create order (server-side)
+    Paypal-->>PayAPI: order_id
+    PayAPI-->>App: order_id, step_id
+    App->>PP: launch(orderId)
+    PP->>Paypal: browser-switch (Custom Tab / PayPal app)
+    Shopper->>Paypal: approve
+    Paypal-->>PP: return via app-scheme deep link
+    PP-->>App: approved (orderId, payerId)
+    App->>PayAPI: POST /validate (step_id)
+    PayAPI->>Paypal: capture (server-side)
+    PayAPI-->>App: global_status
+
+    alt chained 3DS (rare, not yet observed)
+        PayAPI-->>App: redirection.url
+        note over App: Surfaced, not followed
+    end
+```
+
+**Status:** implemented end-to-end on a device against a PayPal-enabled sandbox order — see
+[Implemented (Android)](#implemented-android) above. Whether the backend's order creation actually
+threads an app-return target through (vs. a fixed merchant web URL) is unconfirmed — [Pain Points
+Recap, point 4](../decisions/pain-points-recap.md). `DropinAndroid.getSessionTransactions()`
+(`GET /sessions/{sessionId}`, Purse's own published re-query-as-source-of-truth pattern) exists in
+the SDK but isn't auto-fired after this flow — see [Session &
+Protocols](../architecture/session-and-protocols.md#init-and-validate) for the standalone alfred
+debug tool instead.
 
 ## Documentation
 

@@ -1,6 +1,7 @@
 package eu.purse.dropin.partnerui.generic.googlepay
 
 import eu.purse.dropin.core.api.PaymentApiException
+import eu.purse.dropin.partnerui.redirect.RedirectionResolver
 import org.json.JSONArray
 import org.json.JSONException
 import org.json.JSONObject
@@ -229,16 +230,16 @@ object GooglePayMapper {
 
     /**
      * Parses the `/validate` response `{results, redirection, global_status}` into a
-     * [GooglePayValidationResult] — identical logic to
-     * [eu.purse.dropin.partnerui.partner.paypal.wallet.PaypalWalletMapper.parseValidation].
+     * [GooglePayValidationResult]. [partnerWireValue] is needed to find this method's own entry in
+     * `results` (see [eu.purse.dropin.partnerui.redirect.RedirectionResolver]) — Google Pay, unlike
+     * PayPal/CB, doesn't have one fixed partner.
      */
-    fun parseValidation(data: JSONObject): GooglePayValidationResult {
+    fun parseValidation(data: JSONObject, partnerWireValue: String): GooglePayValidationResult {
         val globalStatus = data.optString("global_status")
-        val redirectionUrl = data.optJSONObject("redirection")?.optStringOrNull("url")
         return GooglePayValidationResult(
             isSuccess = globalStatus.equals("SUCCESS", ignoreCase = true),
             globalStatus = globalStatus,
-            redirectionUrl = redirectionUrl,
+            redirectAction = RedirectionResolver.resolve(data, partnerWireValue, METHOD, sessionFallbackUrl = null),
             rawResponse = data.toString(2),
         )
     }

@@ -163,6 +163,7 @@ class DropinAndroid private constructor(
             paymentApiClient().validate(
                 GooglePayMapper.buildValidatePayload(session.amount, partnerWireValue, googlePayToken, selectedNetwork),
             ),
+            partnerWireValue,
         )
 
     /**
@@ -206,6 +207,7 @@ class DropinAndroid private constructor(
             paymentApiClient().validate(
                 CardMapper.buildValidatePayload(session.amount, partner.wireValue, vaultVendorTokenId, bin, selectedNetwork, stepId),
             ),
+            partner.wireValue,
         )
     }
 

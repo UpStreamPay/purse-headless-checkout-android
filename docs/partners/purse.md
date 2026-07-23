@@ -9,6 +9,7 @@ Backs **CB** (`creditcard`) in this POC — the one method with full depth, via 
 
 - [Role in this POC](#role-in-this-poc)
 - [Why `purse`, not a transacting PSP](#why-purse-not-a-transacting-psp)
+- [Sequence diagram](#sequence-diagram)
 - [Documentation](#documentation)
 - [Redirection study](#redirection-study)
 - [See also](#see-also)
@@ -49,6 +50,42 @@ POC's target sessions, but verify against a real sandbox session before hardcodi
 into the Android model — the mechanism that matters either way is checking
 `configurations.vault.vendor == "purse"`, which is correct regardless of which key it's nested
 under.
+
+## Sequence diagram
+
+```mermaid
+sequenceDiagram
+    actor Shopper
+    participant App as Drop-in (:app)
+    participant SF as SecureFields Android SDK
+    participant Vault as Purse Vault API
+    participant PayAPI as Payment API
+
+    Shopper->>App: Enter card fields
+    App->>SF: secureFields.submit()
+    SF->>Vault: POST /forms/secure-fields (tokenize)
+    Vault-->>SF: vaultFormToken + CardInfo (bin, brands)
+    SF-->>App: SubmitResult.Success
+    App->>PayAPI: POST /init (payment_data.vault_vendor)
+    PayAPI-->>App: step_id
+    App->>PayAPI: POST /validate (payment_data.vault_vendor_token_id, card.bin/selected_network, step_id)
+    PayAPI-->>App: global_status, redirection?
+
+    alt 3DS step-up required
+        note over App,SF: Planned — SecureFields' own upcoming<br/>3DS module owns the challenge natively,<br/>not a generic WebView/Custom Tab
+        App->>SF: hand off 3DS challenge
+        SF-->>App: challenge result
+        App->>PayAPI: POST /validate (resubmit)
+        PayAPI-->>App: global_status
+    end
+```
+
+**Status:** implemented end to end — capture (SecureFields tokenization) then `/init`+`/validate`
+via `CardMapper`, mirroring usp-widget's `purse` vault bridge (see [Payment Methods —
+CB](../integration/payment-methods.md#cb-full)). The `vault_vendor_token_id` payload shape (a
+top-level `payment_data` field, not nested under `card`) is confirmed against
+`purseCreditCardBridge.submitForResult` in `usp-widget/packages/partner-ui/src/plugins/vaults/purse/creditcard/bridge.ts` —
+no longer a guess, see [Pain Points Recap, point 9](../decisions/pain-points-recap.md).
 
 ## Documentation
 

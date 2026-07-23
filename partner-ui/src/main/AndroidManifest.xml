@@ -21,6 +21,25 @@
         </activity>
 
         <!--
+          The generic redirect return Activity — Custom Tabs/WebView for any redirect with no
+          partner SDK of its own (a chained 3DS/SCA step-up, or a whole `integration_mode:
+          "redirection"` method). Ships here, same rationale as the PayPal Activity above, but on
+          its own scheme (${applicationId}.redirect, NOT the bare ${applicationId} PayPal already
+          owns) so the two return paths can never collide. See docs/architecture/redirect-handling.md.
+        -->
+        <activity
+            android:name=".generic.redirection.RedirectionCheckoutActivity"
+            android:launchMode="singleTop"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${applicationId}.redirect" />
+            </intent-filter>
+        </activity>
+
+        <!--
           Declares Google Pay support for this app — required by the Google Pay API so it (and the
           Play Store) know this app integrates it. Ships here, in :partner-ui, so the integrator
           needs no manifest work of their own, same rationale as the PayPal return Activity above.

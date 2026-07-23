@@ -15,6 +15,8 @@ import com.google.android.gms.wallet.contract.TaskResultContracts.GetPaymentData
 import eu.purse.dropin.DropinAndroid
 import eu.purse.dropin.core.environment.PurseEnvironment
 import eu.purse.dropin.partnerui.generic.googlepay.GooglePayClient
+import eu.purse.dropin.partnerui.generic.redirection.RedirectionCheckoutContract
+import eu.purse.dropin.partnerui.generic.redirection.RedirectionCheckoutResult
 import eu.purse.dropin.partnerui.partner.paypal.wallet.PaypalCheckoutContract
 import eu.purse.dropin.partnerui.partner.paypal.wallet.PaypalCheckoutInput
 import eu.purse.dropin.partnerui.partner.paypal.wallet.PaypalCheckoutResult
@@ -78,9 +80,18 @@ class DropinActivity : AppCompatActivity() {
     // follow-up /validate call, the same role [paypalStepId] plays for PayPal.
     private var googlePayPartnerWire: String? = null
 
+    // The token/network from the Google Pay sheet, re-sent to /validate after a chained-3DS
+    // redirect round-trip — see [captureGooglePay] and [onRedirectionResult].
+    private var googlePayPendingToken: String? = null
+    private var googlePayPendingNetwork: String? = null
+
     // Registered up front (before the Activity is started) so the PayPal approval result routes back
     // here. The return Activity + its deep-link filter live in :partner-ui — no manifest work here.
     private val paypalLauncher = registerForActivityResult(PaypalCheckoutContract()) { onPaypalResult(it) }
+
+    // Generic redirect (chained 3DS/SCA, any method) — same registration rationale as
+    // [paypalLauncher]. Only Google Pay drives this today; see [captureGooglePay].
+    private val redirectionLauncher = registerForActivityResult(RedirectionCheckoutContract()) { onRedirectionResult(it) }
 
     // Registered up front, same rationale as [paypalLauncher] — but Google Pay needs no dedicated
     // return Activity/manifest work at all: `GetPaymentDataResult` is Google's own
@@ -465,9 +476,11 @@ class DropinActivity : AppCompatActivity() {
 
     /**
      * Google Pay, step 3: capture the token (`/validate`) off the main thread. A chained 3-D
-     * Secure redirect ([eu.purse.dropin.partnerui.generic.googlepay.GooglePayValidationResult.redirectionUrl])
-     * isn't followed in this POC — see docs/architecture/redirect-handling.md, the same limitation
-     * as PayPal's [capturePaypal].
+     * Secure redirect ([eu.purse.dropin.partnerui.generic.googlepay.GooglePayValidationResult.redirectAction])
+     * is followed via [redirectionLauncher] — Google Pay's `/validate` is a **confirmed**, not
+     * hypothetical, redirect trigger (see docs/partners/adyen.md#redirection-study). On return,
+     * [onRedirectionResult] re-calls this same function to re-validate — matching PayPal's own
+     * init→approve→validate chain, just one step later in the flow.
      */
     private fun captureGooglePay(token: String, selectedNetwork: String?) {
         val dropin = activeDropin ?: return
@@ -477,6 +490,14 @@ class DropinActivity : AppCompatActivity() {
             try {
                 val result = dropin.validateGooglePay(partnerWire, token, selectedNetwork)
                 runOnUiThread {
+                    val redirectAction = result.redirectAction
+                    if (redirectAction != null) {
+                        googlePayPendingToken = token
+                        googlePayPendingNetwork = selectedNetwork
+                        showPayStatus(getString(R.string.googlepay_redirect_required))
+                        redirectionLauncher.launch(redirectAction)
+                        return@runOnUiThread
+                    }
                     val summary = if (result.isSuccess) {
                         getString(R.string.googlepay_success)
                     } else {
@@ -488,6 +509,25 @@ class DropinActivity : AppCompatActivity() {
                 runOnUiThread { showPayStatus(getString(R.string.googlepay_error, e.message)) }
             }
         }.start()
+    }
+
+    /**
+     * The generic redirect round-trip finished. [RedirectionCheckoutResult.Approved] only means
+     * the shopper came back — it's a hint to re-validate, not the payment outcome (see
+     * docs/architecture/redirect-handling.md#the-return-path) — so this just re-runs
+     * [captureGooglePay] with the same token/network as before; the real outcome comes from that
+     * `/validate` call's own `global_status`.
+     */
+    private fun onRedirectionResult(result: RedirectionCheckoutResult) {
+        when (result) {
+            RedirectionCheckoutResult.Approved -> {
+                val token = googlePayPendingToken ?: return
+                captureGooglePay(token, googlePayPendingNetwork)
+            }
+            RedirectionCheckoutResult.Canceled -> showPayStatus(getString(R.string.googlepay_redirect_canceled))
+            is RedirectionCheckoutResult.Failed ->
+                showPayStatus(getString(R.string.googlepay_redirect_failed, result.message))
+        }
     }
 
     /**

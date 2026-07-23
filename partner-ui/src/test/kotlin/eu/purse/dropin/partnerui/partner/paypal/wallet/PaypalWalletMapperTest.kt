@@ -1,6 +1,7 @@
 package eu.purse.dropin.partnerui.partner.paypal.wallet
 
 import eu.purse.dropin.core.api.PaymentApiException
+import eu.purse.dropin.partnerui.redirect.RedirectAction
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -95,7 +96,7 @@ class PaypalWalletMapperTest {
 
         assertTrue(result.isSuccess)
         assertEquals("SUCCESS", result.globalStatus)
-        assertNull(result.redirectionUrl)
+        assertNull(result.redirectAction)
     }
 
     @Test
@@ -107,6 +108,6 @@ class PaypalWalletMapperTest {
         )
 
         assertFalse(result.isSuccess)
-        assertEquals("https://3ds.example/step", result.redirectionUrl)
+        assertEquals(RedirectAction.Get("https://3ds.example/step"), result.redirectAction)
     }
 }

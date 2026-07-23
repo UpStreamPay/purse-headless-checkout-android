@@ -1,6 +1,7 @@
 package eu.purse.dropin.partnerui.partner.paypal.wallet
 
 import eu.purse.dropin.core.api.PaymentApiException
+import eu.purse.dropin.partnerui.redirect.RedirectionResolver
 import org.json.JSONArray
 import org.json.JSONObject
 import java.math.BigDecimal
@@ -88,11 +89,10 @@ object PaypalWalletMapper {
      */
     fun parseValidation(data: JSONObject): WalletValidationResult {
         val globalStatus = data.optString("global_status")
-        val redirectionUrl = data.optJSONObject("redirection")?.optStringOrNull("url")
         return WalletValidationResult(
             isSuccess = globalStatus.equals("SUCCESS", ignoreCase = true),
             globalStatus = globalStatus,
-            redirectionUrl = redirectionUrl,
+            redirectAction = RedirectionResolver.resolve(data, PARTNER, METHOD, sessionFallbackUrl = null),
             rawResponse = data.toString(2),
         )
     }

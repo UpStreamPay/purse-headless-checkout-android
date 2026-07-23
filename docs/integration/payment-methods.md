@@ -32,7 +32,12 @@ described in [Session & Protocols](../architecture/session-and-protocols.md#init
 
 What differs per method is what goes into `payment_data` at step 2, and whether step 3's response
 carries a `redirection` object that needs handling (see
-[Redirect Handling](../architecture/redirect-handling.md)).
+[Redirect Handling](../architecture/redirect-handling.md)). **The common case needs nothing
+beyond step 3**: absent a `redirection.url` and any partner-owned approval step still pending, the
+SDK just resolves the `/validate` result (success/error) straight back to the host app — there's no
+mobile equivalent of web's "navigate to `session.success`," since there's no browser page to land
+on. See [What "no redirect" means for a mobile
+SDK](../architecture/redirect-handling.md#what-no-redirect-means-for-a-mobile-sdk).
 
 ---
 
