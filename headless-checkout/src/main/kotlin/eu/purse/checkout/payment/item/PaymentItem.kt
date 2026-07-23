@@ -1,5 +1,6 @@
 package eu.purse.checkout.payment.item
 
+import eu.purse.checkout.payment.split.SplitSource
 import eu.purse.core.payment.IntegrationMode
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.MethodConfiguration
@@ -15,10 +16,10 @@ import java.math.BigDecimal
  * Immutable: recomputing a method's [disabled] state (as the split changes) returns a copy — see
  * [withDisabled] and [MethodAvailability].
  */
-sealed class PaymentItem {
-    abstract val id: String
-    abstract val partner: Partner
-    abstract val method: Method
+sealed class PaymentItem : SplitSource {
+    abstract override val id: String
+    abstract override val partner: Partner
+    abstract override val method: Method
     abstract val configuration: MethodConfiguration
     abstract val disabled: DisabledState?
     abstract val isSecondary: Boolean

@@ -38,13 +38,55 @@ checkout.paymentMethods.value        // primaries + secondaries, with live disab
 checkout.remainingAmountToPay.value  // what a primary still owes
 checkout.isPaymentFulfilled.value
 
-// 3. Build the split: draw down secondaries and/or choose a primary.
-checkout.takeSecondary(giftCard, balance = BigDecimal("10.00"))
+// 3. Build the split: draw down secondaries (see below) and/or choose a primary.
 checkout.setPrimary(cardMethod)
 
 // 4. Create the payment (suspend; off the main thread). Needs a registered :partner-ui plugin.
 val result = checkout.submitPayment()
 ```
+
+### Secondaries (co-payment)
+
+Gift cards, vouchers and loyalty cards are handled directly by the SDK (no `:partner-ui` plugin).
+Reading a balance and applying it to the split are **separate** steps — call `getSecondaryToken`
+alone if you only want the balance.
+
+```kotlin
+// The co-payment methods the session offers.
+val giftCard: SecondaryMethod = checkout.secondaryMethods.first()
+
+// Client-side rules for the manual card form (null when the method has no registered config).
+val cfg = checkout.secondaryConfig(giftCard)
+cfg?.requiresCvv(pan)   // whether to collect a CVV
+cfg?.validatePan(pan)   // PAN format check
+cfg?.validateCvv(cvv)   // CVV format check
+
+// 1. Tokenize to read the BALANCE — POSTs /init, does NOT touch the split.
+//    suspend: call off the main thread. Stop here if all you want is the balance.
+val token: SecondaryToken = checkout.getSecondaryToken(giftCard, pan, cvv)
+token.balance          // spendable now
+token.totalBalance     // full balance (differs for loyalty)
+
+// 2. Apply it to the split. `amount` may be any value up to the balance; omit it to take as much
+//    as the order still needs. Non-splittable tokens (takePolicy == MAX) ignore `amount`.
+checkout.applySecondary(token, amount = BigDecimal("10.00"))
+checkout.removeSecondary(token)      // undo
+
+// Reactive state reflects the split after each change.
+checkout.appliedSecondaries          // List<SecondaryToken>
+checkout.remainingAmountToPay.value  // what's left for a primary
+checkout.amountSplit.value           // per-source slices
+```
+
+At `submitPayment()` each applied token builds its `/validate` payload from its `SecondaryConfig`.
+
+**Errors** from `getSecondaryToken`: `PurseCheckoutException.NoSecondaryConfig` (method has no
+config), `InvalidSecondaryCard` (PAN/CVV fails validation), `SecondaryTokenizationFailed`
+(unsuccessful `/init` or zero balance), `PaymentApiException` (network).
+
+**Supported methods** (`SecondaryConfigs`, keyed `"{partner}-{method}"`): `illicado-giftcard`,
+`buybox-giftcard`, `maxxing-loyaltycard`, `ogloba-giftcard`, `mybeezbox-giftcard`,
+`easy2play-giftcard`, `easy2play-voucher`. `ancv-connect` is deferred (two-phase polling).
 
 ## Build & test
 

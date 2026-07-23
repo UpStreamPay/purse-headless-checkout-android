@@ -25,7 +25,6 @@ data class PartnerUiContext(
     val session: LegacyPaymentSession,
     val amount: BigDecimal,
     val api: PaymentApiClient,
-    val ui: PluginInterface = PluginInterface.FORM,
     val register: Boolean = false,
     val token: String? = null,
     val options: PluginOptions = PluginOptions(),

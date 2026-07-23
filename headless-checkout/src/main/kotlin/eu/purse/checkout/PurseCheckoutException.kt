@@ -19,4 +19,13 @@ sealed class PurseCheckoutException(message: String, cause: Throwable? = null) :
     /** A client-side or API validation step failed during "create payment". */
     class ValidateFailed(message: String, cause: Throwable? = null) :
         PurseCheckoutException(message, cause)
+
+    /** No `SecondaryConfig` is registered for a secondary `(partner, method)`. */
+    class NoSecondaryConfig(message: String) : PurseCheckoutException(message)
+
+    /** A secondary card failed client-side PAN/CVV validation before tokenization. */
+    class InvalidSecondaryCard(message: String) : PurseCheckoutException(message)
+
+    /** The `/init` tokenization of a secondary was unsuccessful, or the card carries no balance. */
+    class SecondaryTokenizationFailed(message: String) : PurseCheckoutException(message)
 }

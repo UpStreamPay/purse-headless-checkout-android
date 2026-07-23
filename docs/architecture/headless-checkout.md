@@ -42,6 +42,50 @@ Dependency direction: `app → headless-checkout → { core, partner-ui }`, `par
 
 Amounts are decimal major-currency units; the splitter works in integer cents (×100) internally.
 
+## Secondaries (co-payment)
+
+Secondaries (gift cards, vouchers, loyalty) are a **`:headless-checkout` concern, not a `:partner-ui`
+plugin** — matching web. The flow, in `payment.secondary`:
+
+1. `PurseHeadlessCheckout.getSecondaryToken(method, pan, cvv)` validates the card against the
+   method's `SecondaryConfig`, `POST /init`s it, and parses a `SecondaryToken` (balance/name/expiry).
+2. `applySecondary(token, amount?)` draws it into the split, honouring its `SecondaryTakePolicy`
+   (`NONE` = splittable gift card, `MAX` = non-splittable loyalty).
+3. At `submitPayment`, secondary splits build their `/validate` payload from the same
+   `SecondaryConfig` (no plugin), while primary splits go through a `:partner-ui` plugin.
+
+### API (`PurseHeadlessCheckout`)
+
+```kotlin
+val secondaryMethods: List<SecondaryMethod>
+fun secondaryConfig(method: SecondaryMethod): SecondaryConfig?
+suspend fun getSecondaryToken(method: SecondaryMethod, pan: String, cvv: String? = null): SecondaryToken
+fun applySecondary(token: SecondaryToken, amount: BigDecimal? = null)
+fun removeSecondary(token: SecondaryToken)
+val appliedSecondaries: List<SecondaryToken>
+```
+
+- **`getSecondaryToken`** POSTs `/init` and returns the balance **without** modifying the split —
+  call it alone to just read a balance. `SecondaryToken` carries `balance`, `totalBalance`, `pan`,
+  `cvv`, `name`, `expirationDate`, `takePolicy` (`NONE` splittable / `MAX` non-splittable), `limit`.
+  It implements `SplitSource`.
+- **`applySecondary`** draws the token into the split, clamped to `min(amount, balance, remaining,
+  limit)`; a `MAX`-policy token always takes the full cap. The reactive `remainingAmountToPay`,
+  `isPaymentFulfilled` and `amountSplit` update.
+- **`secondaryConfig`** exposes the form rules: `requiresCvv(pan)`, `validatePan(pan)`,
+  `validateCvv(cvv)`, plus `takePolicy` — `null` when the method has no registered config.
+- **Errors:** `getSecondaryToken` throws `PurseCheckoutException.NoSecondaryConfig` /
+  `InvalidSecondaryCard` / `SecondaryTokenizationFailed`, or `PaymentApiException` (network).
+
+### Per-partner configs
+
+Configs live in `SecondaryConfigs`, keyed by `"{partner}-{method}"` exactly as web.
+Ported: `illicado-giftcard`, `buybox-giftcard`, `maxxing-loyaltycard` (non-splittable, balance from
+logs), `ogloba-giftcard`, `mybeezbox-giftcard`, `easy2play-giftcard` (requires CVV), `easy2play-voucher`
+(`voucher_number` body, non-splittable). Each declares its CVV/PAN rules, take policy, and token
+formatter (name log-key / custom parse). **`ancv-connect` is deferred** — it needs a two-phase
+holder→poll `/init` flow. Adding a partner is a new `SecondaryConfig` + registry entry.
+
 ## Plugin lifecycle (`:partner-ui`)
 
 A plugin integrates one `(partner, method)` pair. `getPlugin` resolves **vault → generic → partner**
@@ -61,6 +105,6 @@ against it, but no PSP is implemented yet. `submitPayment` therefore throws
 
 ## Deferred (intentionally not built yet)
 
-Concrete plugins (PayPal, Google Pay, card vaulting, redirect), the rendering host (web's
-`<purse-partner-ui>` element), secondary-token `/init`, the splitter's voucher→loyalty→primary
-autofill middleware, and wallet (saved-token) sessions.
+Concrete **primary** plugins (PayPal, Google Pay, card vaulting, redirect), the rendering host
+(web's `<purse-partner-ui>` element), the `ancv-connect` two-phase (holder→poll) secondary flow,
+the splitter's voucher→loyalty→primary autofill middleware, and wallet (saved-token) sessions.

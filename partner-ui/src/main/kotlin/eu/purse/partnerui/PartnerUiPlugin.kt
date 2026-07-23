@@ -27,9 +27,6 @@ interface PartnerUiPlugin {
     val partner: Partner
     val method: Method
 
-    /** Which interfaces this plugin can present — see [PluginInterface]. */
-    val interfaces: List<PluginInterface>
-
     /** Set when this plugin is a card-vaulting plugin (web's vault plugin family); else `null`. */
     val vault: VaultVendor? get() = null
 

@@ -15,4 +15,18 @@
 
     <string name="output_placeholder">Initialize the headless checkout to inspect its session, methods and split here.</string>
     <string name="session_error">Session error: %1$s</string>
+
+    <string name="section_secondary">Add a gift card (secondary)</string>
+    <string name="helper_giftcard">Illicado test card: PAN 9250004781234567890, CVC 123. Leave the amount blank to use as much of the balance as the order needs, or enter a smaller amount to contribute part of it.</string>
+    <string name="hint_giftcard_pan">Gift card number</string>
+    <string name="hint_giftcard_cvv">CVC</string>
+    <string name="hint_giftcard_amount">Amount to apply (optional)</string>
+    <string name="btn_check_balance">Check balance</string>
+    <string name="btn_apply_giftcard">Add to payment</string>
+    <string name="giftcard_amount_invalid">Enter a valid amount</string>
+    <string name="giftcard_balance">%1$s — balance %2$s</string>
+    <string name="giftcard_balance_partial">%1$s — balance %2$s of %3$s</string>
+    <string name="giftcard_check_first">Check the balance first.</string>
+    <string name="giftcard_added">Applied %1$s of %2$s balance</string>
+    <string name="giftcard_error">Couldn\'t read card: %1$s</string>
 </resources>

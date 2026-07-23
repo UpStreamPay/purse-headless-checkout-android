@@ -1,7 +1,6 @@
 package eu.purse.checkout
 
-import eu.purse.checkout.payment.item.PrimaryMethod
-import eu.purse.checkout.payment.item.SecondaryMethod
+import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.core.payment.IntegrationMode
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
@@ -56,14 +55,26 @@ class PurseHeadlessCheckoutTest {
     }
 
     @Test
-    fun `a secondary covering the amount fulfills without a primary`() {
+    fun `an applied secondary token covering the amount fulfills without a primary`() {
         val checkout = checkout()
 
         val giftCard = checkout.secondaryMethods.single()
-        checkout.takeSecondary(giftCard, BigDecimal("10.00"))
+        // A token would normally come from getSecondaryToken (a /init network call); build one
+        // directly here to exercise the split path without the network.
+        val token = SecondaryToken(
+            id = "illicado-giftcard-7890",
+            partner = giftCard.partner,
+            method = giftCard.method,
+            pan = "9250004781234567890",
+            cvv = "123",
+            name = "gift",
+            balance = BigDecimal("10.00"),
+        )
+        checkout.applySecondary(token)
 
         assertTrue(checkout.isPaymentFulfilled.value)
         assertEquals(0, BigDecimal.ZERO.compareTo(checkout.remainingAmountToPay.value))
+        assertEquals(listOf(token), checkout.appliedSecondaries)
     }
 
     @Test

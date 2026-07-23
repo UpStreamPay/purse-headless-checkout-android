@@ -1,29 +1,30 @@
 package eu.purse.checkout.payment.split
 
 import eu.purse.checkout.payment.item.PrimaryMethod
-import eu.purse.checkout.payment.item.SecondaryMethod
+import eu.purse.checkout.payment.secondary.SecondaryTakePolicy
+import eu.purse.checkout.payment.secondary.SecondaryToken
 import java.math.BigDecimal
 import java.math.RoundingMode
 
 /**
  * The payment split for a session — the Kotlin analog of web headless-checkout's
- * `PursePaymentSplitter`. Model: **one primary + N secondaries**. Secondaries (gift cards,
- * vouchers) are drawn down first; the primary absorbs whatever is left ([primaryReach]).
+ * `PursePaymentSplitter`. Model: **one primary + N secondaries**. Applied secondary tokens (gift
+ * cards, vouchers) are drawn down first; the primary absorbs whatever is left ([primaryReach]).
  *
  * All arithmetic is in **integer cents** to avoid binary-float drift, matching web; public amounts
  * are `BigDecimal` major-currency units at 2-dp scale. Not thread-safe — drive it from one thread
  * (the SDK does so behind [eu.purse.checkout.PurseHeadlessCheckout]).
  *
  * The voucher → loyalty → primary autofill middleware chain web runs over the splits is a
- * documented extension point; it is not modelled yet (no secondary plugins exist to feed it).
+ * documented extension point; only the per-instrument [SecondaryTakePolicy] is modelled so far.
  */
 class PursePaymentSplitter(orderAmount: BigDecimal) {
 
     private var amountCents: Long = toCents(orderAmount)
     private var primary: PrimaryMethod? = null
 
-    /** Applied secondaries, keyed by item id, in insertion order. */
-    private val secondaries = LinkedHashMap<String, Pair<SecondaryMethod, Long>>()
+    /** Applied secondary tokens, keyed by token id, in insertion order. */
+    private val secondaries = LinkedHashMap<String, Pair<SecondaryToken, Long>>()
 
     val orderAmount: BigDecimal get() = fromCents(amountCents)
 
@@ -38,16 +39,19 @@ class PursePaymentSplitter(orderAmount: BigDecimal) {
 
     val primaryMethod: PrimaryMethod? get() = primary
 
+    /** The applied secondary tokens, in the order they were added. */
+    val appliedSecondaries: List<SecondaryToken> get() = secondaries.values.map { it.first }
+
     /**
      * True once payment can be submitted: a zero-amount session, secondaries covering the whole
      * amount, or a primary selected to cover the remainder — mirroring web's completion rule.
      */
     val fulfilled: Boolean get() = amountCents == 0L || remainingCents() == 0L || primary != null
 
-    /** The submittable set: each secondary's slice, plus the primary's remainder when one is set. */
+    /** The submittable set: each applied token's slice, plus the primary's remainder when one is set. */
     val splits: List<PaymentSplit>
         get() {
-            val list = secondaries.values.map { (method, cents) -> PaymentSplit(fromCents(cents), method) }
+            val list = secondaries.values.map { (token, cents) -> PaymentSplit(fromCents(cents), token) }
                 .toMutableList()
             val remainder = remainingCents()
             primary?.let { if (remainder > 0L) list += PaymentSplit(fromCents(remainder), it) }
@@ -59,23 +63,28 @@ class PursePaymentSplitter(orderAmount: BigDecimal) {
     }
 
     /**
-     * Apply a secondary instrument's [balance] against what's left. The draw is capped at the
-     * balance, the method's `payment_max_amount`, and the remaining amount (overflow dropped) —
-     * matching web's clamping. Re-applying the same method replaces its previous slice.
+     * Draw an applied [token] down against what's left. The draw is capped at the token's balance,
+     * its per-session limit, and the remaining amount. A [SecondaryTakePolicy.MAX] token
+     * (non-splittable, e.g. loyalty) always takes the full cap; a [SecondaryTakePolicy.NONE] token
+     * takes [requestedAmount] (or the full cap when null). Re-applying replaces the prior slice.
      */
-    fun takeSplit(method: SecondaryMethod, balance: BigDecimal) {
-        val alreadyThis = secondaries[method.id]?.second ?: 0L
+    fun takeSplit(token: SecondaryToken, requestedAmount: BigDecimal? = null) {
+        val alreadyThis = secondaries[token.id]?.second ?: 0L
         val remainingWithoutThis = amountCents - (rawSecondarySumCents() - alreadyThis)
-        val maxCents = method.maxAmount?.let(::toCents) ?: Long.MAX_VALUE
-        val take = minOf(toCents(balance), remainingWithoutThis, maxCents).coerceAtLeast(0L)
-        if (take == 0L) secondaries.remove(method.id) else secondaries[method.id] = method to take
+        val limitCents = token.limit?.let(::toCents) ?: Long.MAX_VALUE
+        val cap = minOf(toCents(token.balance), remainingWithoutThis, limitCents).coerceAtLeast(0L)
+        val take = when (token.takePolicy) {
+            SecondaryTakePolicy.MAX -> cap
+            SecondaryTakePolicy.NONE -> minOf(requestedAmount?.let(::toCents) ?: cap, cap).coerceAtLeast(0L)
+        }
+        if (take == 0L) secondaries.remove(token.id) else secondaries[token.id] = token to take
     }
 
-    fun clearSplit(method: SecondaryMethod) {
-        secondaries.remove(method.id)
+    fun clearSplit(token: SecondaryToken) {
+        secondaries.remove(token.id)
     }
 
-    /** Reset to a fresh order amount, dropping the primary and every secondary. */
+    /** Reset to a fresh order amount, dropping the primary and every applied secondary. */
     fun reset(orderAmount: BigDecimal) {
         amountCents = toCents(orderAmount)
         primary = null

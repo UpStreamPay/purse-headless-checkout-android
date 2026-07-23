@@ -4,6 +4,10 @@ import eu.purse.checkout.payment.item.MethodAvailability
 import eu.purse.checkout.payment.item.PaymentItem
 import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.checkout.payment.item.SecondaryMethod
+import eu.purse.checkout.payment.secondary.SecondaryConfig
+import eu.purse.checkout.payment.secondary.SecondaryConfigs
+import eu.purse.checkout.payment.secondary.SecondaryToken
+import eu.purse.checkout.payment.secondary.SecondaryTokenizer
 import eu.purse.checkout.payment.split.PaymentSplit
 import eu.purse.checkout.payment.split.PursePaymentSplitter
 import eu.purse.checkout.session.PaymentSession
@@ -69,20 +73,42 @@ class PurseHeadlessCheckout private constructor(
     val primaryMethods: List<PrimaryMethod> get() = session.meansOfPayment.filterIsInstance<PrimaryMethod>()
     val secondaryMethods: List<SecondaryMethod> get() = session.meansOfPayment.filterIsInstance<SecondaryMethod>()
 
+    /** Applied secondary tokens, in the order they were added. */
+    val appliedSecondaries: List<SecondaryToken> get() = splitter.appliedSecondaries
+
     /** Choose (or clear, with `null`) the primary method that covers the remaining amount. */
     fun setPrimary(method: PrimaryMethod?) {
         splitter.setPrimary(method)
         refresh()
     }
 
-    /** Draw a secondary instrument's [balance] down against what's left (see [PursePaymentSplitter]). */
-    fun takeSecondary(method: SecondaryMethod, balance: BigDecimal) {
-        splitter.takeSplit(method, balance)
+    /** The per-partner config for a secondary method (PAN/CVV rules, take policy) — `null` if none. */
+    fun secondaryConfig(method: SecondaryMethod): SecondaryConfig? = SecondaryConfigs.forMethod(method)
+
+    /**
+     * Tokenize a secondary card — `POST /init` — against the amount a primary would still cover,
+     * returning the [SecondaryToken] (balance/name/expiry) to hand to [applySecondary]. Validate
+     * PAN/CVV with [secondaryConfig] first. Blocking API work happens via `suspend`; move it to
+     * `Dispatchers.IO` at the call site.
+     *
+     * @throws PurseCheckoutException.NoSecondaryConfig / InvalidSecondaryCard / SecondaryTokenizationFailed
+     * @throws eu.purse.core.api.PaymentApiException on network/API failure.
+     */
+    suspend fun getSecondaryToken(method: SecondaryMethod, pan: String, cvv: String? = null): SecondaryToken =
+        SecondaryTokenizer(apiClient()).tokenize(method, pan, cvv, splitter.remaining)
+
+    /**
+     * Draw an applied [token] down against what's left. For a splittable (gift-card) token, [amount]
+     * caps the draw (defaults to the most it can cover); non-splittable tokens ignore it. See
+     * [PursePaymentSplitter].
+     */
+    fun applySecondary(token: SecondaryToken, amount: BigDecimal? = null) {
+        splitter.takeSplit(token, amount)
         refresh()
     }
 
-    fun clearSecondary(method: SecondaryMethod) {
-        splitter.clearSplit(method)
+    fun removeSecondary(token: SecondaryToken) {
+        splitter.clearSplit(token)
         refresh()
     }
 
