@@ -1,6 +1,7 @@
 package eu.purse.dropin_android
 
 import android.os.Bundle
+import android.util.Log
 import android.view.WindowManager
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.view.ViewCompat
@@ -222,6 +223,16 @@ class DropinActivity : AppCompatActivity() {
         // Hidden by default — this raw session dump is debug-only noise for the checkout UI; the
         // pay/PayPal/Google Pay/Get Transactions buttons below are unaffected.
         binding.sessionSummaryText.isVisible = false
+
+        // Logged here, not in :dropin (that module stays plain-JUnit-testable, no android.* —
+        // see docs/internal/project-setup.md), to cross-reference against
+        // RedirectionCheckoutActivity's own logs (tag "RedirectionCheckout") when a redirect lands
+        // on an environment/api-key mismatch — see docs/decisions/pain-points-recap.md.
+        Log.d(
+            "DropinAndroid",
+            "environment=${dropin.sessionParams.environment.wireValue} apiRoot=${dropin.paymentApiRoot} " +
+                "entityId=${dropin.sessionParams.entityId} apiKey=${dropin.sessionParams.apiKey}",
+        )
 
         // Reset payment state for this session (a fresh splitter owes the full amount).
         split = PaymentSplitter(dropin.session.amount)

@@ -3,7 +3,10 @@ package eu.purse.dropin.partnerui.generic.redirection
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
+import android.util.Log
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
@@ -60,7 +63,8 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
                     finishWith(STATUS_FAILED, message = "missing redirect url/form data")
                     return
                 }
-                renderWebView().postUrl(url, formData.toByteArray())
+                val html = FormRedirectHtmlBuilder.buildAutoSubmitFormHtml(url, formData)
+                renderWebView().loadDataWithBaseURL(null, html, "text/html", "utf-8", null)
             }
 
             RedirectionCheckoutContract.TYPE_POST_HTML -> {
@@ -82,6 +86,14 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
      * intercepts it and fires a real `ACTION_VIEW` Intent instead, so the OS's normal
      * intent-filter matching (not the WebView) delivers the return — same mechanism the Custom
      * Tabs path relies on.
+     *
+     * Logs every URL the WebView navigates to (`Log.tag = "RedirectionCheckout"`) plus any
+     * HTTP-level error response — `adb logcat -s RedirectionCheckout` shows the full redirect
+     * chain. The final hop after a 3DS challenge (bank ACS → whatever notification/return URL the
+     * backend configured for that challenge) is entirely outside this app's control; if it 401s
+     * with "Unknown API Key", that's Purse's own API gateway (`usp-cf-api-gateway`) rejecting the
+     * `api-key` query param on *that* URL, not something this redirect handler builds or can fix
+     * client-side — see docs/decisions/pain-points-recap.md.
      */
     private fun renderWebView(): WebView {
         val view = WebView(this)
@@ -94,6 +106,25 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
                     return true
                 }
                 return false
+            }
+
+            override fun onPageStarted(view: WebView, url: String?, favicon: android.graphics.Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                Log.d(TAG, "onPageStarted: $url")
+            }
+
+            override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse) {
+                super.onReceivedHttpError(view, request, errorResponse)
+                if (request.isForMainFrame) {
+                    Log.w(TAG, "onReceivedHttpError: HTTP ${errorResponse.statusCode} on ${request.url}")
+                }
+            }
+
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
+                super.onReceivedError(view, request, error)
+                if (request.isForMainFrame) {
+                    Log.w(TAG, "onReceivedError: ${error.description} on ${request.url}")
+                }
             }
         }
         setContentView(view)
@@ -148,5 +179,6 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
         const val STATUS_FAILED = "failed"
         private const val STATE_LAUNCHED = "launched"
         private const val STATE_LEFT = "left_for_browser"
+        private const val TAG = "RedirectionCheckout"
     }
 }

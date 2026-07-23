@@ -48,7 +48,7 @@ Everything below is organized against those steps.
 | Method          | Capture                      | /init + /validate          | External step                                                   |
 | --------------- | ----------------------------- | --------------------------- | ---------------------------------------------------------------- |
 | **CB** (SecureFields) | native fields            | wired (`CardMapper`)        | 3DS: planned via SecureFields' upcoming 3DS module               |
-| **Google Pay**  | native sheet                  | wired                        | 3DS: wired (Custom Tabs/WebView), untested against a real challenge |
+| **Google Pay**  | native sheet                  | wired                        | 3DS: wired and confirmed reachable against Google's `3ds_visa` test card (Custom Tabs/WebView) |
 | **PayPal**      | PayPal SDK browser-switch      | wired                        | approval works; backend return-URL question open (see below)    |
 | **Illicado**    | plain form                    | `/init` wired                | none known                                                       |
 
@@ -73,9 +73,13 @@ values are `SUCCESS / ERROR / UNCERTAIN / FAILED / WAITING` — and the web widg
 redirect logic when the value is **`SUCCESS`**. So if the backend were to answer a 3DS-requiring
 `/validate` with `WAITING` (the intuitive choice), the web widget's own redirect code would never
 run. Either the backend always says `SUCCESS` here (surprising but consistent), or this is a latent
-bug in the reference implementation that we should not port. We can't tell which from reading
-code — **no one has yet captured a real 3DS-requiring `/validate` response in sandbox**, on web or
-on Android.
+bug in the reference implementation that we should not port.
+
+**Update:** a real 3DS-requiring `/validate` response has now been observed on Android, via
+Google's `3ds_visa` Google Pay test card — `RedirectionResolver` correctly resolved a real
+per-item POST-form redirect from it, confirming the redirect *fields* are shaped as expected. The
+exact `global_status` value that response carried alongside it hasn't been logged/confirmed yet,
+so the ambiguity above is narrowed but not fully closed — worth capturing on the next test run.
 
 **What we need:** one real sandbox 3DS round-trip, and ideally an explicit
 `next_action: { type, url, body }`-style field in the response (the way Stripe and Adyen do it) so
@@ -96,6 +100,38 @@ where the shopper lands after approving. Our app declares the right scheme on it
 requirements](https://developer.paypal.com/docs/checkout/advanced/android/)), but that only works
 if the backend registers a matching app link instead of the merchant's web success URL.
 **Unconfirmed** — this is the top blocker for calling PayPal "done."
+
+**Now confirmed for 3DS too, not just PayPal.** Testing Google Pay's 3DS branch against Google's
+`3ds_visa` test card: the challenge itself completes correctly (after the POST-form fix above),
+but the bank's own final redirect — entirely outside this app's control, since it's the ACS
+deciding where to send the browser once the challenge is done — lands on a 401 from **Purse's own
+API gateway**: `Unknown API Key: {key}` (`usp-cf-api-gateway/src/api-key.ts` +
+`proxy.ts:311-334` — `extractApikey` reads `x-api-key` or an `api-key` query param and looks it up
+against a registered client list; a browser redirect can only carry the query-param form). That
+`api-key` value came from whatever notification/return URL Adyen/Purse's backend configured when
+the 3DS challenge was created — the exact same "who controls the return target" gap as PayPal's,
+now reproduced with a concrete device failure instead of a theoretical one. Nothing in this app's
+redirect-handling code can fix this — it just follows whatever URL the bank sends it to, per
+design (see docs/architecture/redirect-handling.md#the-return-path: "treat returned params as a
+hint, not the source of truth" applies to where we *land*, not just what we read once there).
+`RedirectionCheckoutActivity` now logs every URL it navigates through plus any HTTP error
+(`adb logcat -s RedirectionCheckout`), which captured the actual failing URL on a real run:
+
+```
+https://api.purse-test.com/payment/v1/redirection/entity/{entityId}/sessions/{sessionId}/adyen/googlepay?api-key=...&redirectResult=...
+```
+
+**Confirmed constructed entirely server-side, not by any client.** `redirectResult` is Adyen's own
+callback parameter for its `/payments/details` flow, and `/payment/v1/redirection/...` is a Purse
+Payment API path no client code builds — a repo-wide check of every `apiKey` usage across the
+whole web SDK (`packages/sdk/src/API/{payment,wallet,datetime}-api.ts`) shows it is **only ever
+sent as an `x-api-key` header**, never once assembled into a URL as a query parameter, anywhere.
+So this `api-key` value was chosen by Purse's backend when it told Adyen, server-side, to set this
+URL as the 3DS challenge's `returnUrl` — completely invisible to the web widget or this app either
+way. Whether that embedded key matches the session's own `widget.data.api_key` (the one `/init`/
+`/validate` already used successfully) or not determines which of two backend bugs this is — a
+route-specific provisioning gap, or a stale/wrong key baked in at session-creation time — but
+either way it's backend/PSP-integration's fix, not something reachable from the client.
 
 **Custom URL schemes aren't secure return paths.** Any installed app can claim the same scheme;
 only [verified App Links](https://developer.android.com/training/app-links/verify-android-applinks)
@@ -225,22 +261,27 @@ These were open questions in earlier drafts; both closed by reading the right so
 
 ## Asks for the API/backend team, in priority order
 
-1. **Show us one real 3DS-requiring `/validate` response** (sandbox) — settles the
+1. **Fix the 3DS notification/return URL's `api-key` for mobile-originated sessions.** Confirmed
+   broken, not theoretical: Google Pay's 3DS challenge (Google's `3ds_visa` test card) completes
+   correctly, then the bank's own final redirect 401s on Purse's API gateway with
+   `Unknown API Key` (Pain point 2). Whatever URL Adyen/Purse's backend configures as the 3DS
+   challenge's return target needs a valid `api-key` for *this* session/client.
+2. **Show us one real 3DS-requiring `/validate` response** (sandbox) — settles the
    `global_status`/redirect ambiguity that everything else in Pain point 1 hangs on.
-2. **Add an explicit `next_action` field** to `/validate` responses (additive, non-breaking) so
+3. **Add an explicit `next_action` field** to `/validate` responses (additive, non-breaking) so
    clients stop inferring redirects from optional-field patterns.
-3. **Confirm PayPal order creation can register an app return URL** (App Link or scheme) for
-   mobile sessions — the PayPal flow is blocked on this.
-4. **Let us add one `integration_mode: "redirection"` method to the POC** (Fintecture
+4. **Confirm PayPal order creation can register an app return URL** (App Link or scheme) for
+   mobile sessions — same class of gap as #1 above, for PayPal's own approval step.
+5. **Let us add one `integration_mode: "redirection"` method to the POC** (Fintecture
    `instant_payment` or similar) — the generic redirect handler (`RedirectionResolver` +
    `RedirectionCheckoutActivity`) is now built, but has never run against a real redirect end to
    end; this is the fastest way to prove it actually works (Pain point 3).
-5. **Clarify the session id story** — is `legacy_payment_session_id` real, and which id does
+6. **Clarify the session id story** — is `legacy_payment_session_id` real, and which id does
    `GET /{entity}/sessions/{session}` want?
-6. **Tell us whether mobile SDK work should target v1 or v2.** If v2, asks 1–2 may be moot.
-7. **Decide App Links (and/or v2's signed redirection-data) as the mobile return-path standard**,
+7. **Tell us whether mobile SDK work should target v1 or v2.** If v2, asks 1–2 may be moot.
+8. **Decide App Links (and/or v2's signed redirection-data) as the mobile return-path standard**,
    rather than per-partner ad-hoc schemes.
-8. **Ask PSP-integration whether Illicado can ever require a step-up.**
+9. **Ask PSP-integration whether Illicado can ever require a step-up.**
 
 ---
 
