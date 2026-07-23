@@ -1,89 +1,69 @@
-# Purse Android Drop-in (POC)
+# Purse Android Headless Checkout
 
-Native Android Drop-in POC for [SDK-12039](https://upstreampay.atlassian.net/browse/SDK-12039):
-initialize a Purse payment session and pay with CB, Google Pay, PayPal, or Illicado, using native
-UI throughout — built on top of the existing [SecureFields Android
-SDK](https://upstreampay.atlassian.net/browse/SDK-11769) for card capture.
+A **headless** Android SDK for Purse payments. It owns the *concept of a purse payment* — session
+handling, the payment-method model, payment splitting, and the plugin-driven validate ("create
+payment") pipeline — and leaves the UI entirely to the merchant. It mirrors the web `usp-widget`
+architecture (the sibling `../usp-widget` repo), not the older native drop-in.
 
-> **Status: early POC, in progress.** The `:core`, `:partner-ui`, and `:dropin` SDK modules
-> (session decode + payment-method model in `:dropin`; PayPal in `:partner-ui`; the Payment API
-> client + environment targets in `:core`) and a working `:app` demo (View system) exist. The demo
-> mints a session via the alfred dev server and renders the method list on its own page; **CB card
-> capture uses the SecureFields Android SDK**, Illicado gift-card entry works end to end against
-> `/init`, **PayPal (wallet) pays via the official PayPal Android SDK** (`/init` → approval →
-> `/validate`), and a **pay button** reflects web's completion rule (secondaries cover the amount,
-> or a primary is valid). As gift cards are added the method list **re-evaluates live** against the
-> remaining amount (web's `updateMopDisabledState`): a primary below its min disables, and once
-> secondaries cover the whole amount every method reads as fulfilled. Still to build: `/validate`
-> for the card pay button (it tokenizes but doesn't submit yet), the combined secondary+primary
-> `/validate` submission, the Google Pay coordinator, and generic redirect/3-D Secure handling — see
-> [Still to do](docs/internal/project-setup.md#still-to-do). The `/docs` folder documents the target
-> architecture, derived from the web Drop-in (`@upstreampay/dropin` / `@upstreampay/headless-checkout`
-> in the sibling `usp-widget` repo) and the SecureFields Android SDK (sibling `vault-android` repo).
-
----
-
-## Start here
-
-**[docs/README.md](docs/README.md)** — full documentation index.
-
-| If you want to... | Read |
-|---|---|
-| Understand what this POC does and doesn't cover | [docs/decisions/poc-scope.md](docs/decisions/poc-scope.md) |
-| Add the SecureFields Android SDK and initialize a session | [docs/integration/getting-started.md](docs/integration/getting-started.md) |
-| See how CB / Google Pay / PayPal / Illicado each work | [docs/integration/payment-methods.md](docs/integration/payment-methods.md) |
-| Understand the session/protocols/API model | [docs/architecture/session-and-protocols.md](docs/architecture/session-and-protocols.md) |
-| See how PayPal's redirect is meant to work (the ticket's open question) | [docs/architecture/redirect-handling.md](docs/architecture/redirect-handling.md) |
-| Set up the module structure from scratch | [docs/internal/project-setup.md](docs/internal/project-setup.md) |
-| Run the demo app against a real session | [docs/internal/testing-with-alfred.md](docs/internal/testing-with-alfred.md) |
-
----
+> **Status: back-to-basics rebuild.** The core purse-payment engine is in place and builds green
+> with unit tests: session (V2) `widget.data` decode, the built payment model, the splitter (one
+> primary + N secondaries), a reactive `StateFlow` surface, and the create-payment pipeline. Partner
+> integrations are **contract-only for now** — the `PartnerUiPlugin` lifecycle exists but there are
+> no PayPal / Google Pay / card / redirect implementations, so `submitPayment` is wired but has
+> nothing to submit through until a plugin is registered.
 
 ## Repository layout
 
-| Module | Description | Status |
-|---|---|---|
-| `:app` | Demo app exercising the Drop-in (session builder + Drop-in page, View system; UI split into `ui.components` / `ui.primaries` / `ui.secondaries`) | Working — see [Testing with alfred](docs/internal/testing-with-alfred.md) |
-| `:dropin` | Headless engine (≈ web `headless-checkout`): session decode/build, payment-method model, payment splitter, vault config. Depends on `:core` + `:partner-ui` | Built; Google Pay coordinator, `/validate` for card, redirect-mode/3DS still to do |
-| `:partner-ui` | Per-partner plugins (≈ web `partner-ui`): PayPal wallet `/init`+`/validate` payloads + the PayPal SDK launch (self-contained return Activity). Depends on `:core` | PayPal wallet built |
-| `:core` | Raw layer (≈ web `sdk`): Payment API `/init`+`/validate` client + environment targets, no domain logic | Built |
+| Module | Package | Mirrors web | Role |
+|---|---|---|---|
+| `:app` | `eu.purse.checkout.demo` | playground | Demo host — mints a session via alfred and prints the SDK's methods/split (smoke test). |
+| `:headless-checkout` | `eu.purse.checkout` | `headless-checkout` | `PurseHeadlessCheckout`: session decode, payment model, `PursePaymentSplitter`, the validate pipeline. |
+| `:core` | `eu.purse.core` | `sdk` + `model` + `common` | Payment API client, environment targets, the `Partner`/`Method`/vault enums, `MethodConfiguration`, the `LegacyPaymentSession` DTO + `widget.data` decode, and the typed validate payloads. |
+| `:partner-ui` | `eu.purse.partnerui` | `partner-ui` | The `PartnerUiPlugin` lifecycle **contract** and `getPlugin` resolver — no concrete plugins yet. |
 
-The `:app` → `:dropin` → `:partner-ui` → `:core` layering mirrors web's `dropin` → `headless-checkout` → `partner-ui` → `sdk`.
+Dependency direction: `:app → :headless-checkout → { :core, :partner-ui }`, `:partner-ui → :core` —
+mirroring web's `dropin → headless-checkout → { sdk, partner-ui }`, `partner-ui → sdk`.
 
-CB card capture itself is not reimplemented here — it's delegated to
-`eu.purse:securefields-android`, published on Maven Central (see
-[Getting Started](docs/integration/getting-started.md)).
+Full docs: **[docs/README.md](docs/README.md)** · Architecture:
+**[docs/architecture/headless-checkout.md](docs/architecture/headless-checkout.md)**.
 
----
+## Using the SDK
 
-## Build & run the demo
+```kotlin
+// 1. Decode the merchant backend's base64 widget.data (V2 params) into a headless checkout.
+val checkout = PurseHeadlessCheckout.init(widgetData)          // pass PurseEnvironment.PRODUCTION to lock
+
+// 2. Inspect the session reactively (StateFlow).
+checkout.paymentMethods.value        // primaries + secondaries, with live disabled states
+checkout.remainingAmountToPay.value  // what a primary still owes
+checkout.isPaymentFulfilled.value
+
+// 3. Build the split: draw down secondaries and/or choose a primary.
+checkout.takeSecondary(giftCard, balance = BigDecimal("10.00"))
+checkout.setPrimary(cardMethod)
+
+// 4. Create the payment (suspend; off the main thread). Needs a registered :partner-ui plugin.
+val result = checkout.submitPayment()
+```
+
+## Build & test
+
+The Android Studio JBR is required (system `java` may not be on `PATH`):
 
 ```bash
-./gradlew :app:assembleDebug
+export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
+./gradlew build            # compile + lint + unit tests, all modules
 ./gradlew :app:installDebug
 ```
 
-To exercise the demo end to end you must **run alfred** — the dev server in the sibling
-`usp-widget` repo that mints real Purse sessions — and point the app at it:
+## Run the demo
 
-1. From the **`usp-widget` repo root**: `npm run dev:alfred` (listens on port 9001).
-2. In **this repo**, create a gitignored `.env` (see [`.env.example`](.env.example)):
-
-   ```dotenv
-   ALFRED_BASE_URL=http://10.0.2.2:9001
-   ```
-
-   Use **`10.0.2.2`** (not `localhost`) so the emulator reaches alfred on your host, and **`http`**
-   (not `https`). On a physical device use your machine's LAN IP instead. `.env` is read at build
-   time, so **rebuild** after changing it.
-
-Full walkthrough and troubleshooting: **[docs/internal/testing-with-alfred.md](docs/internal/testing-with-alfred.md)**.
-
----
+Exercising the demo end to end needs **alfred** — the `usp-widget` dev server that mints real Purse
+sessions. Point the app at it via a gitignored `.env` (`ALFRED_BASE_URL=http://10.0.2.2:9001` on an
+emulator; `.env` is read at build time, so rebuild after editing). Full walkthrough:
+**[docs/internal/testing-with-alfred.md](docs/internal/testing-with-alfred.md)**.
 
 ## Related
 
-- [SDK-12039](https://upstreampay.atlassian.net/browse/SDK-12039) — this POC
-- [SDK-11769](https://upstreampay.atlassian.net/browse/SDK-11769) — SecureFields Android SDK (sibling repo `vault-android`)
-- [SDK-7005](https://upstreampay.atlassian.net/browse/SDK-7005) — prior Android widget SDK (done; different architecture)
-- `../usp-widget` — the web Drop-in this design mirrors
+- `../usp-widget` — the web SDK this design mirrors (`@upstreampay/headless-checkout`, `@upstreampay/partner-ui`)
+- [SDK-12039](https://upstreampay.atlassian.net/browse/SDK-12039)

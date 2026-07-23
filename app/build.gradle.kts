@@ -23,13 +23,13 @@ fun envOrDotEnv(key: String): String =
     (System.getenv(key) ?: dotEnv[key] ?: "").replace("\"", "\\\"")
 
 android {
-    namespace = "eu.purse.dropin_android"
+    namespace = "eu.purse.checkout.demo"
     compileSdk {
         version = release(37)
     }
 
     defaultConfig {
-        applicationId = "eu.purse.dropin_android"
+        applicationId = "eu.purse.checkout.demo"
         minSdk = 26
         targetSdk = 36
         versionCode = 1
@@ -63,13 +63,11 @@ android {
 }
 
 dependencies {
-    implementation(project(":dropin"))
+    implementation(project(":headless-checkout"))
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.core.ktx)
     implementation(libs.material)
-    // Card capture for the CB (creditcard) method — see docs/integration/getting-started.md.
-    implementation(libs.securefields.android)
-    // lifecycleScope + coroutines, needed to call SecureFields' suspend submit().
+    // lifecycleScope + coroutines to observe the SDK's StateFlow surface off the main thread.
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.kotlinx.coroutines.android)
     testImplementation(libs.junit)

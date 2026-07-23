@@ -4,8 +4,8 @@ How to run the `:app` demo against a real Purse orchestration session, using **a
 server in the sibling `usp-widget` repo (`usp-widget/packages/alfred`) that mints sessions against
 the Purse API on your behalf.
 
-> This is for **running the demo app locally**. The `:dropin` SDK itself has no network dependency
-> and is unit-tested in isolation (see [Project Setup](project-setup.md)).
+> This is for **running the demo app locally**. The `:headless-checkout` SDK itself is unit-tested
+> in isolation (see [Headless checkout architecture](../architecture/headless-checkout.md)).
 
 ---
 
@@ -22,7 +22,7 @@ the Purse API on your behalf.
 
 ## Why alfred
 
-`DropinAndroid.init()` takes a base64 `widget.data` string — the payload a merchant backend gets
+`PurseHeadlessCheckout.init()` takes a base64 `widget.data` string — the payload a merchant backend gets
 back from Purse's Client Session API. Rather than reimplement that backend call (auth token,
 entity id, order schema) in the demo, the app talks to alfred, which already does it. alfred
 converts a demo "legacy order" fixture into the orchestration order shape and calls Purse's
@@ -89,8 +89,8 @@ demo works out of the box with an empty `.env`.
 ./gradlew :app:installDebug
 ```
 
-Then on the app: **Create session** → `widget.data` populates → **Initialize Dropin SDK** → the
-session summary and payment-method list render.
+Then on the app: **Create session (alfred)** → `widget.data` populates → **Initialize headless
+checkout** → the session summary (id, amount, remaining, fulfilled) and payment-method list print.
 
 ---
 
@@ -123,6 +123,5 @@ two compose cleanly. (Posting the *output* of alfred's `/orchestration_order` en
 
 ## See also
 
-- [Project Setup](project-setup.md)
-- [Getting Started](../integration/getting-started.md)
+- [Headless checkout architecture](../architecture/headless-checkout.md)
 - [`.env.example`](../../.env.example)

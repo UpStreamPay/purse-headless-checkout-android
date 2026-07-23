@@ -24,12 +24,6 @@
             </intent-filter>
         </activity>
 
-        <activity
-            android:name=".DropinActivity"
-            android:exported="false"
-            android:label="@string/dropin_title"
-            android:parentActivityName=".MainActivity" />
-
     </application>
 
 </manifest>

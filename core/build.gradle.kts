@@ -2,10 +2,12 @@ plugins {
     alias(libs.plugins.android.library)
 }
 
-// The raw layer — mirrors usp-widget's `sdk` package (Payment API client + environment targets).
-// Deliberately dependency-light and domain-logic-free: no session/payment modelling lives here.
+// Shared concepts — mirrors usp-widget's `sdk` + `model` + `common` packages collapsed into one:
+// the Payment API client, environment targets, the Partner/Method/vault enums, `MethodConfiguration`,
+// and the raw `LegacyPaymentSession` DTO + its base64 `widget.data` decode. No session orchestration,
+// no splitter — those live in `:headless-checkout`.
 android {
-    namespace = "eu.purse.dropin.core"
+    namespace = "eu.purse.core"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1

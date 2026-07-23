@@ -2,12 +2,13 @@ plugins {
     alias(libs.plugins.android.library)
 }
 
-// Per-partner plugins — mirrors usp-widget's `partner-ui` package. Each partner (PayPal today)
-// owns its /init+/validate payload contract on top of `:core`'s Payment API client, plus (added in
-// a later step) the partner SDK launch and its self-contained return Activity. `:dropin` depends on
-// this and orchestrates it.
+// Per-partner plugin lifecycle contract — mirrors usp-widget's `partner-ui` package, but reduced to
+// the CONTRACT only: the `PartnerUiPlugin` interface, its `PartnerUiContext`, the `PluginBuilder`
+// factory type, and the `getPlugin` resolver with empty registries. There are intentionally NO
+// concrete plugin implementations (PayPal, Google Pay, card vaulting, redirect) and therefore no
+// partner SDK dependencies — those are deferred. `:headless-checkout` drives this contract.
 android {
-    namespace = "eu.purse.dropin.partnerui"
+    namespace = "eu.purse.partnerui"
     compileSdk {
         version = release(36) {
             minorApiLevel = 1
@@ -26,26 +27,9 @@ android {
 }
 
 dependencies {
-    // The raw transport + environment layer (≈ web `sdk`). `api` so `:dropin` sees `:core` types
-    // (PaymentApiClient, PaymentApiException, PurseEnvironment) transitively through `:partner-ui`.
+    // Shared concepts (≈ web `sdk`). `api` so `:headless-checkout` sees `:core` types
+    // (PaymentApiClient, LegacyPaymentSession, Partner/Method, the payload types) transitively.
     api(project(":core"))
-
-    // PayPal's official Android web-checkout SDK — opens the approval browser-switch and returns
-    // the outcome. Pulls in corepayments (CoreConfig/Environment/PayPalSDKError) + androidx
-    // transitively. See docs/partners/paypal.md.
-    implementation(libs.paypal.web.payments)
-    // The official branded PayPal button. `api` so the demo `:app`'s method list can render it.
-    api(libs.paypal.payment.buttons)
-    // For the self-contained return Activity + ActivityResultContract.
-    implementation(libs.androidx.appcompat)
-    // Custom Tabs, for the generic redirect return Activity's GET case — see
-    // docs/architecture/redirect-handling.md#android-translation.
-    implementation(libs.androidx.browser)
-
-    // Google Pay: PaymentsClient, the branded PayButton, and the GetPaymentDataResult
-    // ActivityResultContract. `api` so the demo `:app` sees those types to render the button and
-    // register the launcher. See docs/partners/adyen.md.
-    api(libs.play.services.wallet)
 
     // org.json is provided by the Android platform at compile/runtime; tests pull in the real impl.
     testImplementation(libs.json)

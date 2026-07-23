@@ -1,81 +1,18 @@
 <resources>
-    <string name="app_name">dropin-android</string>
+    <string name="app_name">Purse Headless Demo</string>
 
     <string name="label_alfred_base_url">Alfred: %1$s</string>
     <string name="helper_alfred_base_url">Set ALFRED_BASE_URL in .env at the repo root (see .env.example). Run `npm run dev:alfred` from the usp-widget repo root. Emulator: 10.0.2.2. Physical device: your machine\'s LAN IP.</string>
 
-    <string name="btn_create_session">Create session</string>
+    <string name="btn_create_session">Create session (alfred)</string>
     <string name="toast_create_session_failed">Failed to create session: %1$s</string>
 
     <string name="hint_widget_data">widget.data</string>
     <string name="helper_widget_data">Populated by \"Create session\", or paste a widget.data string manually</string>
 
-    <string name="btn_init_dropin">Initialize Dropin SDK</string>
+    <string name="btn_init_checkout">Initialize headless checkout</string>
     <string name="error_required">Required</string>
 
-    <string name="dropin_title">Drop-in</string>
-    <string name="section_payment_method">Payment method</string>
-    <string name="section_secondaries">Gift cards and loyalty account</string>
-    <string name="divider_or">or</string>
-    <string name="primary_not_wired">Capture for this method isn\'t wired up in this POC yet.</string>
-    <string name="cc_card_number">Card number</string>
-    <string name="cc_exp">MM / YY</string>
-    <string name="cc_cvv">CVV</string>
-    <string name="cc_holder">Name on card</string>
-    <string name="cc_no_vault">This card method has no Purse vault configured — SecureFields can\'t be shown.</string>
-
-    <string name="pay_button">Pay %1$s %2$s</string>
-    <string name="pay_processing">Processing…</string>
-    <string name="pay_secondaries_cover">Amount fully covered by gift cards. Submitting the payment (/validate) isn\'t wired in this POC yet.</string>
-    <string name="pay_primary_error">Payment failed: %1$s</string>
-    <string name="pay_card_capturing">Confirming card payment…</string>
-    <string name="pay_card_success">Card payment approved and captured.</string>
-    <string name="pay_card_declined">Card payment not completed (status: %1$s).</string>
-    <string name="pay_card_error">Card payment error: %1$s</string>
-
-    <string name="paypal_no_client_id">PayPal isn\'t configured for this session (no client_id).</string>
-    <string name="paypal_creating_order">Creating PayPal order…</string>
-    <string name="paypal_capturing">Confirming PayPal payment…</string>
-    <string name="paypal_success">PayPal payment approved and captured.</string>
-    <string name="paypal_declined">PayPal payment not completed (status: %1$s).</string>
-    <string name="paypal_canceled">PayPal payment canceled.</string>
-    <string name="paypal_failed">PayPal failed: %1$s</string>
-    <string name="paypal_error">PayPal error: %1$s</string>
-
-    <string name="alfred_session_id_hint">Session id (for alfred\'s GET /payment_session)</string>
-    <string name="get_session_via_alfred">Get Transactions</string>
-    <string name="alfred_session_fetching">Fetching via alfred…</string>
-    <string name="alfred_session_result">alfred GET /payment_session/%1$s:</string>
-    <string name="alfred_session_error">alfred error: %1$s</string>
-    <string name="alfred_session_id_required">Enter a session id first</string>
-
-    <string name="googlepay_creating_request">Preparing Google Pay…</string>
-    <string name="googlepay_capturing">Confirming Google Pay payment…</string>
-    <string name="googlepay_success">Google Pay payment approved and captured.</string>
-    <string name="googlepay_declined">Google Pay payment not completed (status: %1$s).</string>
-    <string name="googlepay_canceled">Google Pay canceled.</string>
-    <string name="googlepay_failed">Google Pay failed: %1$s</string>
-    <string name="googlepay_error">Google Pay error: %1$s</string>
-    <string name="googlepay_redirect_required">Google Pay requires one more step (3-D Secure)…</string>
-    <string name="googlepay_redirect_canceled">3-D Secure step canceled.</string>
-    <string name="googlepay_redirect_failed">3-D Secure step failed: %1$s</string>
-
-    <string name="method_amount_min">min %1$s</string>
-    <string name="method_amount_max">max %1$s</string>
-    <string name="method_no_methods">No payment methods available for this session.</string>
-
-    <string name="secondary_giftcard_title">Gift card - %1$s</string>
-    <string name="giftcard_pan_label">Card number</string>
-    <string name="giftcard_cvv_label">CVC</string>
-    <string name="giftcard_use_card">Add card</string>
-    <string name="giftcard_invalid">Invalid gift card. Please check the information entered.</string>
-    <string name="giftcard_applying">Adding card…</string>
-    <string name="giftcard_added">Added %1$s — balance %2$s, expires %3$s</string>
-    <string name="giftcard_error">Couldn\'t add card: %1$s</string>
-
-    <string name="disabled_fulfilled">Disabled: payment already fulfilled</string>
-    <string name="disabled_min">Disabled: min amount %1$s not met (%2$s left to pay)</string>
-    <string name="disabled_max">Disabled: max amount %1$s exceeded</string>
-
+    <string name="output_placeholder">Initialize the headless checkout to inspect its session, methods and split here.</string>
     <string name="session_error">Session error: %1$s</string>
 </resources>

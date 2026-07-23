@@ -1,53 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
-
-    <application>
-        <!--
-          The PayPal return Activity ships here, in the :partner-ui library manifest, so it merges
-          into any integrating app with no manifest work of its own. The deep-link scheme is the
-          app's own applicationId (${applicationId}) — unique per app, and matched at runtime by the
-          urlScheme we pass to PayPalWebCheckoutClient (= packageName). See docs/partners/paypal.md.
-        -->
-        <activity
-            android:name=".partner.paypal.wallet.PaypalCheckoutActivity"
-            android:launchMode="singleTop"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="${applicationId}" />
-            </intent-filter>
-        </activity>
-
-        <!--
-          The generic redirect return Activity — Custom Tabs/WebView for any redirect with no
-          partner SDK of its own (a chained 3DS/SCA step-up, or a whole `integration_mode:
-          "redirection"` method). Ships here, same rationale as the PayPal Activity above, but on
-          its own scheme (${applicationId}.redirect, NOT the bare ${applicationId} PayPal already
-          owns) so the two return paths can never collide. See docs/architecture/redirect-handling.md.
-        -->
-        <activity
-            android:name=".generic.redirection.RedirectionCheckoutActivity"
-            android:launchMode="singleTop"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.VIEW" />
-                <category android:name="android.intent.category.DEFAULT" />
-                <category android:name="android.intent.category.BROWSABLE" />
-                <data android:scheme="${applicationId}.redirect" />
-            </intent-filter>
-        </activity>
-
-        <!--
-          Declares Google Pay support for this app — required by the Google Pay API so it (and the
-          Play Store) know this app integrates it. Ships here, in :partner-ui, so the integrator
-          needs no manifest work of their own, same rationale as the PayPal return Activity above.
-          See docs/partners/adyen.md.
-        -->
-        <meta-data
-            android:name="com.google.android.gms.wallet.api.enabled"
-            android:value="true" />
-    </application>
-
-</manifest>
+<!--
+  Intentionally empty. This module is the plugin lifecycle CONTRACT only — it ships no Activities,
+  services, or partner SDKs. Return Activities (PayPal, generic redirect) and the Google Pay
+  meta-data will be reintroduced by the concrete plugins when those are implemented.
+-->
+<manifest xmlns:android="http://schemas.android.com/apk/res/android" />
