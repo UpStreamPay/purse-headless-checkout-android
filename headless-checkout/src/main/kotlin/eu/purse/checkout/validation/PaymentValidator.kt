@@ -31,7 +31,11 @@ class PaymentValidator(private val api: PaymentApiClient) {
 
     private class Prepared(val plugin: PartnerUiPlugin, val context: PartnerUiContext)
 
-    suspend fun execute(splits: List<PaymentSplit>, session: LegacyPaymentSession): ValidationResult {
+    suspend fun execute(
+        splits: List<PaymentSplit>,
+        session: LegacyPaymentSession,
+        collectedByMethod: Map<String, Map<String, Any?>> = emptyMap(),
+    ): ValidationResult {
         val prepared = mutableListOf<Prepared>()
         val payloads = mutableListOf<ValidateItemPayload>()
 
@@ -59,6 +63,7 @@ class PaymentValidator(private val api: PaymentApiClient) {
                         session = session,
                         amount = split.amount,
                         api = api,
+                        collected = collectedByMethod[source.id] ?: emptyMap(),
                     )
                     if (!plugin.validateUi(context)) {
                         throw PurseCheckoutException.ValidateFailed("client-side validation failed for ${source.id}")

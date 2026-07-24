@@ -64,6 +64,7 @@ android {
 
 dependencies {
     implementation(project(":headless-checkout"))
+    implementation(project(":partner-googlepay"))
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.core.ktx)
     implementation(libs.material)

@@ -7,22 +7,24 @@ architecture (the sibling `../usp-widget` repo), not the older native drop-in.
 
 > **Status: back-to-basics rebuild.** The core purse-payment engine is in place and builds green
 > with unit tests: session (V2) `widget.data` decode, the built payment model, the splitter (one
-> primary + N secondaries), a reactive `StateFlow` surface, and the create-payment pipeline. Partner
-> integrations are **contract-only for now** — the `PartnerUiPlugin` lifecycle exists but there are
-> no PayPal / Google Pay / card / redirect implementations, so `submitPayment` is wired but has
-> nothing to submit through until a plugin is registered.
+> primary + N secondaries), a reactive `StateFlow` surface, and the create-payment pipeline.
+> Secondaries (gift cards / vouchers / loyalty) are implemented, and the first **primary** plugin —
+> **Google Pay via Ingenico/Worldline**, with full 3-D Secure — ships in `:partner-googlepay`.
+> `:partner-ui` stays a pure contract; plugins register themselves. Still to come: PayPal, card
+> vaulting, Apple Pay, the rendering host.
 
 ## Repository layout
 
 | Module | Package | Mirrors web | Role |
 |---|---|---|---|
-| `:app` | `eu.purse.checkout.demo` | playground | Demo host — mints a session via alfred and prints the SDK's methods/split (smoke test). |
+| `:app` | `eu.purse.checkout.demo` | playground | Demo host — mints a session via alfred, prints the SDK's methods/split, and drives Google Pay. |
 | `:headless-checkout` | `eu.purse.checkout` | `headless-checkout` | `PurseHeadlessCheckout`: session decode, payment model, `PursePaymentSplitter`, the validate pipeline. |
 | `:core` | `eu.purse.core` | `sdk` + `model` + `common` | Payment API client, environment targets, the `Partner`/`Method`/vault enums, `MethodConfiguration`, the `LegacyPaymentSession` DTO + `widget.data` decode, and the typed validate payloads. |
-| `:partner-ui` | `eu.purse.partnerui` | `partner-ui` | The `PartnerUiPlugin` lifecycle **contract** and `getPlugin` resolver — no concrete plugins yet. |
+| `:partner-ui` | `eu.purse.partnerui` | `partner-ui` | The `PartnerUiPlugin` lifecycle **contract** + `PluginRegistry` (runtime registration) — no concrete plugins. |
+| `:partner-googlepay` | `eu.purse.googlepay` | `generics/googlepay` | The Google Pay (Ingenico/Worldline) plugin: protocol + Play-Services sheet + 3-D Secure. Registers via `GooglePayModule.register()`. |
 
-Dependency direction: `:app → :headless-checkout → { :core, :partner-ui }`, `:partner-ui → :core` —
-mirroring web's `dropin → headless-checkout → { sdk, partner-ui }`, `partner-ui → sdk`.
+Dependency direction: `:app → { :headless-checkout, :partner-googlepay }`, `:partner-googlepay →
+:headless-checkout → { :core, :partner-ui }`, `:partner-ui → :core`.
 
 Full docs: **[docs/README.md](docs/README.md)** · Architecture:
 **[docs/architecture/headless-checkout.md](docs/architecture/headless-checkout.md)**.

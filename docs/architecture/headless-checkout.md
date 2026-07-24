@@ -9,11 +9,13 @@ payment* and lets a merchant build their own checkout UI on top. It mirrors the 
 | Module | Package | Mirrors web | Responsibility |
 |---|---|---|---|
 | `:core` | `eu.purse.core` | `sdk` + `model` + `common` | Payment API client, environment targets, the `Partner`/`Method`/`VaultVendor`/`CardBrand` enums, `MethodConfiguration`, the raw `LegacyPaymentSession` DTO + its base64 `widget.data` decode, and the typed `ItemPayload`/`ValidationResult`. No orchestration. |
-| `:partner-ui` | `eu.purse.partnerui` | `partner-ui` | The plugin lifecycle **contract** only — `PartnerUiPlugin`, `PartnerUiContext`, `PluginRegistry.getPlugin`. **No concrete plugins yet.** |
+| `:partner-ui` | `eu.purse.partnerui` | `partner-ui` | The plugin lifecycle **contract** only — `PartnerUiPlugin`, `PartnerUiContext`, `PluginRegistry` (with runtime `register`). No concrete plugins; they register themselves. |
 | `:headless-checkout` | `eu.purse.checkout` | `headless-checkout` | `PurseHeadlessCheckout`: session decode, the built payment model, the splitter, and the plugin-driven "create payment" pipeline. |
-| `:app` | `eu.purse.checkout.demo` | playground | Minimal smoke test: mint a session via alfred → `init` → print methods/split. |
+| `:partner-googlepay` | `eu.purse.googlepay` | `partner-ui/plugins/generics/googlepay` | The **Google Pay (Ingenico/Worldline)** plugin: the pure protocol, the Play-Services sheet coordinator, and the 3-D Secure redirect. Registers itself via `GooglePayModule.register()`. |
+| `:app` | `eu.purse.checkout.demo` | playground | Smoke test: mint a session via alfred → `init` → print methods/split; drives Google Pay. |
 
-Dependency direction: `app → headless-checkout → { core, partner-ui }`, `partner-ui → core`.
+Dependency direction: `app → { headless-checkout, partner-googlepay }`, `partner-googlepay →
+headless-checkout → { core, partner-ui }`, `partner-ui → core`.
 
 ## The purse-payment concept
 
@@ -99,12 +101,31 @@ validate:  validateUi(optional) → preValidation ─ host POSTs /validate ─�
 teardown:  destroyClient
 ```
 
-The registries are intentionally **empty** — the contract is fixed so `:headless-checkout` builds
-against it, but no PSP is implemented yet. `submitPayment` therefore throws
-`PurseCheckoutException.NoPluginRegistered` until a plugin is registered.
+`:partner-ui` ships **no** implementations — plugins live in their own modules and register
+themselves at runtime (`PluginRegistry.register` / `registerFallback`). A `(partner, method)` with no
+registered plugin makes `submitPayment` throw `PurseCheckoutException.NoPluginRegistered`.
+
+### Google Pay (`:partner-googlepay`)
+
+The first primary plugin. Because Google Pay is interactive, it splits in two:
+
+- **Protocol** (`GooglePayPlugin : PartnerUiPlugin`, pure JSON): `buildRequest` does `POST /init`,
+  parses the gateway config from `plugin_result.logs` (Ingenico / Adyen / default branches), refines
+  Ingenico's networks + gateway via a live Worldline product-320 call (`WorldlineProductClient`), and
+  builds the Google Pay request JSON; `preValidation` maps the sheet token (from
+  `PartnerUiContext.collected`) into the `/validate` payload (`partner_data.session`,
+  `payment_data.card.selected_network`).
+- **Interactive** (`GooglePayCoordinator`, Play-Services + Activity): drives `isReadyToPay`, the
+  payment sheet (`GetPaymentDataResult`), hands the token back via `PurseHeadlessCheckout.setCollected`,
+  calls `submitPayment`, and on a `/validate` redirection launches the 3-D Secure
+  `RedirectionCheckoutActivity` (Custom Tabs GET / WebView POST), re-querying `sessionTransactions()`
+  on return.
+
+Wire it up with `GooglePayModule.register()` at startup.
 
 ## Deferred (intentionally not built yet)
 
-Concrete **primary** plugins (PayPal, Google Pay, card vaulting, redirect), the rendering host
-(web's `<purse-partner-ui>` element), the `ancv-connect` two-phase (holder→poll) secondary flow,
-the splitter's voucher→loyalty→primary autofill middleware, and wallet (saved-token) sessions.
+Other primary plugins (PayPal, card vaulting), Apple Pay (same shape as Google Pay), the `adyen`/
+`stripe` Google Pay gateway builders beyond the `default` fallback, the rendering host (web's
+`<purse-partner-ui>` element), the `ancv-connect` two-phase secondary flow, the splitter's
+voucher→loyalty→primary autofill middleware, and wallet (saved-token) sessions.

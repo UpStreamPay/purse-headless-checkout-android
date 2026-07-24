@@ -35,3 +35,7 @@ include(":core")
 // Per-partner plugin lifecycle contract (≈ usp-widget's `partner-ui`): the `PartnerUiPlugin`
 // interface, its context, and the resolver — no concrete plugin implementations. Sits on `:core`.
 include(":partner-ui")
+// The Google Pay (Ingenico / Worldline) plugin — the first concrete partner plugin: the pure
+// protocol plus the Play-Services payment sheet + 3-D Secure. Registers itself into `:partner-ui`
+// at runtime. Sits on `:headless-checkout`.
+include(":partner-googlepay")

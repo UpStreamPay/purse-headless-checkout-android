@@ -27,6 +27,12 @@ data class PartnerUiContext(
     val api: PaymentApiClient,
     val register: Boolean = false,
     val token: String? = null,
+    /**
+     * Data an interactive plugin collected outside the headless flow (e.g. a Google Pay token +
+     * selected network from the payment sheet), threaded in so `preValidation` can build its payload.
+     * Populated by the SDK from what the merchant handed back via `setCollected`.
+     */
+    val collected: Map<String, Any?> = emptyMap(),
     val options: PluginOptions = PluginOptions(),
     val dispatchEvent: (PluginEvent) -> Unit = {},
 )

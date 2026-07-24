@@ -18,6 +18,9 @@ import eu.purse.checkout.payment.item.PaymentItem
 import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.checkout.payment.item.SecondaryMethod
 import eu.purse.checkout.payment.secondary.SecondaryToken
+import eu.purse.core.payment.Method
+import eu.purse.googlepay.GooglePayCoordinator
+import eu.purse.googlepay.GooglePayModule
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -46,15 +49,40 @@ class MainActivity : AppCompatActivity() {
     /** The current headless checkout, once initialized. Drives the secondary forms below. */
     private var checkout: PurseHeadlessCheckout? = null
 
+    /** Google Pay coordinator — constructed in [onCreate] so its ActivityResult launchers register. */
+    private lateinit var googlePay: GooglePayCoordinator
+
+    private val googlePayListener = object : GooglePayCoordinator.Listener {
+        override fun onReady(ready: Boolean) {
+            binding.googlePayButton.visibility = if (ready) View.VISIBLE else View.GONE
+        }
+        override fun onResult(summary: String) = appendOutput("Google Pay → $summary")
+        override fun onRequiresAction() = appendOutput("Google Pay → 3-D Secure required…")
+        override fun onCanceled() {
+            Toast.makeText(this@MainActivity, R.string.gpay_canceled, Toast.LENGTH_LONG).show()
+        }
+        override fun onError(message: String?) {
+            Toast.makeText(this@MainActivity, getString(R.string.gpay_error, message), Toast.LENGTH_LONG).show()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
         applyContentInsets()
 
+        GooglePayModule.register()
+        googlePay = GooglePayCoordinator(this, googlePayListener)
+
         binding.alfredBaseUrlText.text = getString(R.string.label_alfred_base_url, alfredBaseUrl())
         binding.createSessionButton.setOnClickListener { createSession() }
         binding.initCheckoutButton.setOnClickListener { initCheckout() }
+        binding.googlePayButton.setOnClickListener { googlePay.launchSheet() }
+    }
+
+    private fun appendOutput(line: String) {
+        binding.outputText.append("\n$line")
     }
 
     /** targetSdk 35+ draws edge-to-edge; pad the content by the system-bar insets on top of 16dp. */
@@ -105,9 +133,14 @@ class MainActivity : AppCompatActivity() {
             renderSecondaryForms(null)
             null
         }
+        binding.googlePayButton.visibility = View.GONE
         checkout?.let {
             binding.outputText.text = summarize(it)
             renderSecondaryForms(it)
+            // If the session offers Google Pay, prepare it (/init + isReadyToPay) — the button
+            // appears via the listener's onReady once Google reports the device can pay.
+            it.primaryMethods.firstOrNull { p -> p.method == Method.GooglePay }
+                ?.let { gpay -> googlePay.prepare(it, gpay) }
         }
     }
 

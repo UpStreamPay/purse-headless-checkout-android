@@ -19,9 +19,11 @@ import eu.purse.core.environment.PurseEnvironment
 import eu.purse.core.payload.ValidationResult
 import eu.purse.core.session.PurseSessionParams
 import eu.purse.core.session.SessionCodec
+import eu.purse.partnerui.PartnerUiContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import org.json.JSONArray
 import java.math.BigDecimal
 import java.time.Instant
 
@@ -48,6 +50,9 @@ class PurseHeadlessCheckout private constructor(
     val paymentApiRoot: String,
 ) {
     private val splitter = PursePaymentSplitter(session.amount)
+
+    /** Interactively-collected data per method id (e.g. a Google Pay token) — see [setCollected]. */
+    private val collectedByMethod = mutableMapOf<String, Map<String, Any?>>()
 
     private val _sessionState = MutableStateFlow(
         if (session.expirationDate.isBefore(Instant.now())) SessionState.EXPIRED else SessionState.READY,
@@ -112,6 +117,38 @@ class PurseHeadlessCheckout private constructor(
         refresh()
     }
 
+    // --- interactive plugins (e.g. Google Pay) ---------------------------------------------------
+
+    /**
+     * Stash data an interactive plugin collected outside the headless flow — e.g. the Google Pay
+     * token + selected network from the payment sheet — keyed to [item]. It's threaded into that
+     * item's `preValidation` on the next [submitPayment] (via `PartnerUiContext.collected`).
+     */
+    fun setCollected(item: PaymentItem, data: Map<String, Any?>) {
+        collectedByMethod[item.id] = data
+    }
+
+    /**
+     * A [PartnerUiContext] for [item] against the current split — for a plugin coordinator (in an
+     * interactive plugin module) that needs to drive plugin-specific steps (e.g. building the Google
+     * Pay request) before submit. `amount` is what a primary would still cover.
+     */
+    fun pluginContext(item: PaymentItem): PartnerUiContext = PartnerUiContext(
+        partner = item.partner,
+        method = item.method,
+        session = session.source,
+        amount = splitter.remaining,
+        api = apiClient(),
+        collected = collectedByMethod[item.id] ?: emptyMap(),
+    )
+
+    /**
+     * Re-query the session's transactions (`GET /{entityId}/sessions/{sessionId}`) — the source of
+     * truth to check after a redirect/3-D Secure return rather than trusting a locally-held result.
+     * Blocking; call off the main thread.
+     */
+    fun sessionTransactions(): JSONArray = apiClient().getSession()
+
     /**
      * Create the payment — run the plugin-driven `/validate` pipeline over the current split. Must
      * be called once [isPaymentFulfilled] is `true`. Blocking network work happens off the caller's
@@ -124,7 +161,7 @@ class PurseHeadlessCheckout private constructor(
         if (!splitter.fulfilled) throw PurseCheckoutException.PaymentNotFulfilled()
         _sessionState.value = SessionState.SUBMITTING
         return try {
-            val result = PaymentValidator(apiClient()).execute(splitter.splits, session.source)
+            val result = PaymentValidator(apiClient()).execute(splitter.splits, session.source, collectedByMethod)
             _sessionState.value = if (result.isSuccess) SessionState.SUBMITTED else SessionState.ERROR
             result
         } catch (e: Throwable) {
