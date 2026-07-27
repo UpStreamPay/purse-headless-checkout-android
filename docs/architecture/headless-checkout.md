@@ -9,7 +9,7 @@ payment* and lets a merchant build their own checkout UI on top. It mirrors the 
 | Module | Package | Mirrors web | Responsibility |
 |---|---|---|---|
 | `:core` | `eu.purse.core` | `sdk` + `model` + `common` | Payment API client, environment targets, the `Partner`/`Method`/`VaultVendor`/`CardBrand` enums, `MethodConfiguration`, the raw `LegacyPaymentSession` DTO + its base64 `widget.data` decode, and the typed `ItemPayload`/`ValidationResult`. No orchestration. |
-| `:partner-ui` | `eu.purse.partnerui` + `eu.purse.partnerui.plugins.generics.googlepay` + `eu.purse.partnerui.plugins.partners.klarna` | `partner-ui` (contract + `plugins/generics/googlepay` + `plugins/partners/klarna-installments`) | The plugin lifecycle **contract** — `PartnerUiPlugin`, `PartnerUiContext`, `PluginRegistry` (with runtime `register`) — **and** the concrete **Google Pay (Ingenico/Worldline)** and **Klarna** plugins living in the same module: pure protocol plus, respectively, the Play-Services sheet coordinator + 3-D Secure redirect, and the native `KlarnaPaymentView` coordinator. Registers itself via `GooglePayModule.register()` / `KlarnaModule.register()`. Each reaches `:headless-checkout` only through the `GooglePayHost` / `KlarnaHost` interface it defines — implemented by `PurseHeadlessCheckout.googlePayHost` / `.klarnaHost` — so the module dependency never points from `:partner-ui` to `:headless-checkout`. |
+| `:partner-ui` | `eu.purse.partnerui` + `eu.purse.partnerui.plugins.generics.googlepay` + `eu.purse.partnerui.plugins.partners.klarna` | `partner-ui` (contract + `plugins/generics/googlepay` + `plugins/partners/klarna-installments`) | The plugin lifecycle **contract** — `PartnerUiPlugin`, `PartnerUiContext`, `PluginRegistry` (with runtime `register`) — **and** the concrete **Google Pay (Ingenico/Worldline)** and **Klarna** plugins living in the same module: pure protocol plus, respectively, the Play-Services sheet coordinator + 3-D Secure redirect, and the native `KlarnaPaymentView` coordinator. Registered by default (`PluginRegistry`'s own `init` block). Each reaches `:headless-checkout` only through the `GooglePayHost` / `KlarnaHost` interface it defines — implemented by `PurseHeadlessCheckout.googlePayHost` / `.klarnaHost` — so the module dependency never points from `:partner-ui` to `:headless-checkout`. |
 | `:headless-checkout` | `eu.purse.checkout` | `headless-checkout` | `PurseHeadlessCheckout`: session decode, the built payment model, the splitter, and the plugin-driven "create payment" pipeline. |
 | `:app` | `eu.purse.checkout.demo` | playground | Smoke test: mint a session via alfred → `init` → print methods/split; drives Google Pay or Klarna. |
 
@@ -100,9 +100,15 @@ validate:  validateUi(optional) → preValidation ─ host POSTs /validate ─�
 teardown:  destroyClient
 ```
 
-Concrete plugins live inside `:partner-ui` (alongside the contract, like web) and register
-themselves at runtime (`PluginRegistry.register` / `registerFallback`). A `(partner, method)` with no
-registered plugin makes `submitPayment` throw `PurseCheckoutException.NoPluginRegistered`.
+Concrete plugins live inside `:partner-ui` (alongside the contract, like web) and are registered by
+default — `PluginRegistry`'s own `init` block calls `GooglePayModule.register()` /
+`KlarnaModule.register()`, mirroring web's `getPlugin`, which needs no registration step at all. The
+session (checked in `getPlugin` against `protocols`) is the real gate on whether a method is
+offered — that's already decided server-side, so no app-side setup call is required for a built-in
+plugin to work. `PluginRegistry.disable`/`enable` opt a built-in method out/back in for a specific
+app build; `register`/`registerFallback` remain for a plugin that isn't bundled in `:partner-ui`
+itself. A `(partner, method)` with no plugin at all (e.g. card/CB, PayPal — not yet built) still
+makes `submitPayment` throw `PurseCheckoutException.NoPluginRegistered`.
 
 ### Google Pay (`eu.purse.partnerui.plugins.generics.googlepay`, inside `:partner-ui`)
 
@@ -149,15 +155,16 @@ The first primary plugin. Because Google Pay is interactive, it splits in two:
   (`MainActivity.getSessionViaAlfred`) that checks status via alfred rather than auto-chaining another
   API call after every redirect return.
 
-Wire it up with `GooglePayModule.register()` at startup, and hand the coordinator a
-`checkout.googlePayHost(item)` per Google Pay item.
+No registration call needed — hand the coordinator a `checkout.googlePayHost(item)` per Google Pay
+item; `PluginRegistry` already has `GooglePayModule` registered by default.
 
 ### Klarna (`eu.purse.partnerui.plugins.partners.klarna`, inside `:partner-ui`)
 
 The second primary plugin, and the first **dedicated** (not gateway-generic) partner plugin — unlike
 Google Pay, Klarna is one PSP (`Partner.Klarna`) offering one method (`Method.Installments`, wire value
-`installments`), so it registers only `PluginRegistry.register(Partner.Klarna, Method.Installments)`,
-no fallback. Ports web's `plugins/partners/klarna-installments`, using Klarna's native Android
+`installments`), so `KlarnaModule.register()` (called by `PluginRegistry`'s `init` block by default)
+only registers `PluginRegistry.register(Partner.Klarna, Method.Installments)`, no fallback. Ports
+web's `plugins/partners/klarna-installments`, using Klarna's native Android
 `KlarnaPaymentView` (see
 https://docs.klarna.com/acquirer/klarna/mobile-payments/integrate-with-mobile-sdk/android/native-view/)
 instead of web's `Klarna.Payments` JS SDK:
@@ -182,8 +189,8 @@ instead of web's `Klarna.Payments` JS SDK:
   module ships) — so the host app declares its own `singleTask` intent-filter (see the demo's
   `MainActivity` manifest entry) rather than `:partner-ui` shipping one.
 
-Wire it up with `KlarnaModule.register()` at startup, and hand the coordinator a
-`checkout.klarnaHost(item, returnUrl)` per Klarna item.
+No registration call needed — hand the coordinator a `checkout.klarnaHost(item, returnUrl)` per
+Klarna item; `PluginRegistry` already has `KlarnaModule` registered by default.
 
 ## Deferred (intentionally not built yet)
 

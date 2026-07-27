@@ -5,9 +5,11 @@ import eu.purse.core.payment.Partner
 import eu.purse.partnerui.PluginRegistry
 
 /**
- * Entry point for the Klarna plugin. Call [register] once at app startup to wire the plugin into
- * [PluginRegistry] — the contract stays generic (no compile-time reference to [KlarnaPlugin]); this is
- * how a concrete plugin registers itself.
+ * Entry point for the Klarna plugin. [PluginRegistry] calls [register] automatically on first use
+ * — an app does **not** need to call this itself. Calling it again is harmless (idempotent; last
+ * registration wins) — it stays public mainly for tests that want to register in isolation. To
+ * opt this method out for a specific app build, use [PluginRegistry.disable], not the absence of
+ * a [register] call — see the class doc on [PluginRegistry].
  */
 object KlarnaModule {
 

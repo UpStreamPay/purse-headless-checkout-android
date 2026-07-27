@@ -12,16 +12,24 @@ Everything here is the Kotlin analog of web's `@upstreampay/headless-checkout` +
 
 ## 1. Bootstrapping
 
-### Register plugins (once, at app startup)
+### Plugins are active by default — no setup call needed
+
+Every plugin `:partner-ui` ships (Google Pay, Klarna) is registered automatically; you don't call
+`GooglePayModule.register()` / `KlarnaModule.register()` yourself. Whether a method actually shows
+up is gated by the **session** alone — the same thing that already decides it server-side, in the
+merchant's Purse configuration. `paymentMethods` simply won't include a method the session doesn't
+offer.
+
+If you need to suppress a shipped method for a specific app build (e.g. its UI isn't ready yet even
+though the backend might offer it), opt it out explicitly:
 
 ```kotlin
-GooglePayModule.register()   // eu.purse.partnerui.plugins.generics.googlepay
-KlarnaModule.register()      // eu.purse.partnerui.plugins.partners.klarna
+PluginRegistry.disable(Partner.Klarna, Method.Installments)   // eu.purse.partnerui
 ```
 
-Each plugin module is a separate opt-in registration — call only the ones the app actually ships.
-An unregistered `(partner, method)` makes [`submitPayment`](#8-submitting-payment) throw
-`PurseCheckoutException.NoPluginRegistered` the moment that method is used as the primary.
+`PluginRegistry.enable(partner, method)` reverses it. Calling `GooglePayModule.register()` /
+`KlarnaModule.register()` yourself is harmless (idempotent) but unnecessary — they exist mainly for
+tests that want to register a plugin in isolation.
 
 ### `PurseHeadlessCheckout.init`
 
@@ -79,9 +87,7 @@ lifecycleScope.launch {
 ```
 
 There is no `onDataUpdate`/`onAmountUpdate` push into a rendering surface the way web's
-`<purse-partner-ui>` element gets it — the host owns re-rendering on every emission. See the
-[pain points recap](../decisions/pain-points-recap.md#b-reactive-model-mismatch-svelte-stores-vs-kotlin-stateflow)
-for what this costs versus web.
+`<purse-partner-ui>` element gets it — the host owns re-rendering on every emission.
 
 ---
 
@@ -297,17 +303,22 @@ renders into.
 
 Same caveat as Google Pay: a returned `Approved` redirect outcome is not proof of payment success.
 
-### Registering a new plugin (`PluginRegistry`)
+### Registering a new plugin, or opting a built-in one out (`PluginRegistry`)
 
-Only relevant if you're adding a plugin, not consuming an existing one:
+`register`/`registerFallback` are only relevant if you're adding a plugin that isn't bundled in
+`:partner-ui` itself — built-in ones (Google Pay, Klarna) are already registered, see
+[§1](#plugins-are-active-by-default--no-setup-call-needed).
 
 | Function | Signature |
 |---|---|
 | `register` | `fun register(partner: Partner, method: Method, builder: PluginBuilder)` |
 | `registerFallback` | `fun registerFallback(method: Method, builder: PluginBuilder)` |
+| `disable` | `fun disable(partner: Partner, method: Method)` — suppress a built-in plugin for this app build. |
+| `enable` | `fun enable(partner: Partner, method: Method)` — reverse a previous `disable`. |
 | `getPlugin` | `fun getPlugin(partner: Partner, method: Method, session: LegacyPaymentSession): PartnerUiPlugin?` |
 
-Resolution order: vault vendor → generic template → exact `(partner, method)` → method fallback.
+Resolution order: `disable`d check → vault vendor → generic template → exact `(partner, method)` →
+method fallback.
 
 ---
 

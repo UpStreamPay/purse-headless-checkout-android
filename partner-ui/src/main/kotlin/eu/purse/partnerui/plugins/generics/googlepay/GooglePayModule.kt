@@ -6,9 +6,11 @@ import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.plugins.generics.googlepay.partners.ingenico.Ingenico
 
 /**
- * Entry point for the Google Pay plugin. Call [register] once at app startup to wire the plugin
- * into [PluginRegistry] — the contract stays generic (no compile-time reference to
- * [GooglePayPlugin]); this is how a concrete plugin registers itself.
+ * Entry point for the Google Pay plugin. [PluginRegistry] calls [register] automatically on first
+ * use — an app does **not** need to call this itself. Calling it again is harmless (idempotent;
+ * last registration wins) — it stays public mainly for tests that want to register in isolation.
+ * To opt this method out for a specific app build, use [PluginRegistry.disable], not the absence
+ * of a [register] call — see the class doc on [PluginRegistry].
  */
 object GooglePayModule {
 

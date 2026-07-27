@@ -1,145 +1,98 @@
 # Pain Points — Android Headless SDK vs Web Headless SDK
 
-**Status: a start.** This catalogs where porting `usp-widget`'s headless-checkout package
-(`@upstreampay/headless-checkout` + `@upstreampay/partner-ui`) to native Android diverges from
-building on it in a browser — not an exhaustive audit. It grows as more plugins get ported
-(card/CB, PayPal, Apple Pay, wallet sessions — see the architecture doc's
-["Deferred"](../architecture/headless-checkout.md#deferred-intentionally-not-built-yet) section).
+**Ticket:** [SDK-12039](https://upstreampay.atlassian.net/browse/SDK-12039) — a POC to decide whether
+a native Android drop-in is feasible before investing in a full solution. Required end-to-end: CB
+(via the existing Secure Fields Android SDK, SDK-11769), Google Pay, PayPal, Illicado, plus a vault
+fallback — "functionally identical to the web drop-in." The ticket's own open question: **"comment
+gérer la redirection (intent)"** — how to handle redirection.
 
-This supersedes the framing of an earlier POC-era doc of the same name, written against a
-**native drop-in widget** ported from the web *widget*, not the headless SDK. That doc's backend
-findings (Pain points 1–3 below) are about the Payment API itself, so they carry over unchanged —
-headlessness doesn't touch them. Everything past that section is new: it's specifically about what
-changes when the *client architecture* goes from "browser + JS framework" to "native Kotlin app,"
-independent of the widget-vs-headless distinction.
+This repo answers that question by going one layer further than the ticket asked for — a **headless**
+port of `usp-widget`'s headless-checkout package, not a drop-in widget — but the ticket's three
+decision points are exactly what this doc tracks. Everything below is scoped to them, not to every
+friction point of building headless-native in general.
 
 ---
 
-## Carried over unchanged from the API itself
+## 1. Redirect handling — the ticket's own open question
 
-These are properties of the Payment API's `/validate` contract and PSP redirect behavior — true
-for any client, browser or native, widget or headless.
+**Short answer: yes, intent-based redirection works.** `RedirectionResolver` + Custom Tabs (GET) /
+in-app WebView (POST) + a deep-link return closes the loop, confirmed against a real 3-D Secure
+challenge on Google Pay's `3ds_visa` test card. That validates the architecture the ticket was
+asking about.
 
-### Pain point 1 — `/validate` doesn't clearly say "the shopper must do one more thing"
+Two things keep it from being a *closed* question, both backend-owned, neither fixable client-side:
 
-The response carries no explicit "action required" field. A client infers it from which of four
-optional fields happen to be present (`redirection.url`, `redirection.form`, per-item
-`redirection_url`/`redirection_json`, `should_submit_widget`), in a fixed priority order — ported
-here as `RedirectionResolver`. To any client, "no redirect needed" and "a field is missing" look
-identical. **Still unresolved**; would benefit from an explicit `next_action`-style field the way
-Stripe/Adyen do it.
+- **The `/validate` response never says "a redirect is required."** A client infers it from which of
+  four optional fields happen to be present, in a fixed priority order — "no redirect needed" and "a
+  field is missing" look identical. Would benefit from an explicit `next_action`-style field.
+- **The redirect's own return URL is chosen by the backend/PSP at `/init`-time, not by the app.**
+  Confirmed concretely: a real 3-D Secure challenge's final redirect can land on a Purse API gateway
+  URL that 401s on the session's own client-facing `api_key`. For **PayPal specifically** — one of
+  the ticket's four required methods, not yet built on this headless port — whether the backend can
+  register an app-facing return URL at all (instead of a merchant web success URL) is still
+  unconfirmed, which blocks calling that method's redirect story "done" even before it's implemented.
 
-### Pain point 2 — Leaving the app and coming back is not the app's decision
+Net: the redirect *mechanism* is proven. The redirect *contract* (what the API promises about when
+and where) still has open gaps that land on whichever method exercises them next — most immediately
+PayPal.
 
-The redirect return target (3-D Secure ACS, PayPal approval) is chosen by the backend/PSP at
-`/init`-time, not by the client. Confirmed on Android against Google Pay's `3ds_visa` test card: a
-real challenge's own final redirect can land on a Purse API gateway URL that 401s on the session's
-own client-facing `api_key` — nothing fixable client-side (see
-[headless-checkout.md](../architecture/headless-checkout.md#google-pay-euplsepartnerpluginsgenericgooglepay-inside-partner-ui)
-for the confirmed URL and root cause). This is now *more* exposed on Android than it was on web,
-even though the bug itself is identical: a browser tab can silently 401 and the shopper barely
-notices; a failed native redirect return is a dead-end WebView screen the host app has to handle
-explicitly. See ["Return-URL ownership" below](#d-return-url-ownership-shifts-onto-every-merchant)
-for the integration-shaped consequence.
+## 2. Parity against the ticket's required scope
 
-### Pain point 3 — A whole category of "always redirect" methods (Fintecture etc.) isn't ported yet
+| Requirement | Status on this headless port |
+|---|---|
+| CB (Secure Fields Android, SDK-11769) | **Not yet built.** A separate SecureFields Android 3-D Secure module is in progress out-of-band; nothing in `:partner-ui` integrates it yet. |
+| Google Pay | Done — protocol, sheet, and 3-D Secure redirect all working, including the gateway-specific (Ingenico/Adyen/default) builder split. |
+| PayPal | **Not yet built.** Also where the redirect-return-URL gap above bites hardest. |
+| Illicado | Done — but as a **secondary** (gift-card co-payment) method, not a primary card flow. The ticket groups it with CB/Google Pay/PayPal as if it's one more primary method; in Purse's own model it isn't, so "Illicado works" doesn't close the same gap CB/PayPal do. |
+| Vault fallback | **Not addressed.** `MethodConfiguration.VaultInfo`/`PrimaryMethod.supportedBrands` model vault *configuration*, but no fallback-when-vaulting-fails path exists anywhere in this port yet. |
 
-Web's generic `integration_mode: "redirection"` plugin — routed purely off session config, before
-any partner-specific plugin lookup — has no Android equivalent yet. Nothing in this SDK has
-exercised that category on a real session; the redirect infrastructure that exists
-(`RedirectionResolver`, `RedirectionCheckoutActivity`) was built against 3-D Secure/PayPal-shaped
-occasional redirects, not against a method that redirects *every single time*.
+Klarna is also fully built on this port (protocol, native `KlarnaPaymentView`, redirect) but isn't
+one of SDK-12039's four required methods — it's scope the branch took on beyond the ticket, useful
+as a second data point (see below) but not itself a gap against the ticket.
 
----
+## 3. "Functionally identical to the web drop-in" — where that's structurally not free
 
-## New: what changes by going headless-native, independent of the API
+Two concrete respects where headless-native adds integration work a web drop-in never asks for,
+found by comparing this port against `usp-widget` directly:
 
-### A. No rendering host — the merchant inherits 100% of the UI, permanently
+- **Plugin activation used to be a merchant setup step here; it's automatic on web — now fixed to
+  match.** Web's `getPlugin` resolves off a static lookup table baked into the
+  `@upstreampay/partner-ui` package — every plugin the package ships is live automatically, gated
+  only by the session. Android's `PluginRegistry` used to start empty and only activate a method
+  once the host app called that method's `*Module.register()` — a merchant could forget one and
+  get no earlier signal than `PurseCheckoutException.NoPluginRegistered` at submit time. That was a
+  redundant gate, not a necessary one: `getPlugin(partner, method, session)` already only resolves
+  a match if `session.protocols[partner][method]` is present, i.e. whether a method is offered was
+  already decided server-side by the merchant's Purse configuration — the app's `.register()` call
+  didn't add a second real decision, it just had to happen to stay in sync with one that already
+  existed. **Fixed:** `PluginRegistry` now auto-registers every built-in plugin (Google Pay, Klarna)
+  by default, mirroring web's static table; the session remains the only real gate, and a merchant
+  who genuinely needs to suppress a shipped method for a specific app build gets an explicit
+  opt-*out* (`PluginRegistry.disable(partner, method)` / `.enable(...)`) instead of the old opt-*in*.
+  `GooglePayModule.register()`/`KlarnaModule.register()` are still callable (idempotent) but no
+  longer required — the demo app's `MainActivity` no longer calls them. Filed as SDK follow-up work
+  off SDK-12039 — blocked on Jira write access for this session (drafted ticket text is in repo
+  chat history / ask the author for it) rather than actually filed.
+- **Redirect-based methods need app-side manifest declarations; web needs none.** Klarna (built,
+  though outside the ticket's four) needs the host app to declare its own `singleTask` intent-filter
+  so its return URL resumes the right Activity. **PayPal — one of the four required methods, not yet
+  built — will need the same kind of app-side redirect-return wiring once it lands**, which is new
+  integration surface with no web equivalent, on top of whatever the backend return-URL gap in §1
+  turns out to require.
 
-Web's headless-checkout is still "headless" in the sense of owning no checkout page, but a plugin
-still gets a DOM mount point and a `<purse-partner-ui>` custom element to render into, with
-`onDataUpdate`/`onAmountUpdate` pushing live updates into it. Android's `:partner-ui` contract has
-those lifecycle hooks (`onSessionSet`, `onAmountUpdate`, `onDataUpdate`) but the rendering host that
-would drive them is explicitly [deferred](../architecture/headless-checkout.md#deferred-intentionally-not-built-yet) —
-there is no equivalent of even a bare DOM element to hand a plugin. Every field, every live
-re-render on amount change, every disabled-state indicator is 100% host-app code, indefinitely, not
-just until some future "basic" rendering layer ships. Card vaulting (CB/SecureFields) is the plugin
-most likely to expose this gap first — it needs a live-validating field, and nothing in this SDK
-has modeled what that looks like without a DOM.
-
-### B. Reactive model mismatch: Svelte stores vs Kotlin `StateFlow`
-
-Web's `remainingAmountToPay`/`isPaymentFulfilled`/`amountSplit`/`paymentMethods` are Svelte stores —
-subscribable from anywhere, no lifecycle concept required, because a browser tab's lifecycle *is*
-the page. `StateFlow` requires the host to actively collect inside a coroutine scope, and to do it
-*lifecycle-aware* (`repeatOnLifecycle`) to avoid leaking collectors across Activity recreation —
-plumbing web integrators never have to write. This SDK's own demo (`MainActivity`) sidesteps the
-problem entirely by reading `.value` synchronously after each mutating call instead of collecting —
-a real integration that wants live-updating UI (e.g. a remaining-balance label while gift cards are
-being added) doesn't have that luxury and has to build the collection wiring itself, per screen.
-
-### C. Every PSP's *native* Android SDK is a separate integration from its web SDK
-
-Web's `usp-widget` plugin code often *is* the PSP integration — Klarna's plugin talks to
-`Klarna.Payments`, a JS SDK. Porting Klarna to Android meant learning an entirely different SDK
-(`KlarnaPaymentView`, a native widget with its own callback-based lifecycle) with its own
-undocumented-until-you-hit-it quirks — e.g. `loadPaymentReview()` throwing for any
-`purchase_country` outside the US, discovered only by triggering it (see `KlarnaCoordinator`'s
-`prepare` doc). Nothing in the web reference implementation could have surfaced that quirk, because
-web never calls the equivalent API at all. Every future PSP plugin carries this same risk
-individually: Google Pay happened to be low-risk here because both platforms go through
-Google-provided SDKs with parallel APIs, but that's not guaranteed for the next partner ported —
-each one is its own from-scratch native-SDK research project, not a mechanical translation of the
-existing web plugin.
-
-### D. Return-URL ownership shifts onto every merchant
-
-Klarna's `returnUrl` must resume the **same Activity instance** hosting the live widget, which means
-every merchant integrating this SDK must declare their own `singleTask` intent-filter correctly (see
-[the consumer API doc](../integration/consumer-api.md#7-declaring-your-own-deep-link-for-klarna)) —
-`:partner-ui` cannot ship this the way it ships Google Pay's self-contained redirect Activity, because
-it isn't `:partner-ui`'s Activity that needs to resume. Web has no equivalent merchant-declared
-configuration step; a `<script>` tag has no manifest. Two different plugins already need two
-different redirect-return architectures (self-contained Activity vs. resume-the-host's-own Activity)
-for what's conceptually the same "shopper went to an external page and came back" flow — that
-divergence is purely an artifact of native app lifecycle rules, not of the underlying payment logic.
-
-Compounding this: custom URL schemes (what Klarna's own returnURL sample uses, and what this SDK's
-demo uses today) have no OS-enforced ownership — any installed app can claim the same scheme. Web
-never has to make this tradeoff. [Verified App Links](https://developer.android.com/training/app-links/verify-android-applinks)
-are the correct answer for anything beyond a demo, and every merchant integrating this SDK inherits
-that decision, not just this repo's own demo app.
-
-### E. Coverage gaps vs web's current headless-checkout are a porting backlog, not just "different"
-
-As of this writing: no card/CB vaulting plugin (a separate SecureFields Android 3DS module is in
-progress out-of-band), no PayPal, no Apple Pay, no `ancv-connect` two-phase secondary flow, no
-splitter voucher→loyalty→primary autofill middleware, no wallet/saved-token sessions. A merchant
-comparing "what can I build with the web SDK" to "what can I build with the Android SDK" today will
-find the Android answer is a strict subset, not a like-for-like port with different ergonomics.
-Each gap above is its own item on this recap once work starts on it — expect this section to be
-replaced by concrete pain points as CB/PayPal/wallet land, the way Google Pay's and Klarna's
-sections above already were.
-
-### F. No browser devtools — confirming actual API shapes is `Log.d` + `adb logcat`
-
-Web integrators get the network tab for free when a `/validate` response doesn't behave as the
-reference code expects (see Pain point 1). This SDK's own coordinators resort to ad hoc
-`Log.d(TAG, "validate response: …")` calls (see `GooglePayCoordinator.submit` /
-`KlarnaCoordinator.resolveOutcome`) plus `adb logcat` filtering as the only way to inspect a real
-response body during development — there's no equivalent of "open devtools" for a merchant
-integrating this SDK to self-diagnose an unexpected `global_status` or missing redirect field.
-Worth a deliberate answer (a debug-only response inspector, structured logging convention, or
-similar) before this SDK reaches merchants who don't have `adb` access to the device in question.
+Compounding both: the deep-link schemes used so far (Klarna's, this SDK's demo) are custom URL
+schemes with no OS-enforced ownership. [Verified App Links](https://developer.android.com/training/app-links/verify-android-applinks)
+are the correct answer before PayPal's redirect adds another one — worth deciding once, not per
+method.
 
 ---
 
-## Open questions for next iteration
+## Bottom line
 
-- Does the eventual card/CB plugin need *any* rendering-host primitive, or can SecureFields'
-  separate native 3DS module sidestep the DOM-mount-point problem entirely (§A)?
-- Is there a lighter-weight lifecycle-aware collection helper worth adding to
-  `:headless-checkout` itself, so every host app doesn't reinvent §B?
-- Should `:partner-ui` ship a reusable "declare this intent-filter" checker/lint, given §D is a
-  correctness footgun (a merchant who gets the manifest wrong fails silently at the redirect-return
-  step, not at build time)?
+Going headless hasn't changed the answer to what SDK-12039 asked. Native Android redirect handling
+*is* feasible, exactly as this repo's Google Pay work demonstrates — but the two backend-owned gaps
+this doc's predecessor already found (ambiguous "redirect required" signal, backend-controlled
+return URLs) are still open, and they land squarely on PayPal, the one required method most likely
+to need them next. CB and vault fallback remain unbuilt on this architecture entirely. "Functionally
+identical to web" holds for what's shipped, with two concrete asterisks (plugin activation, redirect
+manifest wiring) that are integration cost, not missing functionality.

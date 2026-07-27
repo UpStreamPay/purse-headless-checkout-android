@@ -23,9 +23,7 @@ import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.core.payment.Method
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayCoordinator
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayMapper
-import eu.purse.partnerui.plugins.generics.googlepay.GooglePayModule
 import eu.purse.partnerui.plugins.partners.klarna.KlarnaCoordinator
-import eu.purse.partnerui.plugins.partners.klarna.KlarnaModule
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -121,9 +119,9 @@ class MainActivity : AppCompatActivity() {
         setContentView(binding.root)
         applyContentInsets()
 
-        GooglePayModule.register()
+        // No GooglePayModule.register()/KlarnaModule.register() needed — PluginRegistry
+        // auto-registers every built-in plugin; the session alone gates what's actually offered.
         googlePay = GooglePayCoordinator(this, googlePayListener)
-        KlarnaModule.register()
         klarna = KlarnaCoordinator(this, binding.klarnaContainer, klarnaListener)
 
         // The branded Google Pay button — chrome only (no tokenization), so a generic
