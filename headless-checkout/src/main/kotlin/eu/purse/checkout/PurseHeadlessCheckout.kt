@@ -20,6 +20,7 @@ import eu.purse.core.payload.ValidationResult
 import eu.purse.core.session.PurseSessionParams
 import eu.purse.core.session.SessionCodec
 import eu.purse.partnerui.PartnerUiContext
+import eu.purse.partnerui.plugins.generics.googlepay.GooglePayHost
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -148,6 +149,18 @@ class PurseHeadlessCheckout private constructor(
      * Blocking; call off the main thread.
      */
     fun sessionTransactions(): JSONArray = apiClient().getSession()
+
+    /**
+     * The [GooglePayHost] for [item] — everything `:partner-ui`'s `GooglePayCoordinator` needs from
+     * this checkout, without that module depending on `:headless-checkout` directly.
+     */
+    fun googlePayHost(item: PaymentItem): GooglePayHost = object : GooglePayHost {
+        override val environment get() = params.environment
+        override val redirectionReturnUrl get() = session.source.redirection
+        override fun buildContext() = pluginContext(item)
+        override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
+        override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+    }
 
     /**
      * Create the payment — run the plugin-driven `/validate` pipeline over the current split. Must

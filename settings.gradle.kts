@@ -32,10 +32,12 @@ include(":headless-checkout")
 // Shared concepts (≈ usp-widget's `sdk` + `model` + `common`): the Payment API client, environment
 // targets, the Partner/Method/vault enums, and the raw session DTO + decode. No orchestration here.
 include(":core")
-// Per-partner plugin lifecycle contract (≈ usp-widget's `partner-ui`): the `PartnerUiPlugin`
-// interface, its context, and the resolver — no concrete plugin implementations. Sits on `:core`.
+// Per-partner plugin lifecycle contract (≈ usp-widget's `partner-ui`) PLUS its concrete plugins —
+// the `PartnerUiPlugin` interface/resolver and the Google Pay (Ingenico/Worldline) implementation
+// (protocol + Play-Services payment sheet + 3-D Secure), living under `plugins.generics.googlepay`
+// inside this same module, exactly like web's `partner-ui` package bundles
+// `plugins/generics/googlepay`. It registers itself into `PluginRegistry` at runtime
+// (`GooglePayModule.register()`). Sits on `:core` only — it talks to `:headless-checkout` through
+// the `GooglePayHost` seam so the dependency never points back the other way (`:headless-checkout`
+// depends on `:partner-ui`, not vice versa).
 include(":partner-ui")
-// The Google Pay (Ingenico / Worldline) plugin — the first concrete partner plugin: the pure
-// protocol plus the Play-Services payment sheet + 3-D Secure. Registers itself into `:partner-ui`
-// at runtime. Sits on `:headless-checkout`.
-include(":partner-googlepay")

@@ -16,7 +16,6 @@
     <string name="output_placeholder">Initialize the headless checkout to inspect its session, methods and split here.</string>
     <string name="session_error">Session error: %1$s</string>
 
-    <string name="btn_google_pay">Pay with Google Pay</string>
     <string name="gpay_canceled">Google Pay canceled.</string>
     <string name="gpay_error">Google Pay error: %1$s</string>
 
@@ -33,4 +32,20 @@
     <string name="giftcard_check_first">Check the balance first.</string>
     <string name="giftcard_added">Applied %1$s of %2$s balance</string>
     <string name="giftcard_error">Couldn\'t read card: %1$s</string>
+
+    <string name="alfred_session_id_hint">Session id (for alfred\'s GET /payment_session)</string>
+    <string name="get_session_via_alfred">Get Transactions</string>
+    <string name="alfred_session_fetching">Fetching via alfred…</string>
+    <string name="alfred_session_result">alfred GET /payment_session/%1$s:</string>
+    <string name="alfred_session_error">alfred error: %1$s</string>
+    <string name="alfred_session_id_required">Enter a session id first</string>
+
+    <string name="capture_payment_id_hint">Payment id (for alfred\'s POST capture)</string>
+    <string name="capture_amount_hint">Amount</string>
+    <string name="btn_capture">Capture</string>
+    <string name="capture_payment_id_required">Enter a payment id first</string>
+    <string name="capture_amount_invalid">Enter a valid amount</string>
+    <string name="capture_capturing">Capturing via alfred…</string>
+    <string name="capture_result">alfred POST /payments/%1$s/capture:</string>
+    <string name="capture_error">alfred error: %1$s</string>
 </resources>

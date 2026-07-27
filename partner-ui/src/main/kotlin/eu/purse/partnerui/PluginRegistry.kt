@@ -19,9 +19,9 @@ typealias PluginBuilder = (PluginBuilderData) -> PartnerUiPlugin
  * `getPlugin` (`packages/partner-ui/src/plugins/index.ts`) with its **vault → generic → partner**
  * priority, falling back to a method-level default.
  *
- * Plugins live in their own modules (e.g. `:partner-googlepay`) and **register themselves at
- * runtime** via [register] / [registerFallback], so this contract module never depends on any
- * implementation. Until something registers, `getPlugin` returns `null`.
+ * Concrete plugins (e.g. `eu.purse.partnerui.plugins.generics.googlepay`) **register themselves at
+ * runtime** via [register] / [registerFallback], so this contract has no compile-time reference to
+ * any implementation. Until something registers, `getPlugin` returns `null`.
  */
 object PluginRegistry {
 

@@ -1,7 +1,35 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  Intentionally empty. This module is the plugin lifecycle CONTRACT only — it ships no Activities,
-  services, or partner SDKs. Return Activities (PayPal, generic redirect) and the Google Pay
-  meta-data will be reintroduced by the concrete plugins when those are implemented.
--->
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" />
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application>
+        <!--
+          Declares Google Pay support for the integrating app — required by the Google Pay API so it
+          (and the Play Store) know this app integrates it. Ships here so the integrator needs no
+          manifest work of their own.
+        -->
+        <meta-data
+            android:name="com.google.android.gms.wallet.api.enabled"
+            android:value="true" />
+
+        <!--
+          The 3-D Secure return Activity — Custom Tabs (GET) / WebView (POST) for a chained redirect
+          after a Google Pay /validate. Ships here so it merges into any integrating app with no
+          manifest work. The deep-link scheme is the app's own applicationId plus ".redirect" so it
+          can never collide with another partner's return path.
+        -->
+        <activity
+            android:name="eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectionCheckoutActivity"
+            android:launchMode="singleTop"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${applicationId}.redirect" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

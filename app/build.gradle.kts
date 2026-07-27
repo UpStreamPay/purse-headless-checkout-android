@@ -64,7 +64,8 @@ android {
 
 dependencies {
     implementation(project(":headless-checkout"))
-    implementation(project(":partner-googlepay"))
+    // GooglePayCoordinator/GooglePayModule (eu.purse.googlepay) — ships inside `:partner-ui`.
+    implementation(project(":partner-ui"))
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.core.ktx)
     implementation(libs.material)

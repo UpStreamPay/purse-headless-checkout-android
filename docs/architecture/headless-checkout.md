@@ -9,13 +9,12 @@ payment* and lets a merchant build their own checkout UI on top. It mirrors the 
 | Module | Package | Mirrors web | Responsibility |
 |---|---|---|---|
 | `:core` | `eu.purse.core` | `sdk` + `model` + `common` | Payment API client, environment targets, the `Partner`/`Method`/`VaultVendor`/`CardBrand` enums, `MethodConfiguration`, the raw `LegacyPaymentSession` DTO + its base64 `widget.data` decode, and the typed `ItemPayload`/`ValidationResult`. No orchestration. |
-| `:partner-ui` | `eu.purse.partnerui` | `partner-ui` | The plugin lifecycle **contract** only — `PartnerUiPlugin`, `PartnerUiContext`, `PluginRegistry` (with runtime `register`). No concrete plugins; they register themselves. |
+| `:partner-ui` | `eu.purse.partnerui` + `eu.purse.partnerui.plugins.generics.googlepay` | `partner-ui` (contract + `plugins/generics/googlepay`) | The plugin lifecycle **contract** — `PartnerUiPlugin`, `PartnerUiContext`, `PluginRegistry` (with runtime `register`) — **and** the concrete **Google Pay (Ingenico/Worldline)** plugin living in the same module: pure protocol plus the Play-Services sheet coordinator + 3-D Secure redirect. Registers itself via `GooglePayModule.register()`. Reaches `:headless-checkout` only through the `GooglePayHost` interface it defines — implemented by `PurseHeadlessCheckout.googlePayHost` — so the module dependency never points from `:partner-ui` to `:headless-checkout`. |
 | `:headless-checkout` | `eu.purse.checkout` | `headless-checkout` | `PurseHeadlessCheckout`: session decode, the built payment model, the splitter, and the plugin-driven "create payment" pipeline. |
-| `:partner-googlepay` | `eu.purse.googlepay` | `partner-ui/plugins/generics/googlepay` | The **Google Pay (Ingenico/Worldline)** plugin: the pure protocol, the Play-Services sheet coordinator, and the 3-D Secure redirect. Registers itself via `GooglePayModule.register()`. |
 | `:app` | `eu.purse.checkout.demo` | playground | Smoke test: mint a session via alfred → `init` → print methods/split; drives Google Pay. |
 
-Dependency direction: `app → { headless-checkout, partner-googlepay }`, `partner-googlepay →
-headless-checkout → { core, partner-ui }`, `partner-ui → core`.
+Dependency direction: `app → { headless-checkout, partner-ui }`, `headless-checkout →
+{ core, partner-ui }`, `partner-ui → core`.
 
 ## The purse-payment concept
 
@@ -101,27 +100,57 @@ validate:  validateUi(optional) → preValidation ─ host POSTs /validate ─�
 teardown:  destroyClient
 ```
 
-`:partner-ui` ships **no** implementations — plugins live in their own modules and register
+Concrete plugins live inside `:partner-ui` (alongside the contract, like web) and register
 themselves at runtime (`PluginRegistry.register` / `registerFallback`). A `(partner, method)` with no
 registered plugin makes `submitPayment` throw `PurseCheckoutException.NoPluginRegistered`.
 
-### Google Pay (`:partner-googlepay`)
+### Google Pay (`eu.purse.partnerui.plugins.generics.googlepay`, inside `:partner-ui`)
 
 The first primary plugin. Because Google Pay is interactive, it splits in two:
 
 - **Protocol** (`GooglePayPlugin : PartnerUiPlugin`, pure JSON): `buildRequest` does `POST /init`,
-  parses the gateway config from `plugin_result.logs` (Ingenico / Adyen / default branches), refines
-  Ingenico's networks + gateway via a live Worldline product-320 call (`WorldlineProductClient`), and
-  builds the Google Pay request JSON; `preValidation` maps the sheet token (from
-  `PartnerUiContext.collected`) into the `/validate` payload (`partner_data.session`,
-  `payment_data.card.selected_network`).
+  then `GooglePayMapper.parseInitConfig` dispatches `plugin_result.logs` to the matching `partners/`
+  builder — `partners.ingenico.Ingenico`, `partners.Adyen`, or `partners.Default` — ports web's
+  `plugins/generics/googlepay/partners/{ingenico,adyen,default}.ts` split. Ingenico additionally
+  refines its networks + gateway via a live Worldline product-320 call
+  (`partners.ingenico.WorldlineProductClient`, ≈ web's `libs/ingenico-onlinepayments`); `preValidation`
+  maps the sheet token (from `PartnerUiContext.collected`) into the `/validate` payload
+  (`partner_data.session`, `payment_data.card.selected_network`).
 - **Interactive** (`GooglePayCoordinator`, Play-Services + Activity): drives `isReadyToPay`, the
-  payment sheet (`GetPaymentDataResult`), hands the token back via `PurseHeadlessCheckout.setCollected`,
-  calls `submitPayment`, and on a `/validate` redirection launches the 3-D Secure
-  `RedirectionCheckoutActivity` (Custom Tabs GET / WebView POST), re-querying `sessionTransactions()`
-  on return.
+  payment sheet (`GetPaymentDataResult`), hands the token back and calls `submitPayment` through the
+  `GooglePayHost` seam (implemented by `PurseHeadlessCheckout.googlePayHost` in `:headless-checkout`
+  — `GooglePayCoordinator` never imports `:headless-checkout` directly). If `/validate` needs genuine
+  3-D Secure, `RedirectionResolver` resolves it (per-item `redirection_json`/`redirection_url`, or a
+  global `redirection.url`/`form`) and the coordinator launches `RedirectionCheckoutActivity` — an
+  **in-app WebView** for both GET and POST (a system Custom Tab can't POST or be observed navigating),
+  which finishes once the shopper reaches either this app's own deep link or the session's own return
+  URL (`GooglePayHost.redirectionReturnUrl`, attached as `RedirectAction.returnUrlPrefix` — a "known
+  terminal page" hint, in case a genuine multi-hop redirect ends there). `RedirectionResolver`
+  deliberately drops two shapes that are never a genuine PSP/bank redirect: web's
+  `should_submit_widget` fallback (a "resubmit the widget's own page" signal, meaningless headless),
+  and — confirmed against a real response — a plain global `redirection.url` that itself starts with
+  the session's own return URL (the widget's *confirmation* page, e.g.
+  `…/widgets/confirmation?purse-redirection-data=<jwt>` — a route in `usp-widget/sites/demo`, not a
+  bank domain; its JWT decodes to the very `authorization_status` the same `/validate` call already
+  returned in `global_status`). Both resolve to `null`: the coordinator reports `global_status`
+  directly instead of opening anything. That same JWT also carries `payment_id` — read (unsigned;
+  the JWT arrived over the already-authenticated `/validate` response, so no signature check is
+  needed just to read a field) via `RedirectionResolver.extractWidgetConfirmationPaymentId`,
+  independent of whether the redirect itself gets suppressed, and surfaced through
+  `GooglePayCoordinator.Listener.onPaymentId` — purely informational (e.g. prefilling the demo's own
+  "Capture" tool below), never required for the payment to resolve.
+- **On a genuine redirect's return** (`RedirectionCheckoutResult.Approved`), the coordinator
+  deliberately does **not** chase the payment outcome itself — it only reports that the shopper came
+  back. A confirmed backend pain point (`docs/decisions/pain-points-recap.md` in the pre-headless
+  `master` branch, "Pain point 2"): a real 3-D Secure challenge's own final redirect is constructed
+  server-side by the bank/PSP, and can land on a Purse API gateway URL that 401s on the session's own
+  client-facing `api_key` — nothing fixable client-side. `master`'s own resolution was the same one
+  this repo's demo now ships: an independent, on-demand "Get Transactions" tool
+  (`MainActivity.getSessionViaAlfred`) that checks status via alfred rather than auto-chaining another
+  API call after every redirect return.
 
-Wire it up with `GooglePayModule.register()` at startup.
+Wire it up with `GooglePayModule.register()` at startup, and hand the coordinator a
+`checkout.googlePayHost(item)` per Google Pay item.
 
 ## Deferred (intentionally not built yet)
 
