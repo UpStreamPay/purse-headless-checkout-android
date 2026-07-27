@@ -24,6 +24,8 @@ import eu.purse.core.payment.Method
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayCoordinator
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayMapper
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayModule
+import eu.purse.partnerui.plugins.partners.klarna.KlarnaCoordinator
+import eu.purse.partnerui.plugins.partners.klarna.KlarnaModule
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -57,10 +59,16 @@ class MainActivity : AppCompatActivity() {
     /** Google Pay coordinator — constructed in [onCreate] so its ActivityResult launchers register. */
     private lateinit var googlePay: GooglePayCoordinator
 
-    // Resolved once at init and reused here — neither `/init` call needs a primary committed yet
-    // (see PursePaymentSplitter's doc: `remaining` doesn't depend on it), and `setPrimary` is only
-    // called once the shopper taps the matching button.
+    /** Klarna coordinator — constructed in [onCreate] so its ActivityResult launcher registers. */
+    private lateinit var klarna: KlarnaCoordinator
+
+    // Whichever primary candidates the current session actually offers — both are prepared
+    // independently (neither `/init` call needs a primary committed yet, see PursePaymentSplitter's
+    // doc: `remaining` doesn't depend on it), and `setPrimary` is only called once the shopper taps
+    // the matching button. Resolving these once at init and reusing them here avoids picking one
+    // method's presence to silently hide the other's button when a session offers both.
     private var googlePayItem: PrimaryMethod? = null
+    private var klarnaItem: PrimaryMethod? = null
 
     // The orchestration session's own top-level `id` (the v2 ClientSession id `POST
     // /orchestration_session` itself returns — distinct from `widget.data`'s `payment_session.id`)
@@ -88,6 +96,25 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
+    private val klarnaListener = object : KlarnaCoordinator.Listener {
+        override fun onReady(ready: Boolean) {
+            binding.klarnaPayButton.visibility = if (ready) View.VISIBLE else View.GONE
+        }
+        override fun onResult(summary: String) = appendOutput("Klarna → $summary")
+        override fun onRequiresAction() = appendOutput("Klarna → redirect required…")
+        override fun onCanceled() {
+            binding.klarnaPayButton.isEnabled = true
+            Toast.makeText(this@MainActivity, R.string.klarna_canceled, Toast.LENGTH_LONG).show()
+        }
+        override fun onError(message: String?) {
+            binding.klarnaPayButton.isEnabled = true
+            // A toast alone disappears before you can read a full KlarnaPaymentsSDKError detail
+            // dump (name/action/invalidFields/sessionId/fatal) — keep it in the scrolling output too.
+            appendOutput("Klarna → error: $message")
+            Toast.makeText(this@MainActivity, getString(R.string.klarna_error, message), Toast.LENGTH_LONG).show()
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -96,6 +123,8 @@ class MainActivity : AppCompatActivity() {
 
         GooglePayModule.register()
         googlePay = GooglePayCoordinator(this, googlePayListener)
+        KlarnaModule.register()
+        klarna = KlarnaCoordinator(this, binding.klarnaContainer, klarnaListener)
 
         // The branded Google Pay button — chrome only (no tokenization), so a generic
         // allowedPaymentMethods is enough here; the real one (with the gateway's tokenization spec)
@@ -113,13 +142,19 @@ class MainActivity : AppCompatActivity() {
         binding.initCheckoutButton.setOnClickListener { initCheckout() }
         binding.googlePayButton.setOnClickListener {
             // Commit Google Pay as the primary only now that the shopper actually chose it — see
-            // the googlePayItem doc for why this isn't decided back in initCheckout().
+            // the googlePayItem/klarnaItem doc for why this isn't decided back in initCheckout().
             checkout?.setPrimary(googlePayItem)
             // Belt-and-suspenders alongside GooglePayCoordinator's own re-entrancy guard: a double
             // tap here would otherwise fire two payment sheets and POST /validate twice for the same
             // session — the second call comes back 409 (idempotency conflict).
             binding.googlePayButton.isEnabled = false
             googlePay.launchSheet()
+        }
+        binding.klarnaPayButton.setOnClickListener {
+            checkout?.setPrimary(klarnaItem)
+            // Same belt-and-suspenders re-entrancy guard as the Google Pay button above.
+            binding.klarnaPayButton.isEnabled = false
+            klarna.submit()
         }
         binding.getSessionViaAlfredButton.setOnClickListener { getSessionViaAlfred() }
         binding.captureButton.setOnClickListener { captureViaAlfred() }
@@ -180,7 +215,12 @@ class MainActivity : AppCompatActivity() {
         }
         binding.googlePayButton.visibility = View.GONE
         binding.googlePayButton.isEnabled = true
+        binding.klarnaContainer.visibility = View.GONE
+        binding.klarnaContainer.removeAllViews()
+        binding.klarnaPayButton.visibility = View.GONE
+        binding.klarnaPayButton.isEnabled = true
         googlePayItem = null
+        klarnaItem = null
         binding.alfredSessionIdInput.setText(resolveDefaultAlfredSessionId(widgetData))
         binding.alfredSessionResult.visibility = View.GONE
         binding.capturePaymentIdInput.setText("")
@@ -195,8 +235,17 @@ class MainActivity : AppCompatActivity() {
             // called once the shopper taps the matching button (see the click listeners in onCreate).
             googlePayItem = it.primaryMethods.firstOrNull { p -> p.method == Method.GooglePay }
             googlePayItem?.let { gpay -> googlePay.prepare(it.googlePayHost(gpay)) }
+
+            klarnaItem = it.primaryMethods.firstOrNull { p -> p.method == Method.Installments }
+            klarnaItem?.let { klarnaMethod ->
+                binding.klarnaContainer.visibility = View.VISIBLE
+                klarna.prepare(it.klarnaHost(klarnaMethod, klarnaReturnUrl()))
+            }
         }
     }
+
+    /** `KlarnaPaymentView`'s own returnURL — matches the deep link declared on this Activity's manifest entry. */
+    private fun klarnaReturnUrl(): String = "$packageName.klarna://return"
 
     /**
      * Mirrors `resolveDefaultSessionId` in `usp-widget/sites/demo/src/routes/widgets/confirmation/+page.svelte`:

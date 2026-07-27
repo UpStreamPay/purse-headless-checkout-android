@@ -33,6 +33,11 @@ sealed class Partner {
         override val wireValue = "illicado"
     }
 
+    /** Klarna — see docs/architecture/headless-checkout.md. */
+    object Klarna : Partner() {
+        override val wireValue = "klarna"
+    }
+
     data class Other(override val wireValue: String) : Partner()
 
     companion object {
@@ -40,7 +45,7 @@ sealed class Partner {
         // [eu.purse.core.payment.Method]: an eager `listOf(objects)` here can capture a
         // half-constructed `null` when external code touches a `Partner` object before `fromWire`,
         // causing an NPE. Deferring the build to first use breaks that init-order cycle.
-        private val known: List<Partner> by lazy { listOf(Purse, Aci, Adyen, Paypal, Illicado) }
+        private val known: List<Partner> by lazy { listOf(Purse, Aci, Adyen, Paypal, Illicado, Klarna) }
 
         fun fromWire(value: String): Partner = known.firstOrNull { it.wireValue == value } ?: Other(value)
     }

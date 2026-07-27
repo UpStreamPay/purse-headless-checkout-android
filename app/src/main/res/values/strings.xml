@@ -19,6 +19,10 @@
     <string name="gpay_canceled">Google Pay canceled.</string>
     <string name="gpay_error">Google Pay error: %1$s</string>
 
+    <string name="btn_pay_with_klarna">Pay with Klarna</string>
+    <string name="klarna_canceled">Klarna canceled.</string>
+    <string name="klarna_error">Klarna error: %1$s</string>
+
     <string name="section_secondary">Add a gift card (secondary)</string>
     <string name="helper_giftcard">Illicado test card: PAN 9250004781234567890, CVC 123. Leave the amount blank to use as much of the balance as the order needs, or enter a smaller amount to contribute part of it.</string>
     <string name="hint_giftcard_pan">Gift card number</string>

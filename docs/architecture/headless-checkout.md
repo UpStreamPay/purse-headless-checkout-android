@@ -9,9 +9,9 @@ payment* and lets a merchant build their own checkout UI on top. It mirrors the 
 | Module | Package | Mirrors web | Responsibility |
 |---|---|---|---|
 | `:core` | `eu.purse.core` | `sdk` + `model` + `common` | Payment API client, environment targets, the `Partner`/`Method`/`VaultVendor`/`CardBrand` enums, `MethodConfiguration`, the raw `LegacyPaymentSession` DTO + its base64 `widget.data` decode, and the typed `ItemPayload`/`ValidationResult`. No orchestration. |
-| `:partner-ui` | `eu.purse.partnerui` + `eu.purse.partnerui.plugins.generics.googlepay` | `partner-ui` (contract + `plugins/generics/googlepay`) | The plugin lifecycle **contract** — `PartnerUiPlugin`, `PartnerUiContext`, `PluginRegistry` (with runtime `register`) — **and** the concrete **Google Pay (Ingenico/Worldline)** plugin living in the same module: pure protocol plus the Play-Services sheet coordinator + 3-D Secure redirect. Registers itself via `GooglePayModule.register()`. Reaches `:headless-checkout` only through the `GooglePayHost` interface it defines — implemented by `PurseHeadlessCheckout.googlePayHost` — so the module dependency never points from `:partner-ui` to `:headless-checkout`. |
+| `:partner-ui` | `eu.purse.partnerui` + `eu.purse.partnerui.plugins.generics.googlepay` + `eu.purse.partnerui.plugins.partners.klarna` | `partner-ui` (contract + `plugins/generics/googlepay` + `plugins/partners/klarna-installments`) | The plugin lifecycle **contract** — `PartnerUiPlugin`, `PartnerUiContext`, `PluginRegistry` (with runtime `register`) — **and** the concrete **Google Pay (Ingenico/Worldline)** and **Klarna** plugins living in the same module: pure protocol plus, respectively, the Play-Services sheet coordinator + 3-D Secure redirect, and the native `KlarnaPaymentView` coordinator. Registers itself via `GooglePayModule.register()` / `KlarnaModule.register()`. Each reaches `:headless-checkout` only through the `GooglePayHost` / `KlarnaHost` interface it defines — implemented by `PurseHeadlessCheckout.googlePayHost` / `.klarnaHost` — so the module dependency never points from `:partner-ui` to `:headless-checkout`. |
 | `:headless-checkout` | `eu.purse.checkout` | `headless-checkout` | `PurseHeadlessCheckout`: session decode, the built payment model, the splitter, and the plugin-driven "create payment" pipeline. |
-| `:app` | `eu.purse.checkout.demo` | playground | Smoke test: mint a session via alfred → `init` → print methods/split; drives Google Pay. |
+| `:app` | `eu.purse.checkout.demo` | playground | Smoke test: mint a session via alfred → `init` → print methods/split; drives Google Pay or Klarna. |
 
 Dependency direction: `app → { headless-checkout, partner-ui }`, `headless-checkout →
 { core, partner-ui }`, `partner-ui → core`.
@@ -151,6 +151,39 @@ The first primary plugin. Because Google Pay is interactive, it splits in two:
 
 Wire it up with `GooglePayModule.register()` at startup, and hand the coordinator a
 `checkout.googlePayHost(item)` per Google Pay item.
+
+### Klarna (`eu.purse.partnerui.plugins.partners.klarna`, inside `:partner-ui`)
+
+The second primary plugin, and the first **dedicated** (not gateway-generic) partner plugin — unlike
+Google Pay, Klarna is one PSP (`Partner.Klarna`) offering one method (`Method.Installments`, wire value
+`installments`), so it registers only `PluginRegistry.register(Partner.Klarna, Method.Installments)`,
+no fallback. Ports web's `plugins/partners/klarna-installments`, using Klarna's native Android
+`KlarnaPaymentView` (see
+https://docs.klarna.com/acquirer/klarna/mobile-payments/integrate-with-mobile-sdk/android/native-view/)
+instead of web's `Klarna.Payments` JS SDK:
+
+- **Protocol** (`KlarnaPlugin : PartnerUiPlugin`, pure JSON): `buildRequest` does `POST /init`,
+  `KlarnaMapper.parseInitConfig` extracts `plugin_result.logs.klarna_client_token`, and
+  `KlarnaMapper.extractStepId` reads the top-level `step_id` `/init` returns (web's
+  `context.dmz.initialStepId`). `preValidation` builds an otherwise-empty `/validate` payload carrying
+  only that `step_id` — ported verbatim from web's `klarna_installments.preValidation`, which
+  deliberately does **not** call Klarna's own `authorize()` before `/validate`.
+- **Interactive** (`KlarnaCoordinator`, the native widget): inflates a `KlarnaPaymentView` into a host
+  container view, `initialize(clientToken)` → `load(null)`, and reports "ready" off
+  `onLoadPaymentReview`'s `showForm` flag — the native analog of web's `e.show_form` check. Unlike
+  Google Pay (sheet runs *before* `/validate`), `KlarnaCoordinator.submit()` mirrors web's own ordering:
+  it calls `KlarnaHost.submitPayment()` (`/validate`) **first**, using only the `step_id`, and only
+  *then* drives the widget's `authorize()`/`finalize()` — because web's `postValidation` calls
+  `Klarna.authorize()` after `/validate`, not before. Once authorized/finalized, it resolves any
+  redirect via the same `RedirectionResolver` (and shared `RedirectionCheckoutContract`/Activity)
+  Google Pay uses, keyed by `KlarnaMapper.METHOD` (`installments`) instead of `googlepay`.
+- **Return URL**: `KlarnaPaymentView.returnURL` needs a deep link back into the **same Activity**
+  hosting the live widget (unlike Google Pay's 3-D Secure, which uses a self-contained Activity this
+  module ships) — so the host app declares its own `singleTask` intent-filter (see the demo's
+  `MainActivity` manifest entry) rather than `:partner-ui` shipping one.
+
+Wire it up with `KlarnaModule.register()` at startup, and hand the coordinator a
+`checkout.klarnaHost(item, returnUrl)` per Klarna item.
 
 ## Deferred (intentionally not built yet)
 

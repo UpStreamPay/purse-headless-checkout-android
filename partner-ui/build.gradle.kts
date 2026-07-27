@@ -6,11 +6,13 @@ plugins {
 // `partner-ui` package, which bundles the `Plugin<Context>` contract alongside every partner's own
 // plugin folder (`plugins/generics/googlepay`, `plugins/partners/…`) in one package. Ships:
 // the `PartnerUiPlugin` interface, `PartnerUiContext`, `PluginBuilder`/`getPlugin` resolver
-// (`eu.purse.partnerui`); and the Google Pay (Ingenico/Worldline) plugin — pure protocol, the
-// Play-Services payment sheet, and the 3-D Secure redirect Activity (`plugins.generics.googlepay`).
-// It registers itself into the resolver at runtime (`GooglePayModule.register()`) and reaches
-// `:headless-checkout` only through the `GooglePayHost` interface it defines, never a direct
-// dependency — `:headless-checkout` depends on `:partner-ui`, not the other way around.
+// (`eu.purse.partnerui`); the Google Pay (Ingenico/Worldline) plugin — pure protocol, the
+// Play-Services payment sheet, and the 3-D Secure redirect Activity (`plugins.generics.googlepay`);
+// and the Klarna plugin — pure protocol plus the native `KlarnaPaymentView` widget
+// (`plugins.partners.klarna`). Each registers itself into the resolver at runtime
+// (`GooglePayModule.register()` / `KlarnaModule.register()`) and reaches `:headless-checkout` only
+// through the `GooglePayHost`/`KlarnaHost` interfaces it defines, never a direct dependency —
+// `:headless-checkout` depends on `:partner-ui`, not the other way around.
 android {
     namespace = "eu.purse.partnerui"
     compileSdk {
@@ -41,9 +43,12 @@ dependencies {
     // Google Pay: PaymentsClient, the branded PayButton, and the GetPaymentDataResult
     // ActivityResultContract. `api` so `:app` can render the button + register the launcher.
     api(libs.play.services.wallet)
+    // Klarna: the native KlarnaPaymentView widget + its callback contract. `api` so `:app` can
+    // inflate the view and implement/observe its callback.
+    api(libs.klarna.mobile.sdk)
     // The self-contained 3-D Secure return Activity (in-app WebView) + ActivityResultContract.
     implementation(libs.androidx.appcompat)
-    // lifecycleScope for the Google Pay coordinator's coroutine work.
+    // lifecycleScope for the Google Pay / Klarna coordinators' coroutine work.
     implementation(libs.androidx.lifecycle.runtime.ktx)
     // Awaiting the isReadyToPay Task / running coordinator work from a coroutine.
     implementation(libs.kotlinx.coroutines.core)

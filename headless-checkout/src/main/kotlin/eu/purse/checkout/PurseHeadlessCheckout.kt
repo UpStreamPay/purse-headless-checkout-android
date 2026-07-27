@@ -21,6 +21,7 @@ import eu.purse.core.session.PurseSessionParams
 import eu.purse.core.session.SessionCodec
 import eu.purse.partnerui.PartnerUiContext
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayHost
+import eu.purse.partnerui.plugins.partners.klarna.KlarnaHost
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
@@ -157,6 +158,19 @@ class PurseHeadlessCheckout private constructor(
     fun googlePayHost(item: PaymentItem): GooglePayHost = object : GooglePayHost {
         override val environment get() = params.environment
         override val redirectionReturnUrl get() = session.source.redirection
+        override fun buildContext() = pluginContext(item)
+        override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
+        override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+    }
+
+    /**
+     * The [KlarnaHost] for [item] — everything `:partner-ui`'s `KlarnaCoordinator` needs from this
+     * checkout, without that module depending on `:headless-checkout` directly. [returnUrl] falls back
+     * to the session's own configured return URL (like Google Pay's redirect return) since Klarna's
+     * `KlarnaPaymentView` needs one regardless of whether the session declared its own.
+     */
+    fun klarnaHost(item: PaymentItem, klarnaReturnUrl: String): KlarnaHost = object : KlarnaHost {
+        override val returnUrl get() = klarnaReturnUrl
         override fun buildContext() = pluginContext(item)
         override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
         override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()

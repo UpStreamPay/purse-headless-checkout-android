@@ -113,6 +113,28 @@
             android:visibility="gone"
             tools:visibility="visible" />
 
+        <!-- KlarnaPaymentView is inflated into this container programmatically by
+             KlarnaCoordinator.prepare() once the session offers Klarna installments. wrap_content
+             matches Klarna's own documented sample ("Render payment view" at the native-view doc) —
+             the widget itself resizes to its content; the earlier fixed-height workaround here was
+             based on a misread of the SDK's internal WebView sizing and has been reverted. -->
+        <FrameLayout
+            android:id="@+id/klarnaContainer"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:visibility="gone"
+            tools:visibility="visible" />
+
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/klarnaPayButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="8dp"
+            android:text="@string/btn_pay_with_klarna"
+            android:visibility="gone"
+            tools:visibility="visible" />
+
         <TextView
             android:id="@+id/outputText"
             android:layout_width="match_parent"

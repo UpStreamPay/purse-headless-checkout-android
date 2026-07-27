@@ -33,6 +33,11 @@ sealed class Method {
         override val wireValue = "bnpl"
     }
 
+    /** Klarna's own pay-later/slice-it method — see docs/architecture/headless-checkout.md. */
+    object Installments : Method() {
+        override val wireValue = "installments"
+    }
+
     data class Other(override val wireValue: String) : Method()
 
     companion object {
@@ -41,7 +46,9 @@ sealed class Method {
         // is still constructing* — which happens when external code touches e.g. `Method.GiftCard`
         // before ever calling `fromWire` — an eager list would capture a half-constructed `null`
         // and later NPE in `fromWire`. Deferring the build to first use breaks that init-order cycle.
-        private val known: List<Method> by lazy { listOf(CreditCard, GooglePay, Wallet, GiftCard, Bnpl) }
+        private val known: List<Method> by lazy {
+            listOf(CreditCard, GooglePay, Wallet, GiftCard, Bnpl, Installments)
+        }
 
         fun fromWire(value: String): Method = known.firstOrNull { it.wireValue == value } ?: Other(value)
     }

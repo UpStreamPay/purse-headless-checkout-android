@@ -14,6 +14,7 @@ coroutines = "1.10.2"
 paypalWebPayments = "2.3.0"
 playServicesWallet = "20.0.0"
 androidxBrowser = "1.10.0"
+klarnaMobileSdk = "2.13.1"
 
 [libraries]
 androidx-core-ktx = { group = "androidx.core", name = "core-ktx", version.ref = "coreKtx" }
@@ -31,6 +32,7 @@ paypal-web-payments = { group = "com.paypal.android", name = "paypal-web-payment
 paypal-payment-buttons = { group = "com.paypal.android", name = "payment-buttons", version.ref = "paypalWebPayments" }
 play-services-wallet = { group = "com.google.android.gms", name = "play-services-wallet", version.ref = "playServicesWallet" }
 androidx-browser = { group = "androidx.browser", name = "browser", version.ref = "androidxBrowser" }
+klarna-mobile-sdk = { group = "com.klarna.mobile", name = "sdk", version.ref = "klarnaMobileSdk" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
