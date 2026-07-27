@@ -26,6 +26,8 @@ own checkout UI on top. It mirrors the layered design of the web `usp-widget`
 | If you want to… | Read |
 |---|---|
 | Understand the architecture, modules, and purse-payment flow | **[Headless checkout architecture](architecture/headless-checkout.md)** |
+| Integrate the SDK — the full consumer API (functions, events, callbacks) | **[Consumer API reference](integration/consumer-api.md)** |
+| Know where this diverges from the web headless SDK | **[Pain points recap](decisions/pain-points-recap.md)** |
 | Run the demo app against a real session | **[Testing with alfred](internal/testing-with-alfred.md)** |
 
 ## Requirements
