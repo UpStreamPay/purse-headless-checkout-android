@@ -3,17 +3,21 @@ package eu.purse.partnerui.plugins.generics.googlepay
 import eu.purse.partnerui.plugins.generics.googlepay.partners.ingenico.Ingenico
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.math.BigDecimal
 
 class GooglePayMapperTest {
 
-    private fun ingenicoInit(withGatewayMerchantId: Boolean = true): JSONObject {
+    private fun ingenicoInit(
+        withGatewayMerchantId: Boolean = true,
+        countryCode: String? = "BE",
+    ): JSONObject {
         val logs = JSONObject()
             .put("merchantId", "MID-1")
             .put("merchantName", "Acme")
-            .put("countryCode", "FR")
+            .putOpt("countryCode", countryCode)
             .put("currencyCode", "EUR")
             .put("clientSessionId", "cs")
             .put("customerId", "cust")
@@ -57,6 +61,51 @@ class GooglePayMapperTest {
         val transaction = request.getJSONObject("transactionInfo")
         assertEquals("4.80", transaction.getString("totalPrice"))
         assertEquals("EUR", transaction.getString("currencyCode"))
+    }
+
+    @Test
+    fun `ingenico carries its own countryCode from init into transactionInfo`() {
+        val config = GooglePayMapper.parseInitConfig(ingenicoInit(), "ingenico")
+        assertEquals("BE", config.countryCode)
+
+        val request = GooglePayMapper.buildPaymentDataRequestJson(config, "EUR", BigDecimal("4.80"))
+        assertEquals("BE", request.getJSONObject("transactionInfo").getString("countryCode"))
+    }
+
+    @Test
+    fun `countryCode falls back to FR when init carries none`() {
+        val config = GooglePayMapper.parseInitConfig(ingenicoInit(countryCode = null), "ingenico")
+        assertNull(config.countryCode)
+
+        val request = GooglePayMapper.buildPaymentDataRequestJson(config, "EUR", BigDecimal("4.80"))
+        assertEquals("FR", request.getJSONObject("transactionInfo").getString("countryCode"))
+    }
+
+    @Test
+    fun `an explicit countryCode argument wins over the one from init`() {
+        val config = GooglePayMapper.parseInitConfig(ingenicoInit(), "ingenico")
+        val request = GooglePayMapper.buildPaymentDataRequestJson(config, "EUR", BigDecimal("4.80"), "NL")
+
+        assertEquals("NL", request.getJSONObject("transactionInfo").getString("countryCode"))
+    }
+
+    @Test
+    fun `a non-ingenico partner has no countryCode of its own and keeps FR`() {
+        val payment = JSONObject()
+            .put("configuration", JSONObject().put("gateway", "stripe").put("gatewayMerchantId", "GM"))
+            .put("brands", org.json.JSONArray().put("VISA"))
+        val init = JSONObject()
+            .put("status", JSONObject().put("state", "SUCCESS"))
+            .put(
+                "plugin_result",
+                JSONObject().put("logs", JSONObject().put("payment_method_configuration", payment.toString())),
+            )
+
+        val config = GooglePayMapper.parseInitConfig(init, "stripe")
+        assertNull(config.countryCode)
+
+        val request = GooglePayMapper.buildPaymentDataRequestJson(config, "EUR", BigDecimal("4.80"))
+        assertEquals("FR", request.getJSONObject("transactionInfo").getString("countryCode"))
     }
 
     @Test

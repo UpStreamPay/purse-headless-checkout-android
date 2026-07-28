@@ -16,4 +16,11 @@ data class GooglePayConfig(
     val merchantId: String?,
     val merchantName: String?,
     val allowedCardNetworks: List<String>,
+    /**
+     * `transactionInfo.countryCode` — the merchant's country, when `/init` carries one. Only Ingenico
+     * does (`logs.countryCode`, the same value its Worldline product lookup is keyed on), mirroring
+     * web's `ingenico.ts`; the other builders leave it `null` and
+     * [GooglePayMapper.buildPaymentDataRequestJson] falls back to `"FR"` as web's `default.ts` does.
+     */
+    val countryCode: String? = null,
 )

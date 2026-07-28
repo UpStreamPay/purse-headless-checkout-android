@@ -14,8 +14,9 @@ Everything here is the Kotlin analog of web's `@upstreampay/headless-checkout` +
 
 ### Plugins are active by default — no setup call needed
 
-Every plugin `:partner-ui` ships (Google Pay, Klarna) is registered automatically; you don't call
-`GooglePayModule.register()` / `KlarnaModule.register()` yourself. Whether a method actually shows
+Every plugin `:partner-ui` ships (Google Pay, Klarna, Purse-vaulted card) is registered
+automatically; you don't call `GooglePayModule.register()` / `KlarnaModule.register()` /
+`CardModule.register()` yourself. Whether a method actually shows
 up is gated by the **session** alone — the same thing that already decides it server-side, in the
 merchant's Purse configuration. `paymentMethods` simply won't include a method the session doesn't
 offer.
@@ -198,8 +199,12 @@ Registered partners today: `illicado-giftcard`, `buybox-giftcard`, `maxxing-loya
 ## 6. Interactive plugins (Google Pay, Klarna, Card)
 
 Interactive plugins collect data outside the headless split/validate flow (a payment sheet, a
-native widget, a card form) before `submitPayment` runs. Three pieces make up the pattern for
-every such plugin:
+native widget, a card form) before `submitPayment` runs. This section is the **API surface**; each
+PSP's own behaviour — what its `/init` returns, where its native step sits relative to `/validate`,
+its quirks and failure modes, with sequence diagrams — has a page of its own under
+**[docs/plugins](../plugins/README.md)**.
+
+Three pieces make up the pattern for every such plugin:
 
 1. A **`*Host` interface** in `:partner-ui` — what the plugin's coordinator needs from the checkout,
    implemented by `PurseHeadlessCheckout`.
@@ -258,6 +263,9 @@ stashed for this item.
 
 ### Google Pay
 
+> Deep dive — `/init` shapes per gateway, sequence diagram, quirks, failure modes:
+> **[docs/plugins/google-pay.md](../plugins/google-pay.md)**.
+
 **`GooglePayHost`** (implemented by `PurseHeadlessCheckout.googlePayHost(item)`):
 
 | Member | Meaning |
@@ -308,6 +316,9 @@ when {
 
 ### Klarna
 
+> Deep dive — why `authorize()` runs after `/validate`, sequence diagram, quirks, failure modes:
+> **[docs/plugins/klarna.md](../plugins/klarna.md)**.
+
 **`KlarnaHost`** (implemented by `PurseHeadlessCheckout.klarnaHost(item, returnUrl)`):
 
 | Member | Meaning |
@@ -342,6 +353,9 @@ and an `onError` before any submit (a widget that fails to load) is not a failed
 shopper able to pick another method rather than showing them a failure screen.
 
 ### Card (Purse vault / SecureFields)
+
+> Deep dive — session prerequisites, sequence diagram, quirks, failure modes:
+> **[docs/plugins/card-purse-vault.md](../plugins/card-purse-vault.md)**.
 
 **Compose-first** — unlike `GooglePayCoordinator`/`KlarnaCoordinator` above (plain classes driving
 View-system widgets), the card plugin's interactive half is a `@Composable` function. Rendering it

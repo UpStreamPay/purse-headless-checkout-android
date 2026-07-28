@@ -9,6 +9,10 @@ import org.json.JSONObject
  * config is spread directly across `logs` (no nested JSON string). Networks aren't provided here —
  * they default to `[MASTERCARD, VISA]` and are refined by [WorldlineProductClient]. Gateway defaults
  * to [DEFAULT_GATEWAY].
+ *
+ * Alone among the builders it also carries `logs.countryCode` into the request's `transactionInfo`
+ * (web's `ingenico.ts` does the same, off the same field its own product lookup is keyed on) — the
+ * others have no country in `/init` and fall back to `"FR"`.
  */
 internal object Ingenico {
 
@@ -26,5 +30,6 @@ internal object Ingenico {
         merchantId = logs.optStringOrNull("merchantId"),
         merchantName = logs.optStringOrNull("merchantName"),
         allowedCardNetworks = listOf("MASTERCARD", "VISA"),
+        countryCode = logs.optStringOrNull("countryCode"),
     )
 }

@@ -19,7 +19,7 @@ own checkout UI on top. It mirrors the layered design of the web `usp-widget`
    │
 :headless-checkout eu.purse.checkout       PurseHeadlessCheckout: session, model, splitter, validate
    ├── :core        eu.purse.core          Payment API client, enums, LegacyPaymentSession, decode
-   └── :partner-ui  eu.purse.partnerui     PartnerUiPlugin lifecycle contract (no implementations)
+   └── :partner-ui  eu.purse.partnerui     PartnerUiPlugin contract + the shipped plugins (see docs/plugins)
 ```
 
 ## Start here
@@ -28,6 +28,7 @@ own checkout UI on top. It mirrors the layered design of the web `usp-widget`
 |---|---|
 | Understand the architecture, modules, and purse-payment flow | **[Headless checkout architecture](architecture/headless-checkout.md)** |
 | Integrate the SDK — the full consumer API (functions, events, callbacks) | **[Consumer API reference](integration/consumer-api.md)** |
+| Work on one PSP — its `/init`, sequence diagram, quirks, failure modes | **[Plugins, per PSP](plugins/README.md)** ([Google Pay](plugins/google-pay.md) · [Klarna](plugins/klarna.md) · [Card / Purse vault](plugins/card-purse-vault.md)) |
 | Know where this diverges from the web headless SDK | **[Pain points recap](decisions/pain-points-recap.md)** |
 | Run the demo app against a real session | **[Testing with alfred](internal/testing-with-alfred.md)** |
 

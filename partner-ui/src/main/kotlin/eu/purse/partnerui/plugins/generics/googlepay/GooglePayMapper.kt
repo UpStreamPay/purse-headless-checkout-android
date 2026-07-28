@@ -25,7 +25,10 @@ object GooglePayMapper {
     private val ALLOWED_AUTH_METHODS = listOf("PAN_ONLY", "CRYPTOGRAM_3DS")
     private val DEFAULT_CARD_NETWORKS = listOf("VISA", "MASTERCARD", "AMEX")
 
-    /** Not modeled in the session/`MethodConfiguration`; matches web's hardcoded `'FR'`. */
+    /**
+     * Used when neither the caller nor `/init` supplies a country — matches the `'FR'` web's
+     * `default.ts` hardcodes. Ingenico's `/init` does supply one, see [GooglePayConfig.countryCode].
+     */
     private const val DEFAULT_COUNTRY_CODE = "FR"
 
     /** `/init` body — mirrors web's `getGooglePayConfiguration`: empty data, pay-now only. */
@@ -81,12 +84,18 @@ object GooglePayMapper {
             ),
         )
 
-    /** `PaymentDataRequest.fromJson` input — shows the Google Pay sheet. */
+    /**
+     * `PaymentDataRequest.fromJson` input — shows the Google Pay sheet.
+     *
+     * `transactionInfo.countryCode` resolves as **[countryCode] argument → [GooglePayConfig.countryCode]
+     * (Ingenico's `/init`) → [DEFAULT_COUNTRY_CODE]**, so a caller can override, an Ingenico session
+     * gets its own country, and everyone else keeps web's `'FR'`.
+     */
     fun buildPaymentDataRequestJson(
         config: GooglePayConfig,
         currencyCode: String,
         amount: BigDecimal,
-        countryCode: String = DEFAULT_COUNTRY_CODE,
+        countryCode: String? = null,
     ): JSONObject {
         val merchantInfo = JSONObject()
         config.merchantId?.let { merchantInfo.put("merchantId", it) }
@@ -99,7 +108,12 @@ object GooglePayMapper {
             .put(
                 "transactionInfo",
                 JSONObject()
-                    .put("countryCode", countryCode)
+                    .put(
+                        "countryCode",
+                        countryCode?.takeIf { it.isNotBlank() }
+                            ?: config.countryCode?.takeIf { it.isNotBlank() }
+                            ?: DEFAULT_COUNTRY_CODE,
+                    )
                     .put("currencyCode", currencyCode)
                     .put("totalPrice", amount.toPlainString())
                     .put("totalPriceStatus", "FINAL"),

@@ -106,7 +106,8 @@ teardown:  destroyClient
 
 Concrete plugins live inside `:partner-ui` (alongside the contract, like web) and are registered by
 default — `PluginRegistry`'s own `init` block calls `GooglePayModule.register()` /
-`KlarnaModule.register()`, mirroring web's `getPlugin`, which needs no registration step at all. The
+`KlarnaModule.register()` / `CardModule.register()`, mirroring web's `getPlugin`, which needs no
+registration step at all. The
 session (checked in `getPlugin` against `protocols`) is the real gate on whether a method is
 offered — that's already decided server-side, so no app-side setup call is required for a built-in
 plugin to work. `PluginRegistry.disable`/`enable` opt a built-in method out/back in for a specific
@@ -114,147 +115,65 @@ app build; `register`/`registerFallback` remain for a plugin that isn't bundled 
 itself. A `(partner, method)` with no plugin at all (e.g. card/CB, PayPal — not yet built) still
 makes `submitPayment` throw `PurseCheckoutException.NoPluginRegistered`.
 
-### Google Pay (`eu.purse.partnerui.plugins.generics.googlepay`, inside `:partner-ui`)
+Each shipped plugin has its own reference page — `/init` contract, sequence diagram, quirks, failure
+modes, host integration: **[docs/plugins](../plugins/README.md)**. What follows is only the shape of
+each, and how they differ from one another.
 
-The first primary plugin. Because Google Pay is interactive, it splits in two:
+Everything the three have in common — the protocol/interactive split, the `*Host` seam, `setCollected`,
+the shared `RedirectionResolver` + in-app-WebView redirect Activity, and why a returned redirect is
+never treated as an outcome — is written up once in
+[docs/plugins/README.md](../plugins/README.md#what-every-plugin-has-in-common).
 
-- **Protocol** (`GooglePayPlugin : PartnerUiPlugin`, pure JSON): `buildRequest` does `POST /init`,
-  then `GooglePayMapper.parseInitConfig` dispatches `plugin_result.logs` to the matching `partners/`
-  builder — `partners.ingenico.Ingenico`, `partners.Adyen`, or `partners.Default` — ports web's
-  `plugins/generics/googlepay/partners/{ingenico,adyen,default}.ts` split. Ingenico additionally
-  refines its networks + gateway via a live Worldline product-320 call
-  (`partners.ingenico.WorldlineProductClient`, ≈ web's `libs/ingenico-onlinepayments`); `preValidation`
-  maps the sheet token (from `PartnerUiContext.collected`) into the `/validate` payload
-  (`partner_data.session`, `payment_data.card.selected_network`).
-- **Interactive** (`GooglePayCoordinator`, Play-Services + Activity): drives `isReadyToPay`, the
-  payment sheet (`GetPaymentDataResult`), hands the token back and calls `submitPayment` through the
-  `GooglePayHost` seam (implemented by `PurseHeadlessCheckout.googlePayHost` in `:headless-checkout`
-  — `GooglePayCoordinator` never imports `:headless-checkout` directly). If `/validate` needs genuine
-  3-D Secure, `RedirectionResolver` resolves it (per-item `redirection_json`/`redirection_url`, or a
-  global `redirection.url`/`form`) and the coordinator launches `RedirectionCheckoutActivity` — an
-  **in-app WebView** for both GET and POST (a system Custom Tab can't POST or be observed navigating),
-  which finishes once the shopper reaches either this app's own deep link or the session's own return
-  URL (`GooglePayHost.redirectionReturnUrl`, attached as `RedirectAction.returnUrlPrefix` — a "known
-  terminal page" hint, in case a genuine multi-hop redirect ends there). `RedirectionResolver`
-  deliberately drops two shapes that are never a genuine PSP/bank redirect: web's
-  `should_submit_widget` fallback (a "resubmit the widget's own page" signal, meaningless headless),
-  and — confirmed against a real response — a plain global `redirection.url` that itself starts with
-  the session's own return URL (the widget's *confirmation* page, e.g.
-  `…/widgets/confirmation?purse-redirection-data=<jwt>` — a route in `usp-widget/sites/demo`, not a
-  bank domain; its JWT decodes to the very `authorization_status` the same `/validate` call already
-  returned in `global_status`). Both resolve to `null`: the coordinator reports `global_status`
-  directly instead of opening anything. That same JWT also carries `payment_id` — read (unsigned;
-  the JWT arrived over the already-authenticated `/validate` response, so no signature check is
-  needed just to read a field) via `RedirectionResolver.extractWidgetConfirmationPaymentId`,
-  independent of whether the redirect itself gets suppressed, and surfaced through
-  `Listener.onPaymentId` — on all three coordinators, since all three can read one off the same
-  response (the demo's own "Capture" tool is unusable without it). Purely informational, never
-  required for the payment to resolve, and absent whenever a *genuine* redirect took the
-  widget-confirmation one's place.
-- **On a genuine redirect's return** (`RedirectionCheckoutResult.Approved`), the coordinator
-  deliberately does **not** chase the payment outcome itself — it only reports that the shopper came
-  back. A confirmed backend pain point (`docs/decisions/pain-points-recap.md` in the pre-headless
-  `master` branch, "Pain point 2"): a real 3-D Secure challenge's own final redirect is constructed
-  server-side by the bank/PSP, and can land on a Purse API gateway URL that 401s on the session's own
-  client-facing `api_key` — nothing fixable client-side. `master`'s own resolution was the same one
-  this repo's demo now ships: an independent, on-demand "Get transactions" tool
-  (`DemoController.getTransactions` → `AlfredClient.paymentSession`) that checks status via alfred
-  rather than auto-chaining another API call after every redirect return. Its answer is what settles
-  the demo's result screen — a `null` `globalStatus` on `Listener.onResult` renders as "outcome
-  unconfirmed" until a successful `AUTHORIZE`/`CAPTURE` transaction promotes it.
+### Google Pay (`plugins.generics.googlepay`) → [full page](../plugins/google-pay.md)
 
-No registration call needed — hand the coordinator a `checkout.googlePayHost(item)` per Google Pay
-item; `PluginRegistry` already has `GooglePayModule` registered by default.
+The **generic** family: one protocol reused across gateways, registered for `(ingenico, googlepay)`
+plus as the `Method.GooglePay` fallback. `GooglePayPlugin.buildRequest` does `POST /init` and
+dispatches `plugin_result.logs` to the matching `partners/` parser (`Ingenico` / `Adyen` / `Default`,
+ports web's same three-way split); Ingenico additionally refines networks + gateway through a live
+Worldline product-320 call (`WorldlineProductClient`, ≈ web's `libs/ingenico-onlinepayments`).
+`GooglePayCoordinator` runs `isReadyToPay`, the sheet, and the 3-D Secure redirect.
 
-### Klarna (`eu.purse.partnerui.plugins.partners.klarna`, inside `:partner-ui`)
+It is an **xpay**: the branded button *is* the submit action, so it never becomes a selectable row and
+`preValidation` maps the sheet token (`partner_data.session`) + chosen network into `/validate`. The
+sheet runs **before** `/validate`.
 
-The second primary plugin, and the first **dedicated** (not gateway-generic) partner plugin — unlike
-Google Pay, Klarna is one PSP (`Partner.Klarna`) offering one method (`Method.Installments`, wire value
-`installments`), so `KlarnaModule.register()` (called by `PluginRegistry`'s `init` block by default)
-only registers `PluginRegistry.register(Partner.Klarna, Method.Installments)`, no fallback. Ports
-web's `plugins/partners/klarna-installments`, using Klarna's native Android
-`KlarnaPaymentView` (see
-https://docs.klarna.com/acquirer/klarna/mobile-payments/integrate-with-mobile-sdk/android/native-view/)
-instead of web's `Klarna.Payments` JS SDK:
+### Klarna (`plugins.partners.klarna`) → [full page](../plugins/klarna.md)
 
-- **Protocol** (`KlarnaPlugin : PartnerUiPlugin`, pure JSON): `buildRequest` does `POST /init`,
-  `KlarnaMapper.parseInitConfig` extracts `plugin_result.logs.klarna_client_token`, and
-  `KlarnaMapper.extractStepId` reads the top-level `step_id` `/init` returns (web's
-  `context.dmz.initialStepId`). `preValidation` builds an otherwise-empty `/validate` payload carrying
-  only that `step_id` — ported verbatim from web's `klarna_installments.preValidation`. `postValidation`
-  is where Klarna's own `authorize()` step actually happens — confirmed against both the plugin
-  itself and the orchestrator that calls it (`headless-checkout-validation.ts`'s `preValidateItems` →
-  `validate` → `postValidateItems`, run in that order, `postValidateItems` only once `/validate`
-  returns `SUCCESS`). `postValidation` calls the live `authorize()` callback `KlarnaCoordinator`
-  stashed in `PartnerUiContext.collected` (keyed `KlarnaPlugin.COLLECTED_AUTHORIZE`, alongside the
-  `step_id`) — since this plugin has no Klarna SDK types of its own, matching how the sheet token
-  reaches Google Pay's `preValidation`. This is why one `checkout.submitPayment()` call is enough to
-  both submit and open Klarna's own payment step — no separate coordinator-driven call needed after
-  the fact.
-- **Interactive** (`KlarnaCoordinator`, the native widget): inflates a `KlarnaPaymentView` into a host
-  container view, `initialize(clientToken)` → `load(null)`, and reports "ready" off
-  `onLoadPaymentReview`'s `showForm` flag — the native analog of web's `e.show_form` check.
-  `KlarnaCoordinator.submit()` is now just `KlarnaHost.submitPayment()` plus resolving whatever
-  redirect the (already-authorized) result carries — `authorizeWidget()` is a private suspend
-  function `postValidation` calls, not something `submit()` drives directly. Redirects resolve via
-  the same `RedirectionResolver` (and shared `RedirectionCheckoutContract`/Activity) Google Pay uses,
-  keyed by `KlarnaMapper.METHOD` (`installments`) instead of `googlepay`. A declined authorization
-  throws `KlarnaAuthorizationDeclined`, which `submit()` reports as `Listener.onCanceled()` rather
-  than `onError()`.
-- **Return URL**: `KlarnaPaymentView.returnURL` needs a deep link back into the **same Activity**
-  hosting the live widget (unlike Google Pay's 3-D Secure, which uses a self-contained Activity this
-  module ships) — so the host app declares its own `singleTask` intent-filter (see the demo's
-  `MainActivity` manifest entry) rather than `:partner-ui` shipping one.
+The **partner** family: one PSP, one method (`(klarna, installments)`), no fallback. Uses Klarna's
+native `KlarnaPaymentView` instead of web's `Klarna.Payments` JS SDK. `/init` yields a
+`klarna_client_token` (a JWT the coordinator logs decoded — the fastest way to see why the widget
+renders a generic info card instead of an installment breakdown) plus a `step_id`, and
+`preValidation` sends an otherwise-empty payload carrying only that `step_id`.
 
-No registration call needed — hand the coordinator a `checkout.klarnaHost(item, returnUrl)` per
-Klarna item; `PluginRegistry` already has `KlarnaModule` registered by default.
+Its defining asymmetry: **Klarna's own `authorize()` runs after `/validate`**, inside
+`postValidation`, via a live `suspend` callback the coordinator stashed in `PartnerUiContext.collected`
+— ported verbatim from web (`preValidateItems` → `validate` → `postValidateItems`, the last only on
+success). One `submitPayment()` therefore both submits and opens Klarna's payment step. A declined
+authorization throws `KlarnaAuthorizationDeclined`, reported as `onCanceled()` rather than an error.
+Its `returnURL` must resume the **same Activity** hosting the live widget, so the host app declares
+that deep link itself (see [§7 of the consumer API](../integration/consumer-api.md#7-declaring-your-own-deep-link-for-klarna)).
 
-### Card / Purse vault (`eu.purse.partnerui.plugins.vaults.purse.creditcard`, inside `:partner-ui`)
+### Card / Purse vault (`plugins.vaults.purse.creditcard`) → [full page](../plugins/card-purse-vault.md)
 
-The third primary plugin, and the first **vault** plugin (`PluginRegistry.registerVault`, keyed by
-`VaultVendor` rather than `(partner, method)` — any partner's `creditcard` method can be
-Purse-vaulted). Ports web's `plugins/vaults/purse/creditcard` bridge plus the generic
-`plugins/generics/hostedfields` plugin it plugs into, using the SecureFields Android SDK
-(`eu.purse.securefields`, published separately — see SDK-11769) for the actual card fields.
+The **vault** family: `registerVault(VaultVendor.PURSE)`, keyed by vault vendor rather than
+`(partner, method)` and resolved first, so any partner's Purse-vaulted `creditcard` lands here. Ports
+web's `plugins/vaults/purse/creditcard` bridge plus the generic `plugins/generics/hostedfields` plugin
+it plugs into, over the SecureFields Android SDK (`eu.purse.securefields`, published separately —
+SDK-11769). Alone among the three it is **Compose-first**: `rememberCardCoordinator` owns the
+SecureFields instance and the host renders it with `VaultForm`/`VaultField`.
 
-- **Protocol** (`CardPlugin : PartnerUiPlugin`, pure JSON): unlike Google Pay/Klarna, `/init` gates
-  nothing about rendering — SecureFields tokenizes independently of it — so `preValidation` does
-  both steps itself: `POST /init` for a `step_id` (`CardMapper.parseInit`), then builds the
-  `/validate` payload from the vault token `CardCoordinator` already collected via
-  `PartnerUiContext.collected`. No separate `buildRequest` phase, unlike the other two plugins.
-- **Interactive** (`CardCoordinator`, **Compose-first** — unlike `GooglePayCoordinator`/
-  `KlarnaCoordinator`, which are imperative classes driving View-system widgets): a composable,
-  `rememberCardCoordinator(host, listener)`, wraps SecureFields' own `rememberSecureFields` (its
-  Compose entry point) and exposes the live `SecureFieldsAndroid` instance for the host to render
-  with SecureFields' `VaultForm`/`VaultField` composables. `submit()` tokenizes
-  (`sdk.submit(SubmitOptions(selectedNetwork = …))`), hands the vault token + bin + resolved
-  gateway scheme to `CardHost.submitPayment()` through the same `setCollected` seam Google
-  Pay/Klarna use, then resolves any 3-D Secure redirect via the same shared `RedirectionResolver`/
-  `RedirectionCheckoutContract` — but launched through Compose's
-  `rememberLauncherForActivityResult` rather than `ComponentActivity.registerForActivityResult`,
-  which sidesteps the "construct before STARTED" lifecycle caveat the other two coordinators carry.
-- **Form completeness gates the payment**, the one piece of web's `hostedfields` plugin that has a
-  real Kotlin analog: web builds a `final-form` model whose managed (iframe) fields hold sentinel
-  values (`'valid'`/`'required'`/`'format'`), subscribes to `state.valid`, and dispatches
-  `fulfilled { isFulfilled }` on every flip — which its `PaymentElement` mirrors, and which
-  `setAsPrimarySource` refuses to proceed without (`ELEMENT_NOT_FULFILLED`). Here SecureFields Android
-  owns the equivalent form state and emits it as `onFormValid(hasErrors)` (an untouched field is not
-  valid, so an empty form has errors), so `CardCoordinator` needs no form model of its own: it reports
-  `false` through `CardHost.setFulfilled` the moment the form mounts, mirrors every validity change
-  after that, and refuses to tokenize an invalid form. `PurseHeadlessCheckout` keeps that per-item flag
-  and folds it into `isPaymentFulfilled` / `submitPayment` (see the split step above). The plugin's
-  `validateUi` is the last line of defence — no collected vault token means the form was never
-  successfully submitted, so `PaymentValidator` fails before `preValidation` can build a payload.
-- **Brand resolution**: the resolved co-badged brand (e.g. a French card that's both CB and VISA)
-  is converted between three distinct vocabularies — the session's `CardBrand`
-  (`vault.supported_brands`), SecureFields' own `Brand` (its BIN-lookup vocabulary), and the
-  Payment API's gateway scheme string (`payment_data.card.selected_network`, e.g.
-  `"CARTE_BANCAIRE"`) — `CardCoordinator`'s private `toGatewayScheme()` mirrors SecureFields
-  Android's own internal (non-public) `schemeFor()`.
+Two things set it apart:
 
-No registration call needed — render `coordinator.sdk` with SecureFields' `VaultForm`/`VaultField`
-and call `coordinator.submit()` from your own "Pay" trigger once `coordinator.formValid` is `true`;
-`PluginRegistry` already has `CardModule` registered by default (see `PluginRegistry.registerVault`).
+- **No `buildRequest`.** Nothing about rendering depends on `/init` (unlike Google Pay's gateway config
+  or Klarna's client token), so `preValidation` does both steps itself — `POST /init` for a `step_id`,
+  then the `/validate` payload built from the vault token the coordinator collected. Web makes the same
+  two calls in the same order, just earlier (at `onSessionSet`).
+- **It gates fulfillment.** SecureFields owns the form state web models in `final-form` and emits it as
+  `onFormValid(hasErrors)`, so the coordinator reports `false` through `CardHost.setFulfilled` at mount,
+  mirrors every change, and refuses to tokenize an invalid form — which is what keeps
+  `isPaymentFulfilled` `false` and `submitPayment` throwing `ItemNotFulfilled` until the card is
+  actually filled in (see the split step above). `CardPlugin.validateUi` is the last line of defence:
+  no collected vault token means the form was never successfully submitted.
 
 ## Deferred (intentionally not built yet)
 
