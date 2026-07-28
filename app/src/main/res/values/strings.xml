@@ -1,81 +1,81 @@
 <resources>
-    <string name="app_name">dropin-android</string>
+    <string name="app_name">Purse Headless Demo</string>
 
-    <string name="label_alfred_base_url">Alfred: %1$s</string>
-    <string name="helper_alfred_base_url">Set ALFRED_BASE_URL in .env at the repo root (see .env.example). Run `npm run dev:alfred` from the usp-widget repo root. Emulator: 10.0.2.2. Physical device: your machine\'s LAN IP.</string>
+    <!-- Chrome shared by the three screens -->
+    <string name="step_label">Step %1$d of 3</string>
+    <string name="section_event_log">Event log</string>
 
+    <!-- 1 · Session -->
+    <string name="session_title">Session</string>
+    <string name="session_subtitle">Mint an orchestration session through alfred.</string>
+    <string name="label_alfred">alfred</string>
     <string name="btn_create_session">Create session</string>
-    <string name="toast_create_session_failed">Failed to create session: %1$s</string>
-
+    <string name="btn_creating_session">Creating session…</string>
+    <string name="session_error">Couldn\'t create the session: %1$s</string>
+    <string name="init_error">Couldn\'t read widget.data: %1$s</string>
+    <string name="section_widget_data">Paste a widget.data instead</string>
     <string name="hint_widget_data">widget.data</string>
-    <string name="helper_widget_data">Populated by \"Create session\", or paste a widget.data string manually</string>
+    <string name="btn_use_widget_data">Use this widget.data</string>
+    <string name="session_ready">Session ready</string>
+    <plurals name="session_methods">
+        <item quantity="one">%1$d payment method</item>
+        <item quantity="other">%1$d payment methods</item>
+    </plurals>
+    <string name="section_session_details">Session details</string>
+    <string name="btn_continue">Continue to payment</string>
 
-    <string name="btn_init_dropin">Initialize Dropin SDK</string>
+    <!-- 2 · Pay -->
+    <string name="pay_title">Pay</string>
+    <string name="label_total">Total</string>
+    <string name="label_remaining">Left to pay</string>
+    <string name="label_covered">Fully covered</string>
+    <string name="section_express">Express checkout</string>
+    <string name="section_primary">Choose how to pay</string>
+    <string name="section_secondary">Gift card</string>
+    <string name="helper_giftcard">Test card 9250004781234567890, CVC 123.</string>
+    <string name="hint_giftcard_pan">Gift card number</string>
+    <string name="hint_giftcard_cvv">CVC</string>
+    <string name="hint_giftcard_amount">Amount (blank = as much as needed)</string>
+    <string name="btn_check_balance">Check balance</string>
+    <string name="btn_apply_giftcard">Add to payment</string>
+    <string name="giftcard_amount_invalid">Enter a valid amount</string>
+    <string name="giftcard_balance">%1$s — balance %2$s</string>
+    <string name="giftcard_balance_partial">%1$s — balance %2$s of %3$s</string>
+    <string name="giftcard_applied">Applied %1$s</string>
+    <string name="giftcard_error">Couldn\'t read that card: %1$s</string>
+    <string name="method_klarna">Klarna</string>
+    <string name="method_card">Card</string>
+    <string name="method_redirection">Redirect to the payment page</string>
+    <string name="helper_redirection">No form to fill in — tapping Pay opens this provider\'s own page, then brings you back.</string>
+    <string name="redirection_preparing">Preparing…</string>
+    <string name="redirection_ready">Ready — tap Pay to continue.</string>
+    <string name="btn_pay">Pay %1$s</string>
+    <string name="btn_pay_now">Pay</string>
+    <string name="submitting">Submitting payment…</string>
+    <string name="pay_canceled">Payment canceled — nothing was charged.</string>
+    <string name="requires_action">Redirecting for authentication…</string>
     <string name="error_required">Required</string>
 
-    <string name="dropin_title">Drop-in</string>
-    <string name="section_payment_method">Payment method</string>
-    <string name="section_secondaries">Gift cards and loyalty account</string>
-    <string name="divider_or">or</string>
-    <string name="primary_not_wired">Capture for this method isn\'t wired up in this POC yet.</string>
-    <string name="cc_card_number">Card number</string>
-    <string name="cc_exp">MM / YY</string>
-    <string name="cc_cvv">CVV</string>
-    <string name="cc_holder">Name on card</string>
-    <string name="cc_no_vault">This card method has no Purse vault configured — SecureFields can\'t be shown.</string>
-
-    <string name="pay_button">Pay %1$s %2$s</string>
-    <string name="pay_processing">Processing…</string>
-    <string name="pay_secondaries_cover">Amount fully covered by gift cards. Submitting the payment (/validate) isn\'t wired in this POC yet.</string>
-    <string name="pay_primary_error">Payment failed: %1$s</string>
-    <string name="pay_card_capturing">Confirming card payment…</string>
-    <string name="pay_card_success">Card payment approved and captured.</string>
-    <string name="pay_card_declined">Card payment not completed (status: %1$s).</string>
-    <string name="pay_card_error">Card payment error: %1$s</string>
-
-    <string name="paypal_no_client_id">PayPal isn\'t configured for this session (no client_id).</string>
-    <string name="paypal_creating_order">Creating PayPal order…</string>
-    <string name="paypal_capturing">Confirming PayPal payment…</string>
-    <string name="paypal_success">PayPal payment approved and captured.</string>
-    <string name="paypal_declined">PayPal payment not completed (status: %1$s).</string>
-    <string name="paypal_canceled">PayPal payment canceled.</string>
-    <string name="paypal_failed">PayPal failed: %1$s</string>
-    <string name="paypal_error">PayPal error: %1$s</string>
-
-    <string name="alfred_session_id_hint">Session id (for alfred\'s GET /payment_session)</string>
-    <string name="get_session_via_alfred">Get Transactions</string>
-    <string name="alfred_session_fetching">Fetching via alfred…</string>
-    <string name="alfred_session_result">alfred GET /payment_session/%1$s:</string>
-    <string name="alfred_session_error">alfred error: %1$s</string>
-    <string name="alfred_session_id_required">Enter a session id first</string>
-
-    <string name="googlepay_creating_request">Preparing Google Pay…</string>
-    <string name="googlepay_capturing">Confirming Google Pay payment…</string>
-    <string name="googlepay_success">Google Pay payment approved and captured.</string>
-    <string name="googlepay_declined">Google Pay payment not completed (status: %1$s).</string>
-    <string name="googlepay_canceled">Google Pay canceled.</string>
-    <string name="googlepay_failed">Google Pay failed: %1$s</string>
-    <string name="googlepay_error">Google Pay error: %1$s</string>
-    <string name="googlepay_redirect_required">Google Pay requires one more step (3-D Secure)…</string>
-    <string name="googlepay_redirect_canceled">3-D Secure step canceled.</string>
-    <string name="googlepay_redirect_failed">3-D Secure step failed: %1$s</string>
-
-    <string name="method_amount_min">min %1$s</string>
-    <string name="method_amount_max">max %1$s</string>
-    <string name="method_no_methods">No payment methods available for this session.</string>
-
-    <string name="secondary_giftcard_title">Gift card - %1$s</string>
-    <string name="giftcard_pan_label">Card number</string>
-    <string name="giftcard_cvv_label">CVC</string>
-    <string name="giftcard_use_card">Add card</string>
-    <string name="giftcard_invalid">Invalid gift card. Please check the information entered.</string>
-    <string name="giftcard_applying">Adding card…</string>
-    <string name="giftcard_added">Added %1$s — balance %2$s, expires %3$s</string>
-    <string name="giftcard_error">Couldn\'t add card: %1$s</string>
-
-    <string name="disabled_fulfilled">Disabled: payment already fulfilled</string>
-    <string name="disabled_min">Disabled: min amount %1$s not met (%2$s left to pay)</string>
-    <string name="disabled_max">Disabled: max amount %1$s exceeded</string>
-
-    <string name="session_error">Session error: %1$s</string>
+    <!-- 3 · Result -->
+    <string name="result_title">Result</string>
+    <string name="result_authorized">Payment authorized</string>
+    <string name="result_failed">Payment failed</string>
+    <string name="result_unconfirmed">Outcome unconfirmed</string>
+    <string name="result_unconfirmed_hint">The shopper came back from the partner\'s redirect, which isn\'t proof of payment. Fetch the transactions below to confirm.</string>
+    <string name="result_via">via %1$s</string>
+    <string name="result_confirmed_by_transactions">Confirmed by the session\'s transactions.</string>
+    <string name="section_transactions">Transactions</string>
+    <string name="section_transactions_raw">Raw response</string>
+    <string name="hint_session_id">Session id</string>
+    <string name="btn_get_transactions">Get transactions</string>
+    <string name="transactions_fetching">Fetching…</string>
+    <string name="section_capture">Capture</string>
+    <string name="capture_needs_payment_id">No payment_id was reported — paste one to capture.</string>
+    <string name="hint_capture_payment_id">Payment id</string>
+    <string name="hint_capture_amount">Amount</string>
+    <string name="btn_capture">Capture</string>
+    <string name="capture_amount_invalid">Enter a valid amount</string>
+    <string name="capture_capturing">Capturing…</string>
+    <string name="alfred_error">alfred error: %1$s</string>
+    <string name="btn_start_over">Start a new payment</string>
 </resources>

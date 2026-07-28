@@ -1,315 +1,116 @@
-# Pain Points — Android Drop-in POC
+# Pain Points — Android Headless SDK vs Web Headless SDK
 
-What we learned building [SDK-12039](https://upstreampay.atlassian.net/browse/SDK-12039): where
-porting the web widget (`../usp-widget`) to native Android was straightforward, where it wasn't,
-and what we need from the API/backend team to go further. Deep technical detail lives in
-[Redirect Handling](../architecture/redirect-handling.md) and the [partner
-pages](../partners/README.md); this page is the summary.
+**Ticket:** [SDK-12039](https://upstreampay.atlassian.net/browse/SDK-12039) — a POC to decide whether
+a native Android drop-in is feasible before investing in a full solution. Required end-to-end: CB
+(via the existing Secure Fields Android SDK, SDK-11769), Google Pay, PayPal, Illicado, plus a vault
+fallback — "functionally identical to the web drop-in." The ticket's own open question: **"comment
+gérer la redirection (intent)"** — how to handle redirection.
 
----
-
-## The mental model: how a payment flows
-
-Purse's own [simple-payment tutorial](https://docs.purse.tech/docs/integrate/purse-api/tutorials/simple-payment)
-describes the lifecycle. Adapted to this POC, every payment method goes through the same steps:
-
-```
-1. Merchant backend creates a session      → the app receives widget.data
-2. Shopper picks a method                  → card fields, Google Pay sheet, or PayPal approval
-3. The Drop-in calls POST /init            → registers the attempt, gets method-specific data back
-4. The Drop-in calls POST /validate        → actually submits the payment
-5a. Usually: the payment is resolved       → show the result. Done.
-5b. Sometimes: the shopper must do one
-    more thing on an external page (3DS)   → send them there, bring them back, re-validate
-```
-
-**The single most clarifying realization of this POC:** on web, there is always a step 6 —
-navigate the browser to the merchant's page (`shopper_redirection_url` in the tutorial,
-`session.success` in the widget). That step exists because a browser tab has to end up *somewhere*.
-It is **not part of resolving the payment**. A native SDK has no browser tab: when step 5a applies —
-which is the common case (CB without 3DS, Illicado, most Google Pay and PayPal payments) — the
-Drop-in simply hands the result back to the host app and is done. Our demo app already works this
-way.
-
-So the redirect problem, which the Jira ticket flags as *the* open question ("comment gérer la
-redirection"), is real but narrower than it first looked *for the four methods this POC covers*.
-It only concerns step 5b (a 3DS challenge) and PayPal's approval in step 2 (the one capture that
-inherently leaves the app). But — see Pain point 3 below — those four methods don't include the
-one category of payment method where a redirect **is** the whole flow, every time, with real web
-precedent: bank-transfer-style methods like Fintecture. This POC has designed a generic redirect
-handler without ever exercising the case it's actually for.
-
-Everything below is organized against those steps.
+This repo answers that question by going one layer further than the ticket asked for — a **headless**
+port of `usp-widget`'s headless-checkout package, not a drop-in widget — but the ticket's three
+decision points are exactly what this doc tracks. Everything below is scoped to them, not to every
+friction point of building headless-native in general.
 
 ---
 
-## What works end-to-end today
+## 1. Redirect handling — the ticket's own open question
 
-| Method          | Capture                      | /init + /validate          | External step                                                   |
-| --------------- | ----------------------------- | --------------------------- | ---------------------------------------------------------------- |
-| **CB** (SecureFields) | native fields            | wired (`CardMapper`)        | 3DS: planned via SecureFields' upcoming 3DS module               |
-| **Google Pay**  | native sheet                  | wired                        | 3DS: wired and confirmed reachable against Google's `3ds_visa` test card (Custom Tabs/WebView) |
-| **PayPal**      | PayPal SDK browser-switch      | wired                        | approval works; backend return-URL question open (see below)    |
-| **Illicado**    | plain form                    | `/init` wired                | none known                                                       |
+**Short answer: yes, intent-based redirection works.** `RedirectionResolver` + Custom Tabs (GET) /
+in-app WebView (POST) + a deep-link return closes the loop, confirmed against a real 3-D Secure
+challenge on Google Pay's `3ds_visa` test card. That validates the architecture the ticket was
+asking about.
 
-Not in this table: any `integration_mode: "redirection"` method (e.g. Fintecture
-`instant_payment`) — a whole category this POC has no example of at all. See Pain point 3.
+Two things keep it from being a *closed* question, both backend-owned, neither fixable client-side:
 
----
+- **The `/validate` response never says "a redirect is required."** A client infers it from which of
+  four optional fields happen to be present, in a fixed priority order — "no redirect needed" and "a
+  field is missing" look identical. Would benefit from an explicit `next_action`-style field.
+- **The redirect's own return URL is chosen by the backend/PSP at `/init`-time, not by the app.**
+  Confirmed concretely: a real 3-D Secure challenge's final redirect can land on a Purse API gateway
+  URL that 401s on the session's own client-facing `api_key`. This remains true for 3-D Secure.
+  **PayPal turned out to be the exception, not the worst case:** its SDK never uses the order's
+  backend-set `return_url` at all — `PayPalWebCheckoutClient` puts its own `redirect_uri` in the
+  approval URL, built from the `urlScheme` the app hands it. So the one method this gap was expected
+  to block is the one method it doesn't apply to. (Established by inspecting the SDK; still to be
+  confirmed on a device against a live PayPal-enabled session.)
 
-## Pain point 1 — The API doesn't clearly say "the shopper must do one more thing"
+Net: the redirect *mechanism* is proven. The redirect *contract* (what the API promises about when
+and where) still has open gaps — narrowed now to genuine PSP/bank 3-D Secure hops, since PayPal, the
+method they were expected to land on hardest, routes around them entirely.
 
-This is the most important finding, and it blocks step 5b.
+## 2. Parity against the ticket's required scope
 
-When `/validate` needs a follow-up (a 3DS challenge), the response doesn't carry an explicit
-"action required" field. Instead the web widget **infers** it from which of four optional fields
-happen to be present (`redirection.url`, `redirection.form`, per-item `redirection_url` +
-`redirection_json`, `should_submit_widget`), checked in a fixed priority order
-(`redirection-manager.ts` in the web SDK). To a client, "no redirect needed" and "a field is
-missing" look identical.
+| Requirement | Status on this headless port |
+|---|---|
+| CB (Secure Fields Android, SDK-11769) | **Done** — `CardPlugin`/`CardCoordinator` (`plugins.vaults.purse.creditcard`) wrap the published SecureFields Android SDK for the `purse` vault vendor specifically; `/init`+`/validate` wired, 3-D Secure resolved via the same `RedirectionResolver` Google Pay uses. Built **Compose-first** — see §3's third point for what that costs. |
+| Google Pay | Done — protocol, sheet, and 3-D Secure redirect all working, including the gateway-specific (Ingenico/Adyen/default) builder split. |
+| PayPal | **Done** (wallet pay-now) — `PaypalPlugin`/`PaypalCoordinator` (`plugins.partners.paypal.wallet`) over the official PayPal Android SDK's browser switch; `/init`+approval+`/validate` wired, chained 3-D Secure resolved via the same `RedirectionResolver`. The redirect-return-URL gap above turned out **not** to apply here (see §1). BNPL and vaulting remain out of scope. |
+| Illicado | Done — but as a **secondary** (gift-card co-payment) method, not a primary card flow. The ticket groups it with CB/Google Pay/PayPal as if it's one more primary method; in Purse's own model it isn't, so "Illicado works" doesn't close the same gap CB/PayPal do. |
+| Vault fallback | **Still not addressed.** `MethodConfiguration.VaultInfo`/`PrimaryMethod.supportedBrands` model vault *configuration*, and the `purse` vendor itself is now wired — but there's no fallback-when-vaulting-fails path (e.g. to `pci_proxy`, or to a non-vaulted flow) anywhere in this port. Landing the `purse` vendor didn't close this row; it's a distinct requirement from "a vault vendor works." |
 
-Worse, the response's overall status (`global_status`) doesn't disambiguate either. Its possible
-values are `SUCCESS / ERROR / UNCERTAIN / FAILED / WAITING` — and the web widget only runs its
-redirect logic when the value is **`SUCCESS`**. So if the backend were to answer a 3DS-requiring
-`/validate` with `WAITING` (the intuitive choice), the web widget's own redirect code would never
-run. Either the backend always says `SUCCESS` here (surprising but consistent), or this is a latent
-bug in the reference implementation that we should not port.
+Klarna is also fully built on this port (protocol, native `KlarnaPaymentView`, redirect) but isn't
+one of SDK-12039's four required methods — it's scope the branch took on beyond the ticket, useful
+as a second data point (see below) but not itself a gap against the ticket.
 
-**Update:** a real 3DS-requiring `/validate` response has now been observed on Android, via
-Google's `3ds_visa` Google Pay test card — `RedirectionResolver` correctly resolved a real
-per-item POST-form redirect from it, confirming the redirect *fields* are shaped as expected. The
-exact `global_status` value that response carried alongside it hasn't been logged/confirmed yet,
-so the ambiguity above is narrowed but not fully closed — worth capturing on the next test run.
+## 3. "Functionally identical to the web drop-in" — where that's structurally not free
 
-**What we need:** one real sandbox 3DS round-trip, and ideally an explicit
-`next_action: { type, url, body }`-style field in the response (the way Stripe and Adyen do it) so
-no client ever has to guess again.
+Two concrete respects where headless-native adds integration work a web drop-in never asks for,
+found by comparing this port against `usp-widget` directly:
 
----
+- **Plugin activation used to be a merchant setup step here; it's automatic on web — now fixed to
+  match.** Web's `getPlugin` resolves off a static lookup table baked into the
+  `@upstreampay/partner-ui` package — every plugin the package ships is live automatically, gated
+  only by the session. Android's `PluginRegistry` used to start empty and only activate a method
+  once the host app called that method's `*Module.register()` — a merchant could forget one and
+  get no earlier signal than `PurseCheckoutException.NoPluginRegistered` at submit time. That was a
+  redundant gate, not a necessary one: `getPlugin(partner, method, session)` already only resolves
+  a match if `session.protocols[partner][method]` is present, i.e. whether a method is offered was
+  already decided server-side by the merchant's Purse configuration — the app's `.register()` call
+  didn't add a second real decision, it just had to happen to stay in sync with one that already
+  existed. **Fixed:** `PluginRegistry` now auto-registers every built-in plugin (Google Pay, Klarna)
+  by default, mirroring web's static table; the session remains the only real gate, and a merchant
+  who genuinely needs to suppress a shipped method for a specific app build gets an explicit
+  opt-*out* (`PluginRegistry.disable(partner, method)` / `.enable(...)`) instead of the old opt-*in*.
+  `GooglePayModule.register()`/`KlarnaModule.register()` are still callable (idempotent) but no
+  longer required — the demo app's `MainActivity` no longer calls them. Filed as SDK follow-up work
+  off SDK-12039 — blocked on Jira write access for this session (drafted ticket text is in repo
+  chat history / ask the author for it) rather than actually filed.
+- **Redirect-based methods need app-side manifest declarations; web needs none.** Klarna (built,
+  though outside the ticket's four) needs the host app to declare its own `singleTask` intent-filter
+  so its return URL resumes the right Activity. **PayPal, now built, needs none** — its return goes to
+  a self-contained Activity `:partner-ui` ships (scheme `${applicationId}.paypal`) and the SDK
+  supplies the matching `redirect_uri` itself, so Klarna remains the only method imposing manifest
+  work on the integrator. Still new integration surface with no web equivalent, but confined to one
+  method rather than spreading.
 
-## Pain point 2 — Leaving the app and coming back (PayPal, 3DS)
+Compounding both: the deep-link schemes in play (Klarna's, PayPal's, the shared redirect Activity's)
+are custom URL schemes with no OS-enforced ownership. [Verified App Links](https://developer.android.com/training/app-links/verify-android-applinks)
+are the correct answer here — worth deciding once, not per method, and there are now three schemes
+rather than one.
 
-Web never solved this because it never had to: PayPal approval happens in an in-page popup, and
-3DS pages just navigate the same browser tab. An app has to *leave* (Custom Tab or partner SDK)
-and *return* (deep link). Two sub-problems:
-
-**The return target is chosen by the backend, not the app.** The PayPal order is created
-server-side during `/init`; whatever return URL Purse registers with PayPal at that moment is
-where the shopper lands after approving. Our app declares the right scheme on its side
-(`PaypalCheckoutActivity`, per [PayPal's Android SDK
-requirements](https://developer.paypal.com/docs/checkout/advanced/android/)), but that only works
-if the backend registers a matching app link instead of the merchant's web success URL.
-**Unconfirmed** — this is the top blocker for calling PayPal "done."
-
-**Now confirmed for 3DS too, not just PayPal.** Testing Google Pay's 3DS branch against Google's
-`3ds_visa` test card: the challenge itself completes correctly (after the POST-form fix above),
-but the bank's own final redirect — entirely outside this app's control, since it's the ACS
-deciding where to send the browser once the challenge is done — lands on a 401 from **Purse's own
-API gateway**: `Unknown API Key: {key}` (`usp-cf-api-gateway/src/api-key.ts` +
-`proxy.ts:311-334` — `extractApikey` reads `x-api-key` or an `api-key` query param and looks it up
-against a registered client list; a browser redirect can only carry the query-param form). That
-`api-key` value came from whatever notification/return URL Adyen/Purse's backend configured when
-the 3DS challenge was created — the exact same "who controls the return target" gap as PayPal's,
-now reproduced with a concrete device failure instead of a theoretical one. Nothing in this app's
-redirect-handling code can fix this — it just follows whatever URL the bank sends it to, per
-design (see docs/architecture/redirect-handling.md#the-return-path: "treat returned params as a
-hint, not the source of truth" applies to where we *land*, not just what we read once there).
-`RedirectionCheckoutActivity` now logs every URL it navigates through plus any HTTP error
-(`adb logcat -s RedirectionCheckout`), which captured the actual failing URL on a real run:
-
-```
-https://api.purse-test.com/payment/v1/redirection/entity/{entityId}/sessions/{sessionId}/adyen/googlepay?api-key=...&redirectResult=...
-```
-
-**Confirmed constructed entirely server-side, not by any client.** `redirectResult` is Adyen's own
-callback parameter for its `/payments/details` flow, and `/payment/v1/redirection/...` is a Purse
-Payment API path no client code builds — a repo-wide check of every `apiKey` usage across the
-whole web SDK (`packages/sdk/src/API/{payment,wallet,datetime}-api.ts`) shows it is **only ever
-sent as an `x-api-key` header**, never once assembled into a URL as a query parameter, anywhere.
-So this `api-key` value was chosen by Purse's backend when it told Adyen, server-side, to set this
-URL as the 3DS challenge's `returnUrl` — completely invisible to the web widget or this app either
-way. Whether that embedded key matches the session's own `widget.data.api_key` (the one `/init`/
-`/validate` already used successfully) or not determines which of two backend bugs this is — a
-route-specific provisioning gap, or a stale/wrong key baked in at session-creation time — but
-either way it's backend/PSP-integration's fix, not something reachable from the client.
-
-**Custom URL schemes aren't secure return paths.** Any installed app can claim the same scheme;
-only [verified App Links](https://developer.android.com/training/app-links/verify-android-applinks)
-have OS-enforced ownership. Low risk today (PayPal's return only carries an order id that is
-re-checked server-side), but it should be a deliberate decision before more redirect-based methods
-are added. Notably, Purse already ships a fit-for-purpose mechanism in API v2: signed
-`purse-redirection-data` tokens, verifiable against a public JWKS endpoint. Extending that to
-app returns beats inventing something Android-specific.
-
-Also worth knowing: if a 3DS page must be *POSTed* to (the web contract allows form-POST
-redirects), a Custom Tab can't do it — only a WebView can.
-
-**Correction to an earlier assumption here:** this doc used to say Adyen's own Android
-`RedirectComponent` was "the intended native answer" for Google Pay's 3DS step, ahead of a generic
-WebView. Checked directly against `usp-widget/packages/partner-ui/src/plugins/partners/adyen-creditcard/index.ts`
-(lines ~244–263): its `postValidation` calls the exact same generic `manageRedirection` as Google
-Pay's plugin — no Adyen SDK redirect component anywhere in the reference. That's a dead end for
-this architecture anyway: Adyen's real `RedirectComponent` consumes Adyen's own typed `action`
-object from Adyen's own `/payments` response, which we never see — Purse's `/validate` abstracts
-Adyen away and hands back its own generic `redirection` object instead. The generic Custom
-Tabs/WebView approach *is* what the reference implementation itself does here, not a fallback —
-and it's now implemented: `RedirectionResolver` (`:partner-ui`) plus a generic
-`RedirectionCheckoutActivity`/`RedirectionCheckoutContract` pair (Custom Tabs for GET, WebView for
-POST), wired into Google Pay's capture flow in `DropinActivity`. SecureFields Android is separately
-getting its own dedicated 3DS module for CB, so CB won't need this generic path at all.
+- **The card plugin is Compose; Google Pay and Klarna are the View system — same SDK, two UI
+  toolkits.** `CardCoordinator` uses SecureFields Android's own Compose surface
+  (`rememberSecureFields`/`VaultForm`), because that's the SDK's primary integration path today; web
+  has no such split — a browser page is one DOM regardless of which plugin renders into it. A
+  merchant integrating **both** a View-based primary (Google Pay/Klarna) and the card plugin needs
+  a Compose entry point somewhere in an otherwise View-based app (this repo's own demo does it via a
+  single `ComposeView` embedded in its XML layout) — one more piece of integration surface web
+  merchants never have to think about. Upside: Compose's `rememberLauncherForActivityResult` sidesteps
+  the "construct in `onCreate`, before `STARTED`" lifecycle rule `GooglePayCoordinator`/
+  `KlarnaCoordinator` both carry — so it's not a strictly worse integration model, just a
+  **different** one, coexisting with the other two rather than replacing them.
 
 ---
 
-## Pain point 3 — A whole category of "always redirect" methods isn't in this POC at all
+## Bottom line
 
-PayPal and 3DS are not the only shape a redirect takes. Web has a **fully generic,
-partner-agnostic redirect plugin** — `plugins/generics/redirection/index.ts` — that any method gets
-routed to automatically, based purely on session configuration:
-
-```ts
-// usp-widget/packages/partner-ui/src/plugins/partners/index.ts
-if (session?.protocols[partner]?.[method]?.configurations.settings
-      ?.merchant_specifics?.integration_mode === 'redirection') {
-  return redirection({ partner, method });   // generic plugin, no partner-specific code at all
-}
-```
-
-This check runs **before** any partner-specific plugin is even looked up. Any partner/method entry
-in `protocols` can be routed this way — it's a property of how the merchant configured that
-method for that session, not something tied to a fixed partner list. A concrete, real example:
-Fintecture's [`instant_payment`](https://docs.purse.tech/docs/partners/fintecture/instant_payment),
-a bank-transfer method whose own docs list "Redirection" as its integration mode. There are likely
-others across Purse's ~38-partner catalog that work the same way.
-
-This category is fundamentally different from PayPal (a popup on web, only forced into a redirect
-on Android) and from 3DS (an occasional step-up on an otherwise-synchronous payment): **it is a
-redirect every single time, with genuine, non-hypothetical web precedent** — full-page browser
-navigation already runs in production today, no popup fallback ever existed. The generic plugin's
-`postValidation` calls the same `manageRedirection` resolver unconditionally, and **treats a
-missing `redirection.url` as an outright error**
-(`ErrorCodes.PostValidationDataIsMissingInformations`) rather than "nothing more to do" — for this
-category, "is a redirect required" is never ambiguous the way Pain point 1 describes for CB/Google
-Pay's 3DS.
-
-This POC's four methods (CB, Google Pay, PayPal, Illicado) don't include a single one of these. The
-generic Android redirect handler this whole doc proposes — Custom Tabs, WebView, the deep-link
-return path — has therefore never been validated against the one category of method it was
-actually designed for; it's been inferred from reading `redirection-manager.ts`, not built against
-a real example.
-
-**Recommendation:** if this POC continues, add one `integration_mode: "redirection"` method
-(Fintecture `instant_payment` or similar) as a fifth test case. It needs no partner SDK — just a
-plain HTTP GET/POST redirect — and, unlike 3DS (which needs a specific test card to provoke a
-step-up on demand), it redirects unconditionally on every sandbox run. It would be the cleanest,
-fastest way to prove the generic handler design actually works, instead of continuing to design it
-against zero real examples.
-
----
-
-## Pain point 4 — Which session id is *the* session id?
-
-Creating a session through the v2 orchestration API returns an `id`. The decoded `widget.data`
-contains a `payment_session.id` (which all `/init`/`/validate` calls use). And usp-widget's own
-demo confirmation page looks for a **third** field, `legacy_payment_session_id`, inside
-`widget.data` — a field that appears nowhere else in the codebase, not even in the SDK's types —
-falling back to the orchestration `id`, and never to `payment_session.id`.
-
-Whether these are one, two, or three distinct values in practice is unverified. It matters for the
-status-re-query endpoint (`GET /{entity}/sessions/{session}`), which the tutorial recommends as the
-source of truth after payment. Our demo app now has a "Get Transactions" tool (same as the web
-demo's confirmation page) to answer this empirically against a live session.
-
----
-
-## Pain point 5 — We're building on the deprecated API generation
-
-[docs.purse.tech](https://docs.purse.tech/docs) lists the `/init`/`/validate` API we (and the web
-widget) use as **"Payment API v1 (deprecated)"**. The current v2 works differently in ways that
-matter to a mobile SDK:
-
-- v1 amounts are decimal euros (`199.99`); v2 amounts are cents (`4299`).
-- v2 has a single `shopper_redirection_url` (GET-only, signed data) instead of v1's four-way
-  inferred redirect contract — i.e. v2 already fixed most of Pain point 1.
-- v1's `/validate` response schema (the `global_status` enum, the `redirection` object) is
-  documented **nowhere** publicly; we reconstructed it from web widget source.
-
-This raises a strategic question rather than a technical one: **should a brand-new mobile SDK
-target v1 at all**, or should it be the first v2-native client? Mirroring the web widget was the
-right way to run the POC — it's the only working reference — but it shouldn't silently become the
-production decision.
-
----
-
-## Pain point 6 — Small but real: Illicado is a black box
-
-No public developer docs, no partner plugin on web, no way to know from the client side whether
-its PSP intermediary can ever demand a step-up. Only the PSP-integration team can answer.
-
----
-
-## Resolved along the way
-
-These were open questions in earlier drafts; both closed by reading the right sources:
-
-- **Amount units** — v1 is decimal major units, confirmed by the official v1 spec's own examples.
-  What we send today is correct.
-- **CB submit payload shape** — the SecureFields vault token goes in
-  `payment_data.vault_vendor_token_id` (top level, *not* under `card`), confirmed against the web
-  widget's own vault plugin and now implemented in `CardMapper`.
-
----
-
-## Asks for the API/backend team, in priority order
-
-1. **Fix the 3DS notification/return URL's `api-key` for mobile-originated sessions.** Confirmed
-   broken, not theoretical: Google Pay's 3DS challenge (Google's `3ds_visa` test card) completes
-   correctly, then the bank's own final redirect 401s on Purse's API gateway with
-   `Unknown API Key` (Pain point 2). Whatever URL Adyen/Purse's backend configures as the 3DS
-   challenge's return target needs a valid `api-key` for *this* session/client.
-2. **Show us one real 3DS-requiring `/validate` response** (sandbox) — settles the
-   `global_status`/redirect ambiguity that everything else in Pain point 1 hangs on.
-3. **Add an explicit `next_action` field** to `/validate` responses (additive, non-breaking) so
-   clients stop inferring redirects from optional-field patterns.
-4. **Confirm PayPal order creation can register an app return URL** (App Link or scheme) for
-   mobile sessions — same class of gap as #1 above, for PayPal's own approval step.
-5. **Let us add one `integration_mode: "redirection"` method to the POC** (Fintecture
-   `instant_payment` or similar) — the generic redirect handler (`RedirectionResolver` +
-   `RedirectionCheckoutActivity`) is now built, but has never run against a real redirect end to
-   end; this is the fastest way to prove it actually works (Pain point 3).
-6. **Clarify the session id story** — is `legacy_payment_session_id` real, and which id does
-   `GET /{entity}/sessions/{session}` want?
-7. **Tell us whether mobile SDK work should target v1 or v2.** If v2, asks 1–2 may be moot.
-8. **Decide App Links (and/or v2's signed redirection-data) as the mobile return-path standard**,
-   rather than per-partner ad-hoc schemes.
-9. **Ask PSP-integration whether Illicado can ever require a step-up.**
-
----
-
-## Sources
-
-**Web reference (`../usp-widget`):** `packages/sdk/src/API/types.ts` (status enums, response
-types) · `packages/sdk/src/redirection/redirection-manager.ts` (the four-way redirect inference) ·
-`packages/headless-checkout/src/headless-checkout-validation.ts` (the `global_status === SUCCESS`
-gate) · `packages/partner-ui/src/plugins/vaults/purse/creditcard/` (CB payload shape) ·
-`packages/partner-ui/src/plugins/generics/googlepay/` (the confirmed 3DS trigger) ·
-`packages/partner-ui/src/plugins/generics/redirection/` + `plugins/partners/index.ts`
-(the generic, session-config-driven redirect plugin) ·
-`sites/demo/src/routes/widgets/confirmation/+page.svelte` + `packages/alfred/` (session id
-hedging, status re-query).
-
-**Purse public docs:** [simple-payment tutorial](https://docs.purse.tech/docs/integrate/purse-api/tutorials/simple-payment) ·
-[Payment API v1 (deprecated)](https://docs.purse.tech/openapi/payment-api-v1) ·
-[Payment API v2](https://docs.purse.tech/openapi/payment-api-v2) ·
-[conventions](https://docs.purse.tech/docs/references/convention) ·
-[webhooks / JWS signing](https://docs.purse.tech/docs/integrate/purse-api/tutorials/webhooks/) ·
-[Fintecture instant_payment](https://docs.purse.tech/docs/partners/fintecture/instant_payment).
-
-**External:** [PayPal Android SDK](https://developer.paypal.com/docs/checkout/advanced/android/) ·
-[Android App Links verification](https://developer.android.com/training/app-links/verify-android-applinks) ·
-[Android deep-link risks](https://developer.android.com/privacy-and-security/risks/unsafe-use-of-deeplinks) ·
-[Adyen native 3DS redirect component](https://docs.adyen.com/online-payments/3d-secure/redirect-3ds2/android-component).
-
-**This repo:** [Redirect Handling](../architecture/redirect-handling.md) ·
-[Session & Protocols](../architecture/session-and-protocols.md) ·
-[Payment Methods](../integration/payment-methods.md) · [partner pages](../partners/README.md)
-(one sequence diagram each) · [POC Scope](poc-scope.md).
+Going headless hasn't changed the answer to what SDK-12039 asked. Native Android redirect handling
+*is* feasible, exactly as this repo's Google Pay and card work both demonstrate — but the two
+backend-owned gaps this doc's predecessor already found (ambiguous "redirect required" signal,
+backend-controlled return URLs) are still open — but narrowed: PayPal, the method they were expected
+to land on hardest, is now built and sidesteps the return-URL gap entirely via its own SDK. All four
+of the ticket's required methods are now done (CB, Google Pay, PayPal, Illicado-as-secondary); vault
+fallback remains unaddressed entirely. "Functionally identical to
+web" holds for what's shipped, with three concrete asterisks now (plugin activation, redirect
+manifest wiring, and the card plugin's own Compose-vs-View-system split) that are integration cost,
+not missing functionality.

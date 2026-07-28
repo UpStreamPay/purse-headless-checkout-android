@@ -1,0 +1,188 @@
+# Card — Purse vault (SecureFields)
+
+`eu.purse.partnerui.plugins.vaults.purse.creditcard` — ports web's `plugins/vaults/purse/creditcard`
+bridge **plus** the generic `plugins/generics/hostedfields` plugin it plugs into, using the
+SecureFields Android SDK (`eu.purse.securefields`, published separately — SDK-11769) for the card
+fields themselves.
+
+## At a glance
+
+| | |
+|---|---|
+| Partner / method | **any** partner / `creditcard` whose `configurations.vault.vendor` is `purse` |
+| Family | **vault** — `PluginRegistry.registerVault(VaultVendor.PURSE)`, keyed by vault vendor, not `(partner, method)`, and resolved **first** (before generic/partner) |
+| Native SDK | `eu.purse.securefields` (`SecureFieldsAndroid`, `VaultForm`/`VaultField`) |
+| UI surface | **Compose-first** — `rememberCardCoordinator(...)`, no `onCreate` construction caveat |
+| Native step vs `/validate` | tokenize **before**, then `/init` and `/validate` back to back |
+| Gates `isPaymentFulfilled`? | **Yes** — the only plugin that does |
+| Manifest work | None (3-D Secure uses the Activity `:partner-ui` ships) |
+
+Because the vault family resolves first, this plugin serves *any* partner's `creditcard` as long as
+the session marks it Purse-vaulted — `CardPlugin(partner)` carries whichever partner that is into the
+`/init` and `/validate` payloads.
+
+## Session prerequisites
+
+| Source | Read as | Used for |
+|---|---|---|
+| session-level `vault.vendor_front_data.purse.tenant_id` | `CardHost.vaultTenantId` | SecureFields' `tenantId` |
+| per-method `configurations.vault.supported_brands` | `CardHost.supportedBrands` (`List<CardBrand>`) | which schemes SecureFields accepts; empty falls back to `[VISA, MASTERCARD, CB]` |
+| per-method `configurations.vault.vendor` | plugin resolution | must be `purse` for this plugin to be chosen |
+| session `redirection` | `CardHost.redirectionReturnUrl` | the 3-D Secure WebView's "known terminal page" hint |
+
+Note the two `vault` blocks are **different**: the session-level one carries the tenant, the
+per-method one the brands.
+
+## Sequence
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant App as Your composable
+    participant Co as CardCoordinator
+    participant SF as SecureFields vault
+    participant Ck as PurseHeadlessCheckout
+    participant Pl as CardPlugin
+    participant Api as Payment API
+    participant Rd as RedirectionCheckoutActivity
+
+    App->>Co: rememberCardCoordinator(host, listener)
+    Co->>SF: rememberSecureFields(config, env, tenantId)
+    Co->>Ck: setFulfilled(item, false)
+    Note over Co,Ck: a mounted-but-empty form means NOT payable
+    Co->>SF: render()
+    App->>App: VaultForm(coordinator.sdk)
+
+    loop shopper types
+        SF-->>Co: onFormValid(hasErrors) / onBrandDetected
+        Co->>Ck: setFulfilled(item, valid)
+        Co-->>App: Listener.onReady(valid)
+    end
+    Note over Ck: isPaymentFulfilled flips true only now
+
+    App->>Co: submit()  (Pay tapped)
+    Co->>SF: submit(SubmitOptions(selectedNetwork))
+    SF-->>Co: SubmitResult.Success - vaultFormToken + card.bin
+    Co->>Ck: setCollected(token, bin, selected_network)
+    Co->>Ck: submitPayment()
+    Ck->>Pl: validateUi(context)
+    Pl-->>Ck: true (a vault token exists)
+    Ck->>Pl: preValidation(context)
+    Pl->>Api: POST /init (vault_vendor purse)
+    Api-->>Pl: step_id
+    Pl-->>Ck: item payload - vault_vendor_token_id + card.bin + step_id
+    Ck->>Api: POST /validate (all splits)
+    Api-->>Ck: results + redirection + global_status
+    Ck-->>Co: ValidationResult
+    Co-->>App: Listener.onPaymentId (if the response carries one)
+
+    alt 3-D Secure redirect present
+        Co-->>App: Listener.onRequiresAction()
+        Co->>Rd: launch (in-app WebView)
+        Rd-->>Co: Approved / Canceled / Failed
+        Co-->>App: onResult(globalStatus = null) — outcome unconfirmed
+    else no redirect
+        Co-->>App: onResult(globalStatus)
+    end
+```
+
+## Specificities
+
+1. **`/init` moved late, on purpose.** Web calls `/init` at `onSessionSet`, before the shopper sees
+   the form, purely to obtain a `step_id`. Here `preValidation` does **both** steps itself — `/init`
+   for the `step_id`, then the `/validate` payload — because nothing about rendering depends on
+   `/init`'s response (unlike Google Pay's gateway config or Klarna's client token). Same two calls in
+   the same order, just later. There is consequently **no `buildRequest`** on this plugin.
+2. **Form completeness gates the payment** — the Kotlin analog of web's `fulfilled` event. Web builds
+   a `final-form` model whose managed (iframe) fields hold sentinel values (`'valid'`/`'required'`/
+   `'format'`), subscribes to `state.valid`, and dispatches `fulfilled { isFulfilled }`; its
+   `PaymentElement` mirrors that, and `setAsPrimarySource` throws `ELEMENT_NOT_FULFILLED` without it.
+   Here SecureFields Android already owns that form state and emits `onFormValid(hasErrors)` (a field
+   with no state is *not* valid, so an empty form has errors), so the coordinator needs no form model
+   of its own: it reports `false` at mount, mirrors every change, and `submit()` refuses to tokenize an
+   invalid form. `PurseHeadlessCheckout` folds that per-item flag into `isPaymentFulfilled` and
+   `submitPayment` (which throws `ItemNotFulfilled`). See
+   [consumer-api §6](../integration/consumer-api.md#form-completeness-gates-the-payment).
+3. **`submit()` on an invalid form is a no-op, never an error.** SecureFields is already showing its
+   own per-field errors; the coordinator just logs, re-reports `onReady(false)` so a host that let its
+   button through corrects itself, and returns. An unfilled form is not a failed payment.
+4. **`validateUi` is the last line of defence**: no collected vault token means the form was never
+   successfully submitted, so `PaymentValidator` raises `ValidateFailed` before `preValidation` can
+   build a payload.
+5. **Compose-first, and the `host` must be `remember`ed.** `rememberCardCoordinator` keys its
+   SecureFields instance on the `host` object, so building the host inline recreates the form — and
+   loses whatever's been typed — on every recomposition:
+   ```kotlin
+   val host = remember(method.id) { checkout.cardHost(method) }   // NOT checkout.cardHost(method)
+   val coordinator = rememberCardCoordinator(host, controller.cardListener)
+   ```
+   No "construct in `onCreate`" caveat, though: `rememberLauncherForActivityResult` manages the 3-D
+   Secure launcher's lifecycle, and `rememberSecureFields` destroys the SDK on disposal.
+6. **Three brand vocabularies, converted twice.** The session's `CardBrand`
+   (`vault.supported_brands`) → SecureFields' own `Brand` (its BIN-lookup vocabulary) → the Payment
+   API's gateway scheme string for `payment_data.card.selected_network` (e.g. `CB` → `"CARTE_BANCAIRE"`).
+   `CardCoordinator.toGatewayScheme()` mirrors SecureFields Android's own internal, non-public
+   `schemeFor()`.
+7. **Co-badged selection is listener-driven.** The default is the first brand SecureFields' BIN lookup
+   matches (`onBrandDetected`); `onBrandUserSelection` is wired for a host that renders its own brand
+   picker calling `sdk.setBrandSelection` — none ships here, so that path is future-proofing.
+8. **`vault_vendor_token_id` is top-level, not nested under `card`.** `payment_data` carries
+   `vault_vendor_token_id` + `vault_vendor` at the top, and only the non-sensitive `card.bin` /
+   `card.selected_network` inside — exactly web's `submitForResult` shape.
+9. **Two separate environment enums.** `PurseEnvironment` (Payment API) maps to SecureFields'
+   `VaultEnvironment`; `DEVELOPMENT` maps to `SANDBOX`, since the vault has no development target.
+
+## Host integration
+
+```kotlin
+@Composable
+fun CardPaymentForm(checkout: PurseHeadlessCheckout, method: PrimaryMethod, listener: CardCoordinator.Listener) {
+    val host = remember(method.id) { checkout.cardHost(method) }
+    val coordinator = rememberCardCoordinator(host, listener)
+
+    // Full form; or VaultField(coordinator.sdk.cardNumber) etc. for a custom layout.
+    VaultForm(coordinator.sdk, modifier = Modifier.fillMaxWidth().height(220.dp))
+
+    // Hoist submit for your own Pay button; enable it off isPaymentFulfilled (or coordinator.formValid).
+    LaunchedEffect(coordinator) { onSubmitReady { coordinator.submit() } }
+}
+```
+
+Your app needs a Compose entry point for the form (a `ComposeView` inside an otherwise View-based
+layout is fine). No `PluginRegistry` call — `CardModule` is registered by default.
+
+## Outcomes
+
+| Callback | Fires |
+|---|---|
+| `onReady(ready)` | Form validity changed (mirrors `formValid`; also re-fired if `submit()` is refused) |
+| `onResult(summary, globalStatus)` | Terminal, no redirect pending. `globalStatus == null` after a 3-D Secure return means "outcome unknown" |
+| `onRequiresAction()` | A 3-D Secure step is being launched (informational) |
+| `onPaymentId(id)` | Informational `payment_id` off the confirmation-page JWT |
+| `onCanceled()` | The 3-D Secure WebView was dismissed |
+| `onError(msg)` | Tokenization (`SubmitResult.Error`), `/init`, `/validate`, or redirect launch failed |
+
+## Failure modes
+
+| Symptom | Cause |
+|---|---|
+| Pay button never enables | The form isn't valid — SecureFields reports `hasErrors` until every configured field is valid |
+| `PurseCheckoutException.ItemNotFulfilled` | `submitPayment()` called directly while the card form is incomplete |
+| `PurseCheckoutException.ValidateFailed: client-side validation failed…` | No vault token collected — tokenization never succeeded |
+| `PaymentApiException: creditcard init not successful` | `/init` returned a non-`SUCCESS` state |
+| Form rebuilds and loses input on every keystroke elsewhere | The `host` wasn't `remember`ed — specificity 5 |
+| SecureFields fails to initialize | Blank `vaultTenantId` — the session carries no `vault.vendor_front_data.purse.tenant_id` |
+| `selected_network` missing from `/validate` | No brand detected/selected (`Brand.UNKNOWN` maps to `null`) — valid, the backend resolves it |
+
+## Files
+
+| File | Role |
+|---|---|
+| `CardPlugin.kt` | `validateUi`, `preValidation` (`/init` + payload) |
+| `CardMapper.kt` | `/init` body, `/init` parsing, `/validate` `payment_data` |
+| `CardCoordinator.kt` | `rememberCardCoordinator`, SecureFields listeners, fulfillment reporting, tokenize + submit, redirect, brand mapping |
+| `CardHost.kt` / `CardInit.kt` | Seam + value type |
+| `CardModule.kt` | `registerVault(VaultVendor.PURSE)` |
+
+Web reference: `usp-widget/packages/partner-ui/src/plugins/vaults/purse/creditcard/` (bridge) and
+`plugins/generics/hostedfields/` (the form/lifecycle half).

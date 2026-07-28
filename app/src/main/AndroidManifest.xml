@@ -13,22 +13,30 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Dropinandroid">
+        android:theme="@style/Theme.PurseDemo">
 
         <activity
             android:name=".MainActivity"
+            android:launchMode="singleTask"
+            android:windowSoftInputMode="adjustResize"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <!--
+              KlarnaPaymentView's own returnURL — the SDK opens external banking/identity-verification
+              apps and needs to resume THIS Activity (not a helper Activity, since it hosts the live
+              widget) — singleTask above prevents a duplicate instance. See
+              https://docs.klarna.com/acquirer/klarna/mobile-payments/integrate-with-mobile-sdk/android/native-view/
+            -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${applicationId}.klarna" android:host="return" />
+            </intent-filter>
         </activity>
-
-        <activity
-            android:name=".DropinActivity"
-            android:exported="false"
-            android:label="@string/dropin_title"
-            android:parentActivityName=".MainActivity" />
 
     </application>
 
