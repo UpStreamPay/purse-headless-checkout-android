@@ -22,6 +22,15 @@ class CardPlugin(override val partner: Partner) : PartnerUiPlugin {
     override val method: Method = Method.CreditCard
     override val vault: VaultVendor = VaultVendor.PURSE
 
+    /**
+     * The headless half of web's `validateUi`: there, the plugin submits its form and reports the
+     * per-field errors that block `preValidation`. Here the form lives in [CardCoordinator] (which
+     * refuses to tokenize an invalid one and shows SecureFields' own field errors), so all this hook
+     * can check is the outcome — a vault token means the form was submitted successfully.
+     */
+    override suspend fun validateUi(context: PartnerUiContext): Boolean =
+        context.collected[COLLECTED_TOKEN] is String
+
     override suspend fun preValidation(context: PartnerUiContext): ValidateItemPayload {
         val vaultVendorTokenId = context.collected[COLLECTED_TOKEN] as? String
             ?: error("card vault token missing — tokenize with SecureFields before submitting")

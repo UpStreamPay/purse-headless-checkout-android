@@ -38,6 +38,14 @@ interface CardHost {
      * [submitPayment]. */
     fun setCollected(data: Map<String, Any?>)
 
+    /**
+     * Report the card form's completeness/validity — the analog of web partner-ui's `fulfilled`
+     * event. [CardCoordinator] reports `false` as soon as the form mounts and tracks SecureFields'
+     * own validity from there, which is what keeps `PurseHeadlessCheckout.isPaymentFulfilled` (and
+     * therefore [submitPayment]) shut until the shopper has actually filled the card in.
+     */
+    fun setFulfilled(fulfilled: Boolean)
+
     /** Run the plugin-driven `/validate` pipeline over the current split. */
     suspend fun submitPayment(): ValidationResult
 }

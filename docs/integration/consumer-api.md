@@ -73,7 +73,7 @@ it from a coroutine scope; there is no callback-based equivalent.
 | `sessionState` | `StateFlow<SessionState>` | Lifecycle transitions: `READY` → `SUBMITTING` → `SUBMITTED`/`ERROR`, or `EXPIRED` at init if the session already expired. |
 | `paymentMethods` | `StateFlow<List<PaymentItem>>` | Any time the split changes — each item's `disabled` state is recomputed against the new `remainingAmountToPay`. |
 | `remainingAmountToPay` | `StateFlow<BigDecimal>` | After `setPrimary`, `applySecondary`, or `removeSecondary`. |
-| `isPaymentFulfilled` | `StateFlow<Boolean>` | Same triggers as above — `true` once the split covers the full amount. |
+| `isPaymentFulfilled` | `StateFlow<Boolean>` | Same triggers as above, plus every `setFulfilled` — `true` once the split covers the full amount **and** every item in it whose plugin collects a form reports that form complete and valid (see [§6](#form-completeness-gates-the-payment)). |
 | `amountSplit` | `StateFlow<List<PaymentSplit>>` | Same triggers — the current list of `(amount, source)` slices that `submitPayment` will send. |
 
 Typical wiring in an Activity/Fragment:
@@ -207,11 +207,31 @@ every such plugin:
 3. A **`setCollected`** call — stashes sheet/widget output so `submitPayment`'s `/validate` payload
    can use it.
 
+### Form completeness gates the payment
+
+A plugin that collects a form (today: the card) reports that form's validity through
+`setFulfilled(item, …)`. While any item in the current split reports `false`:
+
+- `isPaymentFulfilled` is `false`, so a "Pay" button bound to it is disabled; and
+- `submitPayment` throws `PurseCheckoutException.ItemNotFulfilled`.
+
+`CardCoordinator` does this for you: mounting the SecureFields form reports `false`, and every
+SecureFields validity change is mirrored through — so **an empty or half-filled card form can never
+look payable**, and the coordinator's own `submit()` is a no-op until the form validates. Web reaches
+the same guarantee from the other end (`setAsPrimarySource` throws `ELEMENT_NOT_FULFILLED` for an
+element whose `fulfilled` event hasn't fired); the reactive form here lets you select a method
+*before* its form is filled in, which is what a mobile "pick a row, then fill it in" flow needs.
+
+Items that never call `setFulfilled` are **ungated** — a redirection method, or an xpay like Google
+Pay whose sheet *is* the form. That matches web, where those plugins dispatch no `fulfilled` event
+either. If you write your own coordinator around a form, call `setFulfilled` from it.
+
 ### Generic checkout functions backing every interactive plugin
 
 | Function | Signature | Notes |
 |---|---|---|
 | `setCollected` | `fun setCollected(item: PaymentItem, data: Map<String, Any?>)` | Stash data an interactive plugin collected (e.g. a Google Pay token + network), keyed to `item`. Threaded into that item's `preValidation` on the next `submitPayment`. |
+| `setFulfilled` | `fun setFulfilled(item: PaymentItem, fulfilled: Boolean)` | Report whether `item`'s own form is complete and valid — see [below](#form-completeness-gates-the-payment). Coordinators that collect a form call this for you. |
 | `pluginContext` | `fun pluginContext(item: PaymentItem): PartnerUiContext` | Build the context object a plugin coordinator needs to drive its own steps before submit. |
 | `googlePayHost` | `fun googlePayHost(item: PaymentItem): GooglePayHost` | The `GooglePayHost` implementation for `item`. |
 | `klarnaHost` | `fun klarnaHost(item: PaymentItem, klarnaReturnUrl: String): KlarnaHost` | The `KlarnaHost` implementation for `item`. `klarnaReturnUrl` falls back to the session's own return URL if you don't have a better one. |
@@ -350,6 +370,7 @@ losing whatever the shopper has typed) each time anything else on the screen cha
 | `redirectionReturnUrl: String?` | Same role as `GooglePayHost.redirectionReturnUrl` — threaded into a genuine 3-D Secure redirect. |
 | `buildContext(): PartnerUiContext` | — |
 | `setCollected(data: Map<String, Any?>)` | — |
+| `setFulfilled(fulfilled: Boolean)` | The form's completeness, forwarded to `PurseHeadlessCheckout.setFulfilled(item, …)` — the coordinator calls it, you don't. |
 | `suspend submitPayment(): ValidationResult` | — |
 
 **`rememberCardCoordinator(host: CardHost, listener: CardCoordinator.Listener): CardCoordinator`** —
@@ -360,8 +381,8 @@ Pay/Klarna) — call it from anywhere in your composition; its 3-D Secure redire
 | Member | Signature | Notes |
 |---|---|---|
 | `sdk` | `val sdk: SecureFieldsAndroid` | Render this with SecureFields' own `VaultForm(coordinator.sdk)` (full form) or `VaultField(coordinator.sdk.cardNumber)` etc. (custom layout, one field at a time). |
-| `formValid` | `var formValid: Boolean` (Compose state) | Whether the card form currently validates — drive your "Pay" button's `enabled` off this. |
-| `submit` | `fun submit()` | Tokenizes via SecureFields, then runs `/init`+`/validate` through `host`. Call once `formValid` is `true` and the shopper tapped "Pay". No-op while a prior tap's flow is still in progress. |
+| `formValid` | `var formValid: Boolean` (Compose state) | Whether the card form currently validates — `false` until every field is valid. Drive your "Pay" button's `enabled` off this, or off `isPaymentFulfilled`, which the coordinator keeps in step for you. |
+| `submit` | `fun submit()` | Tokenizes via SecureFields, then runs `/init`+`/validate` through `host`. Call once `formValid` is `true` and the shopper tapped "Pay". No-op while a prior tap's flow is still in progress, and a no-op (never an error — an unfilled form is not a failed payment) while the form isn't complete and valid. |
 
 **`CardCoordinator.Listener`** callbacks:
 
@@ -430,6 +451,8 @@ Runs the plugin-driven `/validate` pipeline over the current split. Must be call
 **Throws:**
 - `PurseCheckoutException.PaymentNotFulfilled` — the split doesn't cover the amount, or no primary
   is set.
+- `PurseCheckoutException.ItemNotFulfilled` — an item in the split has a form that isn't complete and
+  valid (see [§6](#form-completeness-gates-the-payment)).
 - `PurseCheckoutException.NoPluginRegistered` — no `:partner-ui` plugin registered for the chosen
   primary's `(partner, method)`.
 - `PurseCheckoutException.ValidateFailed` — a client-side or API validation step failed.
@@ -484,6 +507,7 @@ interactive plugin.
 | Exception | Thrown by | Meaning |
 |---|---|---|
 | `PurseCheckoutException.PaymentNotFulfilled` | `submitPayment` | Split doesn't cover the amount / no primary set. |
+| `PurseCheckoutException.ItemNotFulfilled` | `submitPayment` | An item in the split has an incomplete or invalid form (web's `ELEMENT_NOT_FULFILLED`). |
 | `PurseCheckoutException.NoPluginRegistered` | `submitPayment` | No `:partner-ui` plugin for the chosen `(partner, method)`. |
 | `PurseCheckoutException.ValidateFailed` | `submitPayment` | Client-side or API validation step failed. |
 | `PurseCheckoutException.NoSecondaryConfig` | `getSecondaryToken` | No `SecondaryConfig` registered for this secondary method. |

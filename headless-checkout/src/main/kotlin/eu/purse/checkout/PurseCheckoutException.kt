@@ -13,6 +13,14 @@ sealed class PurseCheckoutException(message: String, cause: Throwable? = null) :
     class PaymentNotFulfilled(message: String = "payment is not fulfilled") :
         PurseCheckoutException(message)
 
+    /**
+     * An item in the split has an interactive form that isn't complete and valid yet — web's
+     * `ELEMENT_NOT_FULFILLED`. Raised by `submitPayment`; the reactive guard against ever getting
+     * here is `isPaymentFulfilled`, which is `false` for the same reason.
+     */
+    class ItemNotFulfilled(itemId: String) :
+        PurseCheckoutException("$itemId is not fulfilled — its form is incomplete or invalid")
+
     /** No `:partner-ui` plugin is registered for a `(partner, method)` in the current split. */
     class NoPluginRegistered(message: String) : PurseCheckoutException(message)
 

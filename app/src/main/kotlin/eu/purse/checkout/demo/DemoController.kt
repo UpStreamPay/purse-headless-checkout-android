@@ -205,6 +205,10 @@ class DemoController(private val activity: ComponentActivity) {
      * The card is Compose-first, so unlike the two above its coordinator is created inside the
      * composition ([CardPaymentForm]) — its callbacks still land here, next to theirs. `onReady`
      * carries the SecureFields form's validity, which is exactly this method's "ready to submit".
+     *
+     * For the card that's belt *and* braces: the coordinator also reports the same validity into the
+     * SDK, so `isPaymentFulfilled` — and therefore [submitEnabled] — is already `false` while the form
+     * is incomplete. Klarna has no such gate, which is why [primaryReady] still exists.
      */
     val cardListener = object : CardCoordinator.Listener {
         override fun onReady(ready: Boolean) {

@@ -38,7 +38,7 @@ val checkout = PurseHeadlessCheckout.init(widgetData)          // pass PurseEnvi
 // 2. Inspect the session reactively (StateFlow).
 checkout.paymentMethods.value        // primaries + secondaries, with live disabled states
 checkout.remainingAmountToPay.value  // what a primary still owes
-checkout.isPaymentFulfilled.value
+checkout.isPaymentFulfilled.value  // split covered AND every form in it complete and valid
 
 // 3. Build the split: draw down secondaries (see below) and/or choose a primary.
 checkout.setPrimary(cardMethod)

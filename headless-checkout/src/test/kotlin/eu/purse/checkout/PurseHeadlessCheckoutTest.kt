@@ -55,6 +55,39 @@ class PurseHeadlessCheckoutTest {
     }
 
     @Test
+    fun `a primary whose form is not complete does not fulfill the payment`() {
+        val checkout = checkout()
+        val card = checkout.primaryMethods.single { it.method == Method.CreditCard }
+
+        // What CardCoordinator reports the moment its SecureFields form mounts.
+        checkout.setFulfilled(card, false)
+        checkout.setPrimary(card)
+
+        assertFalse(checkout.isPaymentFulfilled.value)
+        assertThrows(PurseCheckoutException.ItemNotFulfilled::class.java) {
+            runBlocking { checkout.submitPayment() }
+        }
+
+        // …and what it reports once every field validates.
+        checkout.setFulfilled(card, true)
+
+        assertTrue(checkout.isPaymentFulfilled.value)
+    }
+
+    @Test
+    fun `an unfulfilled method that is not in the split does not block`() {
+        val checkout = checkout()
+        val card = checkout.primaryMethods.single { it.method == Method.CreditCard }
+        val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
+
+        // The card form was mounted, then the shopper picked another method instead.
+        checkout.setFulfilled(card, false)
+        checkout.setPrimary(paypal)
+
+        assertTrue(checkout.isPaymentFulfilled.value)
+    }
+
+    @Test
     fun `an applied secondary token covering the amount fulfills without a primary`() {
         val checkout = checkout()
 

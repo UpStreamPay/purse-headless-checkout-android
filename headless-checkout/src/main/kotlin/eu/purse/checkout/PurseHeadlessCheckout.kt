@@ -57,6 +57,14 @@ class PurseHeadlessCheckout private constructor(
     /** Interactively-collected data per method id (e.g. a Google Pay token) — see [setCollected]. */
     private val collectedByMethod = mutableMapOf<String, Map<String, Any?>>()
 
+    /**
+     * Per-item form fulfillment, keyed by method id — the analog of web's per-element `fulfilled`
+     * flag (`PaymentElement.isFulfilled()`), fed by [setFulfilled]. An **absent** entry means the
+     * item declares no such gate (a redirection, or an xpay like Google Pay whose sheet *is* the
+     * form) and so never blocks; `false` blocks until the item says otherwise. See [setFulfilled].
+     */
+    private val fulfilledByMethod = mutableMapOf<String, Boolean>()
+
     private val _sessionState = MutableStateFlow(
         if (session.expirationDate.isBefore(Instant.now())) SessionState.EXPIRED else SessionState.READY,
     )
@@ -68,6 +76,13 @@ class PurseHeadlessCheckout private constructor(
     private val _remainingAmountToPay = MutableStateFlow(splitter.remaining)
     val remainingAmountToPay: StateFlow<BigDecimal> = _remainingAmountToPay.asStateFlow()
 
+    /**
+     * `true` once the payment can actually be submitted: the split covers the amount **and** every
+     * item in it whose plugin collects a form (the card's SecureFields form) reports that form
+     * complete and valid. Web reaches the same guarantee from the other end — `setAsPrimarySource`
+     * refuses an element that isn't fulfilled — but the reactive shape suits Kotlin's flow surface
+     * better, and it lets a merchant select a method *before* its form is filled in.
+     */
     private val _isPaymentFulfilled = MutableStateFlow(splitter.fulfilled)
     val isPaymentFulfilled: StateFlow<Boolean> = _isPaymentFulfilled.asStateFlow()
 
@@ -132,6 +147,22 @@ class PurseHeadlessCheckout private constructor(
     }
 
     /**
+     * Report whether [item]'s own interactive form is complete and valid — the Kotlin analog of web
+     * partner-ui's `fulfilled` event (`{ isFulfilled }`), which its `PaymentElement` mirrors as
+     * `isFulfilled()`. While any item in the current split reports `false`, [isPaymentFulfilled] is
+     * `false` and [submitPayment] throws [PurseCheckoutException.ItemNotFulfilled].
+     *
+     * A plugin coordinator that collects a form calls this itself — `CardCoordinator` reports
+     * `false` the moment its SecureFields form mounts and then tracks the form's validity, so an
+     * empty card form can never look payable. Items that never call it are ungated, matching web,
+     * where a redirection plugin or an xpay button dispatches no `fulfilled` event either.
+     */
+    fun setFulfilled(item: PaymentItem, fulfilled: Boolean) {
+        fulfilledByMethod[item.id] = fulfilled
+        refresh()
+    }
+
+    /**
      * A [PartnerUiContext] for [item] against the current split — for a plugin coordinator (in an
      * interactive plugin module) that needs to drive plugin-specific steps (e.g. building the Google
      * Pay request) before submit. `amount` is what a primary would still cover.
@@ -189,6 +220,7 @@ class PurseHeadlessCheckout private constructor(
         override val redirectionReturnUrl get() = session.source.redirection
         override fun buildContext() = pluginContext(item)
         override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
+        override fun setFulfilled(fulfilled: Boolean) = setFulfilled(item, fulfilled)
         override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
     }
 
@@ -198,10 +230,13 @@ class PurseHeadlessCheckout private constructor(
      * dispatcher via `suspend`; move it to `Dispatchers.IO` at the call site.
      *
      * @throws PurseCheckoutException.PaymentNotFulfilled if the split doesn't cover the amount.
+     * @throws PurseCheckoutException.ItemNotFulfilled if an item in the split has an incomplete or
+     * invalid form (see [setFulfilled]).
      * @throws PurseCheckoutException.NoPluginRegistered while no `:partner-ui` plugins exist yet.
      */
     suspend fun submitPayment(): ValidationResult {
         if (!splitter.fulfilled) throw PurseCheckoutException.PaymentNotFulfilled()
+        unfulfilledItemId()?.let { throw PurseCheckoutException.ItemNotFulfilled(it) }
         _sessionState.value = SessionState.SUBMITTING
         return try {
             val result = PaymentValidator(apiClient()).execute(splitter.splits, session.source, collectedByMethod)
@@ -213,9 +248,13 @@ class PurseHeadlessCheckout private constructor(
         }
     }
 
+    /** The first item in the current split that reports its form unfulfilled, if any. */
+    private fun unfulfilledItemId(): String? =
+        splitter.splits.map { it.source.id }.firstOrNull { fulfilledByMethod[it] == false }
+
     private fun refresh() {
         _remainingAmountToPay.value = splitter.remaining
-        _isPaymentFulfilled.value = splitter.fulfilled
+        _isPaymentFulfilled.value = splitter.fulfilled && unfulfilledItemId() == null
         _amountSplit.value = splitter.splits
         _paymentMethods.value =
             MethodAvailability.recompute(session.meansOfPayment, session.isInformationRequest, splitter.remaining)

@@ -27,6 +27,10 @@ Dependency direction: `app → { headless-checkout, partner-ui }`, `headless-che
    Secondaries (gift cards) are drawn down first; the primary absorbs `primaryReach` (what's left).
    `PurseHeadlessCheckout` exposes the split reactively as `StateFlow`
    (`remainingAmountToPay`, `isPaymentFulfilled`, `amountSplit`, `paymentMethods`, `sessionState`).
+   A covered split is necessary but not sufficient: an item whose plugin collects a form reports its
+   completeness through `setFulfilled(item, …)`, and `isPaymentFulfilled` stays `false` (and
+   `submitPayment` throws `ItemNotFulfilled`) while any item in the split reports `false`. Web's
+   equivalent is `setAsPrimarySource` refusing an element that hasn't dispatched `fulfilled`.
 4. **Create payment.** `submitPayment` runs the `PaymentValidator` pipeline: for each split, resolve
    its plugin, `preValidation` → `ValidateItemPayload`, POST all to `/validate`, then dispatch the
    `ValidationResult` back to each plugin's `postValidation`. <a name="init-and-validate"></a>The
@@ -229,6 +233,18 @@ Purse-vaulted). Ports web's `plugins/vaults/purse/creditcard` bridge plus the ge
   `RedirectionCheckoutContract` — but launched through Compose's
   `rememberLauncherForActivityResult` rather than `ComponentActivity.registerForActivityResult`,
   which sidesteps the "construct before STARTED" lifecycle caveat the other two coordinators carry.
+- **Form completeness gates the payment**, the one piece of web's `hostedfields` plugin that has a
+  real Kotlin analog: web builds a `final-form` model whose managed (iframe) fields hold sentinel
+  values (`'valid'`/`'required'`/`'format'`), subscribes to `state.valid`, and dispatches
+  `fulfilled { isFulfilled }` on every flip — which its `PaymentElement` mirrors, and which
+  `setAsPrimarySource` refuses to proceed without (`ELEMENT_NOT_FULFILLED`). Here SecureFields Android
+  owns the equivalent form state and emits it as `onFormValid(hasErrors)` (an untouched field is not
+  valid, so an empty form has errors), so `CardCoordinator` needs no form model of its own: it reports
+  `false` through `CardHost.setFulfilled` the moment the form mounts, mirrors every validity change
+  after that, and refuses to tokenize an invalid form. `PurseHeadlessCheckout` keeps that per-item flag
+  and folds it into `isPaymentFulfilled` / `submitPayment` (see the split step above). The plugin's
+  `validateUi` is the last line of defence — no collected vault token means the form was never
+  successfully submitted, so `PaymentValidator` fails before `preValidation` can build a payload.
 - **Brand resolution**: the resolved co-badged brand (e.g. a French card that's both CB and VISA)
   is converted between three distinct vocabularies — the session's `CardBrand`
   (`vault.supported_brands`), SecureFields' own `Brand` (its BIN-lookup vocabulary), and the

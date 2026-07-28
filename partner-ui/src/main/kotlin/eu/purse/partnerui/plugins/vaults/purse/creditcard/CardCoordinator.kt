@@ -49,6 +49,10 @@ import kotlinx.coroutines.withContext
  * Render the returned [CardCoordinator]'s [CardCoordinator.sdk] with SecureFields' own `VaultForm`
  * (or `VaultField` per field, for a custom layout), and call [CardCoordinator.submit] from your own
  * "Pay" button's `onClick` once [CardCoordinator.formValid] is `true`.
+ *
+ * That last condition is enforced, not just advised: mounting this form reports the item unfulfilled
+ * through [CardHost.setFulfilled], so `PurseHeadlessCheckout.isPaymentFulfilled` is `false` — and
+ * `submitPayment` throws `ItemNotFulfilled` — until the form is complete and valid.
  */
 @Composable
 fun rememberCardCoordinator(host: CardHost, listener: CardCoordinator.Listener): CardCoordinator {
@@ -99,6 +103,11 @@ fun rememberCardCoordinator(host: CardHost, listener: CardCoordinator.Listener):
     }
 
     DisposableEffect(sdk, coordinator) {
+        // Arm the fulfillment gate before anything can be typed: a mounted-but-empty card form means
+        // the payment is NOT fulfilled, so `isPaymentFulfilled` stays false (and `submitPayment`
+        // throws) until SecureFields reports every field valid. Web gets there from the other end —
+        // its `setAsPrimarySource` throws ELEMENT_NOT_FULFILLED — but the guarantee is the same one.
+        host.setFulfilled(false)
         // Tracks which brand to submit as, for a co-badged card (e.g. a French card that's both CB
         // and VISA) — mirrors web vault-front's BrandSelection: default to the first brand
         // SecureFields' own BIN lookup detects/matches, overridden if the host renders a brand
@@ -107,6 +116,7 @@ fun rememberCardCoordinator(host: CardHost, listener: CardCoordinator.Listener):
         val unregister = sdk.addListener(object : SecureFieldsListener {
             override fun onFormValid(payload: FormValidPayload) {
                 coordinator.formValid = !payload.hasErrors
+                host.setFulfilled(coordinator.formValid)
                 listener.onReady(coordinator.formValid)
             }
             override fun onBrandDetected(payload: BrandDetectedPayload) {
@@ -167,7 +177,11 @@ class CardCoordinator internal constructor(
         fun onError(message: String?) {}
     }
 
-    /** The SecureFields form's current validity. */
+    /**
+     * The SecureFields form's current validity — `false` until every configured field is valid, so
+     * an untouched form never reads as payable. Mirrored into the checkout's own
+     * `isPaymentFulfilled` via [CardHost.setFulfilled].
+     */
     var formValid: Boolean by mutableStateOf(false)
         internal set
 
@@ -178,9 +192,20 @@ class CardCoordinator internal constructor(
     private var submitting = false
 
     /** Tokenize via SecureFields, then run `/init`+`/validate` through [host]. Call once [formValid]
-     * is `true` and the shopper tapped "Pay". No-op while a previous tap's flow is still in progress. */
+     * is `true` and the shopper tapped "Pay". No-op while a previous tap's flow is still in progress,
+     * and no-op (never an error) while the form isn't complete and valid. */
     fun submit() {
         if (submitting) return
+        if (!formValid) {
+            // The web analog of this gate is the plugin's own `validateUi`, which submits the form
+            // and returns its per-field errors before `preValidation` may tokenize. Here SecureFields
+            // is already showing those errors itself, so there's nothing to surface — just refuse to
+            // tokenize, and re-report readiness so a host that let its button through corrects itself.
+            // Deliberately not `listener.onError`: an unfilled form is not a failed payment.
+            Log.d(TAG, "submit() ignored — the card form is not complete and valid yet")
+            listener.onReady(false)
+            return
+        }
         submitting = true
         scope.launch {
             try {
