@@ -78,7 +78,10 @@ internal object TestSessions {
                   "settings": {
                     "registration_mode": "ON_SESSION",
                     "usage_per_session_limit": 1,
-                    "merchant_specifics": { "integration_mode": "popup" }
+                    "merchant_specifics": {
+                      "integration_mode": "popup",
+                      "client_id": "paypal-client-abc"
+                    }
                   }
                 }
               }

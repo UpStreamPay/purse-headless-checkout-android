@@ -23,6 +23,7 @@ import eu.purse.partnerui.PartnerUiContext
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayHost
 import eu.purse.partnerui.plugins.generics.redirection.RedirectionHost
 import eu.purse.partnerui.plugins.partners.klarna.KlarnaHost
+import eu.purse.partnerui.plugins.partners.paypal.wallet.PaypalHost
 import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardHost
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -204,6 +205,22 @@ class PurseHeadlessCheckout private constructor(
      */
     fun klarnaHost(item: PaymentItem, klarnaReturnUrl: String): KlarnaHost = object : KlarnaHost {
         override val returnUrl get() = klarnaReturnUrl
+        override fun buildContext() = pluginContext(item)
+        override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
+        override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+    }
+
+    /**
+     * The [PaypalHost] for [item] — everything `:partner-ui`'s `PaypalCoordinator` needs from this
+     * checkout, without that module depending on `:headless-checkout` directly.
+     *
+     * Note [PaypalHost.redirectionReturnUrl] is *not* PayPal's approval return — the PayPal SDK
+     * supplies that itself, client-side. It only covers a chained 3-D Secure step after `/validate`,
+     * exactly as it does for Google Pay.
+     */
+    fun paypalHost(item: PaymentItem): PaypalHost = object : PaypalHost {
+        override val environment get() = params.environment
+        override val redirectionReturnUrl get() = session.source.redirection
         override fun buildContext() = pluginContext(item)
         override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
         override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()

@@ -109,7 +109,7 @@ before the Activity is STARTED — see their own docs).
 
 Two things worth knowing about screen 3:
 
-- **The `payment_id` is prefilled.** All three coordinators report one via `Listener.onPaymentId`
+- **The `payment_id` is prefilled.** Every coordinator reports one via `Listener.onPaymentId`
   whenever `/validate` carries it, so *Capture* is usable without hunting an id out of a log. It stays
   editable, and some flows genuinely have none to report (see below).
 - **"Outcome unconfirmed" is a real outcome, not a bug.** After a partner redirect the coordinators

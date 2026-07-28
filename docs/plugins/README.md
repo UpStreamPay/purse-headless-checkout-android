@@ -8,6 +8,7 @@ relative to `/validate`, its UI surface, its quirks, and its failure modes.
 |---|---|---|---|
 | **[Google Pay](google-pay.md)** | any partner / `googlepay` (Ingenico, Adyen, generic) | generic-style (one protocol per gateway; registered per partner + method fallback) | Google's own payment sheet (xpay button) |
 | **[Klarna](klarna.md)** | `klarna` / `installments` | partner (dedicated) | native `KlarnaPaymentView` in your `ViewGroup` |
+| **[PayPal](paypal.md)** | `paypal` / `wallet` | partner (dedicated) | PayPal's branded `PayPalButton` (xpay), then PayPal's own approval |
 | **[Card — Purse vault](card-purse-vault.md)** | any partner / `creditcard` with `vault.vendor = purse` | vault (keyed by vault vendor) | SecureFields Compose form |
 | **[Redirection](redirection.md)** | **whatever the session marks** `template = redirection` | generic **template** (keyed by `configurations.template`) | none — the PSP's own hosted page |
 
@@ -26,7 +27,7 @@ validate:  validateUi(optional) → preValidation ─ SDK POSTs /validate ─▶
 teardown:  destroyClient
 ```
 
-An **interactive** plugin (all four shipped ones are) is split in two halves, so the protocol stays
+An **interactive** plugin (all five shipped ones are) is split in two halves, so the protocol stays
 unit-testable and Play-Services/Klarna/SecureFields types never leak into `:headless-checkout`:
 
 | Half | Type | Knows about |
@@ -60,9 +61,9 @@ method                                             → method fallback
                                                    → null
 ```
 
-So today's four resolve as: card by **vault vendor**, [redirection](redirection.md) by **template**
-(or by `integration_mode`), Klarna by **exact pair**, Google Pay by exact pair for Ingenico and by
-**method fallback** for everyone else.
+So today's five resolve as: card by **vault vendor**, [redirection](redirection.md) by **template**
+(or by `integration_mode`), Klarna and [PayPal](paypal.md) by **exact pair**, Google Pay by exact
+pair for Ingenico and by **method fallback** for everyone else.
 
 The `integration_mode` step sits **above** the exact-pair lookup because that's where web puts it —
 its `getPartnerPlugin` checks it before consulting its own `partner_plugins` table — so a method the
@@ -70,7 +71,7 @@ merchant configured to redirect is driven by the redirect template even when a d
 that pair exists. Template matching is **strict equality**: `redirection_suffix` resolves to no
 generic at all (web has a test on exactly that, and so does `PluginRegistryTest`).
 
-All four shipped plugins are **registered by default** (`PluginRegistry`'s own `init` block) — the
+All five shipped plugins are **registered by default** (`PluginRegistry`'s own `init` block) — the
 session's `protocols` entry is the real gate on whether a method is offered, so no app-side setup
 call exists to drift out of sync with it. `PluginRegistry.disable(partner, method)` opts a built-in
 method out of one app build. `registerGeneric(template, builder)` registers a *template* rather than
@@ -88,7 +89,7 @@ generic explicitly dispatches `fulfilled: true` the moment its `/init` returns).
 
 ### Shared: redirects and 3-D Secure
 
-All four coordinators resolve "what does `/validate` want next?" through the same two pieces, shared
+All five coordinators resolve "what does `/validate` want next?" through the same two pieces, shared
 verbatim from `eu.purse.partnerui.redirect` — a sibling of `plugins/`, not part of any one plugin,
 mirroring web, where the same logic lives in `sdk` and `common` rather than under a plugin folder:
 
@@ -135,6 +136,28 @@ client-facing `api_key`. Re-check status independently instead — `checkout.ses
 the demo's own alfred-backed "Get transactions" tool, whose answer is what settles its result screen.
 See [decisions/pain-points-recap.md](../decisions/pain-points-recap.md).
 
+### Reading `sessionTransactions()` — operations, not payments
+
+`GET /{entity}/sessions/{session}` (behind `checkout.sessionTransactions()` and the demo's "Get
+transactions") lists **operations**, so a row count is not a payment count. A single auto-captured
+payment legitimately shows two rows:
+
+| `action` | `id` | `parent_transaction_id` | `partner_reference` |
+|---|---|---|---|
+| `CAPTURE` | `6848ec32…` | `28e3c89a…` | `e62cd1dd…` |
+| `AUTHORIZE` | `28e3c89a…` | — | `e62cd1dd…` |
+
+The capture's `parent_transaction_id` is the authorize's `id`, and both share one
+`partner_reference` — one payment, two steps, milliseconds apart. Whether that second row appears is
+decided by the session's `capture_mode` (`AUTOMATIC` vs `MANUAL`), set server-side when the
+orchestration session is created. **No SDK code influences it** — nothing capture-related is ever
+sent on the wire.
+
+So before treating a row count as a duplicate, check `parent_transaction_id` and `partner_reference`.
+Two rows with the *same* action and unrelated references would be a genuine duplicate; anything else
+is one payment. Equally, a lone `AUTHORIZE` on an `AUTOMATIC` session is worth a second look in the
+other direction — it means the capture hasn't landed.
+
 ### Where each PSP's native step sits relative to `/validate`
 
 The single biggest per-PSP difference, and the reason these pages exist:
@@ -142,6 +165,12 @@ The single biggest per-PSP difference, and the reason these pages exist:
 ```
 Google Pay   sheet ──▶ token ──▶ /validate                  (native step BEFORE)
 Card         form ──▶ vault token ──▶ /init ──▶ /validate   (native step BEFORE)
+PayPal       /init ──▶ order ──▶ approve out-of-app ──▶ /validate  (native step BEFORE)
 Klarna       /validate ──▶ authorize() (in postValidation)  (native step AFTER, inside submitPayment)
 Redirection  /init ──▶ /validate ──▶ hosted page            (NO native step — the redirect IS the step)
 ```
+
+PayPal is the only one whose step leaves the app **and comes back to a live plugin** — Google Pay's
+sheet and the card form stay in-app, and redirection's hosted page never returns to one. Its return
+Activity ships in `:partner-ui` (scheme `${applicationId}.paypal`) and the PayPal SDK supplies the
+matching `redirect_uri` itself, so integrators declare nothing.

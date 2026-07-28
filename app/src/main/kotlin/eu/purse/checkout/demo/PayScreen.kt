@@ -41,6 +41,10 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.google.android.gms.wallet.button.ButtonConstants
 import com.google.android.gms.wallet.button.ButtonOptions
 import com.google.android.gms.wallet.button.PayButton
+import com.paypal.android.paymentbuttons.PayPalButton
+import com.paypal.android.paymentbuttons.PayPalButtonColor
+import com.paypal.android.paymentbuttons.PayPalButtonLabel
+import com.paypal.android.paymentbuttons.PaymentButtonShape
 import eu.purse.checkout.PurseHeadlessCheckout
 import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.checkout.payment.item.SecondaryMethod
@@ -83,9 +87,14 @@ fun PayScreen(controller: DemoController) {
         ) {
             AmountHeader(checkout, remaining, fulfilled, split)
 
-            if (controller.googlePayReady) {
+            if (controller.googlePayReady || controller.paypalReady) {
                 SectionTitle(stringResource(R.string.section_express))
-                GooglePayButton(enabled = !controller.googlePayBusy, onClick = controller::onGooglePayClicked)
+                if (controller.googlePayReady) {
+                    GooglePayButton(enabled = !controller.googlePayBusy, onClick = controller::onGooglePayClicked)
+                }
+                if (controller.paypalReady) {
+                    PaypalButton(enabled = !controller.paypalBusy, onClick = controller::onPaypalClicked)
+                }
             }
 
             val methods = controller.payableMethods
@@ -108,9 +117,10 @@ fun PayScreen(controller: DemoController) {
             EventLog(controller.events)
         }
 
-        // Both flags matter: `submitting` covers the shared Pay button, `googlePayBusy` the sheet the
-        // Google Pay button opened. Either way the screen must stop taking taps until it resolves.
-        if (controller.submitting || controller.googlePayBusy) BusyOverlay()
+        // All three flags matter: `submitting` covers the shared Pay button, `googlePayBusy` the sheet
+        // the Google Pay button opened, and `paypalBusy` PayPal's whole /init → approval → /validate
+        // round trip. Any of them means the screen must stop taking taps until it resolves.
+        if (controller.submitting || controller.googlePayBusy || controller.paypalBusy) BusyOverlay()
     }
 }
 
@@ -162,6 +172,31 @@ private fun AmountHeader(
             }
         }
     }
+}
+
+/**
+ * PayPal's own branded button, from `com.paypal.android:payment-buttons`. Gold with the "Checkout"
+ * label is PayPal's primary recommended treatment and reads on both themes, so unlike
+ * [GooglePayButton] this one doesn't switch on [isSystemInDarkTheme].
+ */
+@Composable
+private fun PaypalButton(enabled: Boolean, onClick: () -> Unit) {
+    AndroidView(
+        factory = { context ->
+            PayPalButton(context).apply {
+                color = PayPalButtonColor.GOLD
+                label = PayPalButtonLabel.CHECKOUT
+                shape = PaymentButtonShape.ROUNDED
+            }
+        },
+        update = { button ->
+            button.isEnabled = enabled
+            button.setOnClickListener { onClick() }
+        },
+        modifier = Modifier
+            .fillMaxWidth()
+            .height(56.dp),
+    )
 }
 
 /**

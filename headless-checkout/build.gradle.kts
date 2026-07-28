@@ -23,6 +23,14 @@ android {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
     }
+
+    testOptions {
+        // `PaymentValidator` logs the outgoing /validate items via `android.util.Log`, whose
+        // android.jar stub throws "not mocked" on the JVM test classpath. Return defaults instead,
+        // so a diagnostic log can never fail a test. Only affects android.* stubs — `org.json` still
+        // resolves to the real implementation pulled in below, which shadows the stub.
+        unitTests.isReturnDefaultValues = true
+    }
 }
 
 dependencies {

@@ -1,5 +1,6 @@
 package eu.purse.checkout.demo
 
+import android.util.Log
 import android.widget.FrameLayout
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.getValue
@@ -19,6 +20,7 @@ import eu.purse.partnerui.plugins.generics.googlepay.GooglePayCoordinator
 import eu.purse.partnerui.plugins.generics.redirection.RedirectionCoordinator
 import eu.purse.partnerui.plugins.generics.redirection.RedirectionPlugin
 import eu.purse.partnerui.plugins.partners.klarna.KlarnaCoordinator
+import eu.purse.partnerui.plugins.partners.paypal.wallet.PaypalCoordinator
 import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardCoordinator
 import eu.purse.partnerui.redirect.RedirectionResolver
 import kotlinx.coroutines.Dispatchers
@@ -101,6 +103,22 @@ class DemoController(private val activity: ComponentActivity) {
      * "secondaries alone cover it, no primary needed" and light that button up mid-sheet.
      */
     var googlePayBusy by mutableStateOf(false)
+        private set
+
+    /** The session offers PayPal wallet — show the branded PayPal button. */
+    var paypalReady by mutableStateOf(false)
+        private set
+
+    /** PayPal's own primary item, when the session offers it. */
+    private var paypalItem: PrimaryMethod? = null
+
+    /**
+     * `true` from the tap on the PayPal button until its flow ends — the same two jobs
+     * [googlePayBusy] does. PayPal's window is the wider of the two: it spans a `/init`, a trip out
+     * to PayPal's approval and back, and then `/validate`, so a second tap would also leave an
+     * orphan PayPal order behind, not just a duplicate `/validate`.
+     */
+    var paypalBusy by mutableStateOf(false)
         private set
 
     /** The selected row from [payableMethods] (`null` = none, or secondaries alone). */
@@ -194,6 +212,36 @@ class DemoController(private val activity: ComponentActivity) {
         }
     }
 
+    /**
+     * PayPal's callbacks. Like Google Pay it's an xpay with its own branded button, so it tracks its
+     * own busy flag rather than [primaryReady]. `onRequiresAction` fires twice in the normal flow —
+     * once for PayPal's own approval, once more only if `/validate` chains a 3-D Secure step.
+     */
+    private val paypalListener = object : PaypalCoordinator.Listener {
+        override fun onReady(ready: Boolean) {
+            paypalReady = ready
+        }
+
+        override fun onResult(summary: String, globalStatus: String?) {
+            paypalBusy = false
+            succeed(PAYPAL, summary, globalStatus)
+        }
+
+        override fun onRequiresAction() = announceAction(PAYPAL)
+        override fun onPaymentId(paymentId: String) = notePaymentId(PAYPAL, paymentId)
+
+        override fun onCanceled() {
+            paypalBusy = false
+            cancel(PAYPAL)
+        }
+
+        override fun onError(message: String?) {
+            val wasInFlight = paypalBusy
+            paypalBusy = false
+            fail(PAYPAL, message, wasInFlight)
+        }
+    }
+
     private val klarnaListener = object : KlarnaCoordinator.Listener {
         override fun onReady(ready: Boolean) {
             primaryReady = ready
@@ -259,6 +307,7 @@ class DemoController(private val activity: ComponentActivity) {
     val klarnaContainer = FrameLayout(activity)
 
     private val googlePay = GooglePayCoordinator(activity, googlePayListener)
+    private val paypal = PaypalCoordinator(activity, paypalListener)
     private val klarna = KlarnaCoordinator(activity, klarnaContainer, klarnaListener)
     private val redirection = RedirectionCoordinator(activity, redirectionListener)
 
@@ -307,6 +356,11 @@ class DemoController(private val activity: ComponentActivity) {
         // Google Pay is prepared immediately — it's an xpay, never gated behind selecting a row.
         googlePayItem = co.primaryMethods.firstOrNull { it.method == Method.GooglePay }
         googlePayItem?.let { googlePay.prepare(co.googlePayHost(it)) }
+        // PayPal is an xpay too. Its prepare does no network work at all — the /init that creates the
+        // PayPal order waits for the tap, so merely showing the button never leaves an orphan order.
+        // Excluded when the session routes it to the redirection template, which is a row, not an xpay.
+        paypalItem = co.primaryMethods.firstOrNull { it.method == Method.Wallet && !isRedirection(it) }
+        paypalItem?.let { paypal.prepare(co.paypalHost(it)) }
     }
 
     fun goToPay() {
@@ -364,6 +418,7 @@ class DemoController(private val activity: ComponentActivity) {
         primaryReady = false
         redirectionPrepared = false
         googlePayBusy = false
+        paypalBusy = false
         cardSubmit = null
         co.setPrimary(method)
     }
@@ -414,13 +469,23 @@ class DemoController(private val activity: ComponentActivity) {
         googlePay.launchSheet()
     }
 
+    fun onPaypalClicked() {
+        val co = checkout ?: return
+        // Same shape as [onGooglePayClicked]: collapse any open row, commit PayPal as the primary on
+        // the tap rather than on prepare, then hand off. `submit` runs the /init itself.
+        if (selectedPrimary != null) selectPrimary(null)
+        co.setPrimary(paypalItem)
+        paypalBusy = true
+        paypal.submit()
+    }
+
     /**
      * The shared "Pay" button's enabled state: the split must be covered and — unless no primary is
      * needed at all (secondaries alone) — the selected one must report itself ready. Google Pay is
      * excluded outright while its own flow runs, see [googlePayBusy].
      */
     fun submitEnabled(fulfilled: Boolean): Boolean =
-        fulfilled && (selectedPrimary == null || primaryReady) && !googlePayBusy && !submitting
+        fulfilled && (selectedPrimary == null || primaryReady) && !googlePayBusy && !paypalBusy && !submitting
 
     /** Dispatches to whichever coordinator matches the selection; `null` (secondaries alone) submits
      * through the SDK directly, since no plugin coordinator is involved. */
@@ -535,6 +600,26 @@ class DemoController(private val activity: ComponentActivity) {
         scope.launch {
             try {
                 val response = alfred.paymentSession(sessionId)
+                // One line per entry. This endpoint lists **operations, not payments**, so a row
+                // count is not a payment count: one auto-captured payment legitimately shows
+                // `AUTHORIZE` + `CAPTURE`. `parent` (the capture's `parent_transaction_id`) and
+                // `ref` (`plugin_result.partner_reference`) are what tell them apart — same ref, or
+                // a parent pointing at the other row's id, means one payment in two steps. Two rows
+                // with the same action and unrelated refs would be a genuine duplicate.
+                Log.d(TAG, "GET transactions ($sessionId): ${response.length()} operation(s)")
+                for (index in 0 until response.length()) {
+                    val item = response.optJSONObject(index) ?: continue
+                    val status = item.optJSONObject("status")
+                    Log.d(
+                        TAG,
+                        "  [$index] ${item.optString("partner")}/${item.optString("method")} " +
+                            "action=${status?.optString("action")} state=${status?.optString("state")} " +
+                            "amount=${item.optJSONObject("plugin_result")?.opt("amount")} " +
+                            "id=${item.optString("id")} " +
+                            "parent=${item.opt("parent_transaction_id")} " +
+                            "ref=${item.optJSONObject("plugin_result")?.opt("partner_reference")}",
+                    )
+                }
                 transactions = response.toString(2)
                 transactionStatuses = statusLines(response)
                 confirmOutcomeFrom(response)
@@ -604,7 +689,7 @@ class DemoController(private val activity: ComponentActivity) {
 
     /** The system/on-screen back gesture: one step back, never out of a payment in flight. */
     fun back() {
-        if (submitting || googlePayBusy) return
+        if (submitting || googlePayBusy || paypalBusy) return
         step = when (step) {
             DemoStep.Session -> DemoStep.Session
             DemoStep.Pay -> DemoStep.Session
@@ -670,6 +755,9 @@ class DemoController(private val activity: ComponentActivity) {
         googlePayReady = false
         googlePayBusy = false
         googlePayItem = null
+        paypalReady = false
+        paypalBusy = false
+        paypalItem = null
         cardSubmit = null
         outcome = null
         transactions = null
@@ -750,7 +838,9 @@ class DemoController(private val activity: ComponentActivity) {
     private val redirectionLabel: String get() = activity.getString(R.string.method_redirection)
 
     private companion object {
+        const val TAG = "DemoController"
         const val GOOGLE_PAY = "Google Pay"
+        const val PAYPAL = "PayPal"
         const val LEGACY_ID = "legacy_payment_session_id"
     }
 }

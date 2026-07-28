@@ -1,5 +1,6 @@
 package eu.purse.checkout.validation
 
+import android.util.Log
 import eu.purse.checkout.PurseCheckoutException
 import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.checkout.payment.secondary.SecondaryConfigs
@@ -78,6 +79,19 @@ class PaymentValidator(private val api: PaymentApiClient) {
             }
         }
 
+        // The one ground-truth point for "what did we actually send to /validate" — one item per
+        // split, so the count is also the split size. Logged because a duplicate or a dropped
+        // `step_id` is otherwise invisible from the outside and only shows up as an extra
+        // transaction server-side.
+        Log.d(
+            TAG,
+            "POST /validate: ${payloads.size} item(s) — " +
+                payloads.joinToString { item ->
+                    "${item.partner.wireValue}/${item.method.wireValue} " +
+                        "amount=${item.amount} step_id=${item.stepId}"
+                },
+        )
+
         val result = try {
             api.validate(payloads)
         } catch (e: Exception) {
@@ -112,5 +126,9 @@ class PaymentValidator(private val api: PaymentApiClient) {
                     "each source must contribute exactly one item",
             )
         }
+    }
+
+    private companion object {
+        const val TAG = "PaymentValidator"
     }
 }

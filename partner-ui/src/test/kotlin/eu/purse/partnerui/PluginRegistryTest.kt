@@ -13,6 +13,7 @@ import eu.purse.core.vault.VaultVendor
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayPlugin
 import eu.purse.partnerui.plugins.generics.redirection.RedirectionPlugin
 import eu.purse.partnerui.plugins.partners.klarna.KlarnaPlugin
+import eu.purse.partnerui.plugins.partners.paypal.wallet.PaypalPlugin
 import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardPlugin
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -131,6 +132,21 @@ class PluginRegistryTest {
     fun `integration_mode popup does not route to the redirection generic`() {
         val session = sessionWith(Partner.Klarna, Method.Installments, integrationMode = IntegrationMode.POPUP)
         assertTrue(PluginRegistry.getPlugin(Partner.Klarna, Method.Installments, session) is KlarnaPlugin)
+    }
+
+    @Test
+    fun `paypal wallet in popup mode resolves to the paypal plugin`() {
+        // The mode real sessions carry for PayPal — this is what routes to the dedicated plugin.
+        val session = sessionWith(Partner.Paypal, Method.Wallet, integrationMode = IntegrationMode.POPUP)
+        assertTrue(PluginRegistry.getPlugin(Partner.Paypal, Method.Wallet, session) is PaypalPlugin)
+    }
+
+    @Test
+    fun `paypal wallet in redirection mode stays on the redirection generic`() {
+        // Deliberate: web's own redirection generic lists a redirection-mode PayPal wallet as one of
+        // the methods it serves, and integration_mode outranks the exact pair.
+        val session = sessionWith(Partner.Paypal, Method.Wallet, integrationMode = IntegrationMode.REDIRECTION)
+        assertTrue(PluginRegistry.getPlugin(Partner.Paypal, Method.Wallet, session) is RedirectionPlugin)
     }
 
     @Test

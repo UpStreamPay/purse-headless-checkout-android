@@ -4,6 +4,7 @@ import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.core.payment.IntegrationMode
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
+import eu.purse.partnerui.PluginRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -113,12 +114,18 @@ class PurseHeadlessCheckoutTest {
     @Test
     fun `submitPayment fails while no partner-ui plugin is registered`() {
         val checkout = checkout()
-        // PayPal wallet has no plugin yet (unlike the purse-vault card primary, which now resolves
-        // to CardPlugin by default — see PluginRegistry's init block).
+        // Every primary this fixture offers now resolves to a shipped plugin, so opt one out to
+        // reach the no-plugin path (that's exactly what `disable` is for — see PluginRegistry).
         checkout.setPrimary(checkout.primaryMethods.single { it.partner == Partner.Paypal })
+        PluginRegistry.disable(Partner.Paypal, Method.Wallet)
 
-        assertThrows(PurseCheckoutException.NoPluginRegistered::class.java) {
-            runBlocking { checkout.submitPayment() }
+        try {
+            assertThrows(PurseCheckoutException.NoPluginRegistered::class.java) {
+                runBlocking { checkout.submitPayment() }
+            }
+        } finally {
+            // PluginRegistry is a singleton — leaving this set would leak into every later test.
+            PluginRegistry.enable(Partner.Paypal, Method.Wallet)
         }
     }
 }

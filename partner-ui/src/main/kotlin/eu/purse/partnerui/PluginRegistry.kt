@@ -9,6 +9,7 @@ import eu.purse.partnerui.plugins.generics.googlepay.GooglePayModule
 import eu.purse.partnerui.plugins.generics.redirection.RedirectionModule
 import eu.purse.partnerui.plugins.generics.redirection.RedirectionPlugin
 import eu.purse.partnerui.plugins.partners.klarna.KlarnaModule
+import eu.purse.partnerui.plugins.partners.paypal.wallet.PaypalModule
 import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardModule
 
 /** Data a [PluginBuilder] receives to construct a plugin — web's `PluginBuilderData`. */
@@ -57,6 +58,7 @@ object PluginRegistry {
         // again later (e.g. GooglePayModule.register()) is harmless (last registration wins).
         GooglePayModule.register()
         KlarnaModule.register()
+        PaypalModule.register()
         CardModule.register()
         RedirectionModule.register()
     }

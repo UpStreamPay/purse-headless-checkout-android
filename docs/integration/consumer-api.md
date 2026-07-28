@@ -14,9 +14,10 @@ Everything here is the Kotlin analog of web's `@upstreampay/headless-checkout` +
 
 ### Plugins are active by default — no setup call needed
 
-Every plugin `:partner-ui` ships (Google Pay, Klarna, Purse-vaulted card, the generic redirection
-template) is registered automatically; you don't call `GooglePayModule.register()` /
-`KlarnaModule.register()` / `CardModule.register()` / `RedirectionModule.register()` yourself. Whether a method actually shows
+Every plugin `:partner-ui` ships (Google Pay, Klarna, PayPal, Purse-vaulted card, the generic
+redirection template) is registered automatically; you don't call `GooglePayModule.register()` /
+`KlarnaModule.register()` / `PaypalModule.register()` / `CardModule.register()` /
+`RedirectionModule.register()` yourself. Whether a method actually shows
 up is gated by the **session** alone — the same thing that already decides it server-side, in the
 merchant's Purse configuration. `paymentMethods` simply won't include a method the session doesn't
 offer.
@@ -196,7 +197,7 @@ Registered partners today: `illicado-giftcard`, `buybox-giftcard`, `maxxing-loya
 
 ---
 
-## 6. Interactive plugins (Google Pay, Klarna, Card, Redirection)
+## 6. Interactive plugins (Google Pay, PayPal, Klarna, Card, Redirection)
 
 Interactive plugins collect data outside the headless split/validate flow (a payment sheet, a
 native widget, a card form) before `submitPayment` runs. This section is the **API surface**; each
@@ -240,6 +241,7 @@ either. If you write your own coordinator around a form, call `setFulfilled` fro
 | `pluginContext` | `fun pluginContext(item: PaymentItem): PartnerUiContext` | Build the context object a plugin coordinator needs to drive its own steps before submit. |
 | `googlePayHost` | `fun googlePayHost(item: PaymentItem): GooglePayHost` | The `GooglePayHost` implementation for `item`. |
 | `klarnaHost` | `fun klarnaHost(item: PaymentItem, klarnaReturnUrl: String): KlarnaHost` | The `KlarnaHost` implementation for `item`. `klarnaReturnUrl` falls back to the session's own return URL if you don't have a better one. |
+| `paypalHost` | `fun paypalHost(item: PaymentItem): PaypalHost` | The `PaypalHost` implementation for `item`. No return URL argument — the PayPal SDK supplies its own, and the matching Activity ships in `:partner-ui`. |
 | `cardHost` | `fun cardHost(item: PrimaryMethod): CardHost` | The `CardHost` implementation for `item`. Takes `PrimaryMethod` specifically (not the generic `PaymentItem`) since `CardHost.supportedBrands` reads `item.supportedBrands`. |
 | `redirectionHost` | `fun redirectionHost(item: PaymentItem): RedirectionHost` | The `RedirectionHost` implementation for `item`. Not tied to a partner or method — ask for one per item the session routes to the redirection template. |
 
@@ -314,6 +316,51 @@ when {
     else -> Failed
 }
 ```
+
+### PayPal
+
+> Deep dive — the out-of-app approval round trip, sequence diagram, quirks, failure modes:
+> **[docs/plugins/paypal.md](../plugins/paypal.md)**.
+
+**`PaypalHost`** (implemented by `PurseHeadlessCheckout.paypalHost(item)`):
+
+| Member | Meaning |
+|---|---|
+| `environment: PurseEnvironment` | `PRODUCTION` → PayPal `Environment.LIVE`, everything else → `SANDBOX`. |
+| `redirectionReturnUrl: String?` | Same role as Google Pay's — a *chained* 3-D Secure hop after `/validate`, **not** PayPal's own approval return (the SDK supplies that itself). |
+| `buildContext(): PartnerUiContext` | — |
+| `setCollected(data: Map<String, Any?>)` | — |
+| `suspend submitPayment(): ValidationResult` | — |
+
+**`PaypalCoordinator(activity: ComponentActivity, listener: Listener)`** — construct in the host
+Activity's `onCreate` (it registers `ActivityResult` launchers, which must happen before the
+Activity is `STARTED`).
+
+| Function | Signature | Notes |
+|---|---|---|
+| `prepare` | `fun prepare(host: PaypalHost)` | Attaches the host and reports readiness. **No network work** — see the note below. Call once the session is initialized. |
+| `submit` | `fun submit()` | Runs `/init` (creating the PayPal order), then launches PayPal's approval; captures via `/validate` once the buyer approves. Call on the branded button's tap. No-op while a prior flow is still in progress. |
+
+**`PaypalCoordinator.Listener`** callbacks:
+
+| Callback | Fires |
+|---|---|
+| `onReady(ready: Boolean)` | After `prepare()` — show the branded `PayPalButton` only when `true`. |
+| `onResult(summary: String, globalStatus: String? = null)` | Terminal, non-error outcome with no follow-up redirect needed — same semantics as Google Pay's. |
+| `onRequiresAction()` | PayPal's approval is being launched — and again if `/validate` chains a 3-D Secure step. |
+| `onPaymentId(paymentId: String)` | Same as Google Pay's — informational, when `/validate` carries one. |
+| `onCanceled()` | Buyer dismissed PayPal's approval, or the chained redirect, without completing. |
+| `onError(message: String?)` | Any failure — `/init`, a missing session `client_id`, the approval failing to present, `/validate`, or redirect launch. |
+
+**Note on where `/init` runs.** Unlike every other coordinator, PayPal's `prepare` makes no network
+call: the `/init` that creates the PayPal order waits for `submit()`, so merely showing the button
+never leaves an orphan order behind. Nothing to do on your side beyond calling `setPrimary` on the
+tap, as you would for Google Pay.
+
+**No manifest work.** PayPal's approval return goes to an Activity `:partner-ui` ships (scheme
+`${applicationId}.paypal`), not to yours — the opposite of Klarna, see [§7](#7-declaring-your-own-deep-link-for-klarna).
+
+Same caveats as Google Pay on `onResult`/redirect return, above.
 
 ### Klarna
 
@@ -506,7 +553,8 @@ declare a matching `singleTask` intent-filter:
 ```
 
 Pass the matching URL (e.g. `"$packageName.klarna://return"`) as `klarnaHost`'s `klarnaReturnUrl`.
-No manifest change is required for Google Pay — its redirect Activity ships inside `:partner-ui`.
+No manifest change is required for Google Pay or PayPal — both of their return Activities ship
+inside `:partner-ui`.
 
 ---
 

@@ -34,7 +34,10 @@ internal object CheckoutTestSessions {
               "wallet": {
                 "configurations": {
                   "stable": true, "labels": ["paypal", "wallet", "primary"], "position": 2,
-                  "settings": { "registration_mode": "ON_SESSION", "merchant_specifics": { "integration_mode": "popup" } }
+                  "settings": {
+                    "registration_mode": "ON_SESSION",
+                    "merchant_specifics": { "integration_mode": "popup", "client_id": "paypal-client-abc" }
+                  }
                 }
               }
             },

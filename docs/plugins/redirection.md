@@ -149,7 +149,7 @@ sequenceDiagram
    an `ActivityResultLauncher` registered before the Activity starts plus a round-trip to another
    Activity — lifecycle plumbing the pure protocol half deliberately excludes. So
    `RedirectionCoordinator.submit()` resolves it the moment `submitPayment()` returns, off the same
-   `/validate` body and the same priority order web's `manageRedirection` uses. All four plugins in
+   `/validate` body and the same priority order web's `manageRedirection` uses. All five plugins in
    this SDK work this way; this one just makes it the *only* step.
 3. **One plugin instance per `(partner, method)`, built from the session.** `RedirectionPlugin` takes
    both in its constructor — unlike `GooglePayPlugin`/`KlarnaPlugin`/`CardPlugin`, which each hardcode

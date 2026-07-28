@@ -8,22 +8,23 @@ architecture (the sibling `../usp-widget` repo), not the older native drop-in.
 > **Status: back-to-basics rebuild.** The core purse-payment engine is in place and builds green
 > with unit tests: session (V2) `widget.data` decode, the built payment model, the splitter (one
 > primary + N secondaries), a reactive `StateFlow` surface, and the create-payment pipeline.
-> Secondaries (gift cards / vouchers / loyalty) are implemented, and four **primary** plugins ship
+> Secondaries (gift cards / vouchers / loyalty) are implemented, and five **primary** plugins ship
 > inside `:partner-ui`, registered by default: **Google Pay via Ingenico/Worldline** (full 3-D
-> Secure), **Klarna** (native `KlarnaPaymentView`), the **Purse vault credit card** (native
-> SecureFields fields, rendered via Compose), and the **generic redirection template** — one plugin
-> serving whichever methods the session marks `template = redirection`, with no partner named in code.
-> Still to come: PayPal, Apple Pay, the rendering host
+> Secure), **Klarna** (native `KlarnaPaymentView`), **PayPal** (wallet pay-now, via the official
+> PayPal Android SDK's browser switch), the **Purse vault credit card** (native SecureFields fields,
+> rendered via Compose), and the **generic redirection template** — one plugin serving whichever
+> methods the session marks `template = redirection`, with no partner named in code.
+> Still to come: Apple Pay, the rendering host
 > for anything beyond the card plugin's own Compose surface.
 
 ## Repository layout
 
 | Module | Package | Mirrors web | Role |
 |---|---|---|---|
-| `:app` | `eu.purse.checkout.demo` | playground | Demo host — mints a session via alfred, prints the SDK's methods/split (including each item's `template` and the plugin actually resolved for it), and drives Google Pay, Klarna, a Purse-vaulted card, or any redirection-template method. |
+| `:app` | `eu.purse.checkout.demo` | playground | Demo host — mints a session via alfred, prints the SDK's methods/split (including each item's `template` and the plugin actually resolved for it), and drives Google Pay, PayPal, Klarna, a Purse-vaulted card, or any redirection-template method. |
 | `:headless-checkout` | `eu.purse.checkout` | `headless-checkout` | `PurseHeadlessCheckout`: session decode, payment model, `PursePaymentSplitter`, the validate pipeline. |
 | `:core` | `eu.purse.core` | `sdk` + `model` + `common` | Payment API client, environment targets, the `Partner`/`Method`/vault enums, `MethodConfiguration`, the `LegacyPaymentSession` DTO + `widget.data` decode, and the typed validate payloads. |
-| `:partner-ui` | `eu.purse.partnerui` + `.redirect` + `.plugins.generics.googlepay` + `.plugins.generics.redirection` + `.plugins.partners.klarna` + `.plugins.vaults.purse.creditcard` | `partner-ui` (contract + `plugins/generics/googlepay` + `plugins/generics/redirection` + `plugins/partners/klarna-installments` + `plugins/vaults/purse/creditcard`) | The `PartnerUiPlugin` lifecycle contract + `PluginRegistry`, the shared redirect machinery (`.redirect` — `RedirectionResolver` + the in-app-WebView return Activity, used by every plugin), **and** the Google Pay, Klarna, Purse vault credit-card and generic redirection plugins living alongside it in the same module — exactly like web bundles every partner plugin inside its one `partner-ui` package. Each reaches `:headless-checkout` only through the `GooglePayHost`/`KlarnaHost`/`CardHost`/`RedirectionHost` interface it defines, so the dependency never points from `:partner-ui` to `:headless-checkout`. |
+| `:partner-ui` | `eu.purse.partnerui` + `.redirect` + `.plugins.generics.googlepay` + `.plugins.generics.redirection` + `.plugins.partners.klarna` + `.plugins.partners.paypal.wallet` + `.plugins.vaults.purse.creditcard` | `partner-ui` (contract + `plugins/generics/googlepay` + `plugins/generics/redirection` + `plugins/partners/klarna-installments` + `plugins/partners/paypal/wallet` + `plugins/vaults/purse/creditcard`) | The `PartnerUiPlugin` lifecycle contract + `PluginRegistry`, the shared redirect machinery (`.redirect` — `RedirectionResolver` + the in-app-WebView return Activity, used by every plugin), **and** the Google Pay, Klarna, PayPal, Purse vault credit-card and generic redirection plugins living alongside it in the same module — exactly like web bundles every partner plugin inside its one `partner-ui` package. Each reaches `:headless-checkout` only through the `GooglePayHost`/`KlarnaHost`/`PaypalHost`/`CardHost`/`RedirectionHost` interface it defines, so the dependency never points from `:partner-ui` to `:headless-checkout`. |
 
 Dependency direction: `:app → { :headless-checkout, :partner-ui }`, `:headless-checkout → { :core,
 :partner-ui }`, `:partner-ui → :core`.
