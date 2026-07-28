@@ -148,10 +148,18 @@ payment legitimately shows two rows:
 | `AUTHORIZE` | `28e3c89a…` | — | `e62cd1dd…` |
 
 The capture's `parent_transaction_id` is the authorize's `id`, and both share one
-`partner_reference` — one payment, two steps, milliseconds apart. Whether that second row appears is
-decided by the session's `capture_mode` (`AUTOMATIC` vs `MANUAL`), set server-side when the
-orchestration session is created. **No SDK code influences it** — nothing capture-related is ever
-sent on the wire.
+`partner_reference` — one payment, two steps, milliseconds apart.
+
+**Two things decide whether you see one row or two, and neither is the SDK:**
+
+1. **The Payment API version.** `v2` lists each operation as its own row; `v1` aggregates them into a
+   single transaction. The same payment therefore reads as two rows on `v2` and one on `v1` — which
+   is the usual explanation for a mobile-vs-web discrepancy, since the version comes from the
+   session's own `api_url`.
+2. **`capture_mode`** (`AUTOMATIC` vs `MANUAL`), set server-side when the orchestration session is
+   created — it decides whether a capture happens at all, not how it is listed.
+
+**No SDK code influences either** — nothing capture-related is ever sent on the wire.
 
 So before treating a row count as a duplicate, check `parent_transaction_id` and `partner_reference`.
 Two rows with the *same* action and unrelated references would be a genuine duplicate; anything else

@@ -125,9 +125,11 @@ sequenceDiagram
    following a genuine chained hop — an ACS / 3-D Secure challenge is never a PayPal-hosted URL.
 
    Note what this is **not** evidence of: a second row in `GET transactions` is not proof of a
-   second payment. That endpoint lists *operations*, so one auto-captured payment legitimately shows
-   `AUTHORIZE` + `CAPTURE`, linked by the capture's `parent_transaction_id` and a shared
-   `partner_reference`. Check those two fields before reading a row count as a duplicate.
+   second payment. On Payment API **v2** that endpoint lists *operations*, so one auto-captured
+   payment legitimately shows `AUTHORIZE` + `CAPTURE` — the same payment reads as a single row on
+   `v1`. Check the capture's `parent_transaction_id` and the shared `partner_reference` before
+   reading a row count as a duplicate; see
+   [plugins/README](README.md#reading-sessiontransactions--operations-not-payments).
 
    > **Open question this raises.** Web approves *after* `/validate`; this plugin approves *before*
    > it. Both end with one approval and one `/validate` (which is single-use — a second call is
