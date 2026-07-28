@@ -1,5 +1,6 @@
 plugins {
     alias(libs.plugins.android.application)
+    alias(libs.plugins.kotlin.compose)
 }
 
 // Loads KEY=VALUE pairs from a gitignored .env file at the repo root (see .env.example).
@@ -59,6 +60,7 @@ android {
     buildFeatures {
         viewBinding = true
         buildConfig = true
+        compose = true
     }
 }
 
@@ -72,6 +74,11 @@ dependencies {
     // lifecycleScope + coroutines to observe the SDK's StateFlow surface off the main thread.
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.kotlinx.coroutines.android)
+    // The card (Purse vault / SecureFields) form is Compose-first — see CardCoordinator's doc.
+    // Hosted inside the otherwise View-based layout via a plain ComposeView.
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.ui)
+    implementation(libs.androidx.material3)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)

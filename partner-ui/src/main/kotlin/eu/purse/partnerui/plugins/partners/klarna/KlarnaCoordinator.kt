@@ -13,11 +13,15 @@ import eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectionCheckou
 import eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectionCheckoutResult
 import eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectionResolver
 import eu.purse.partnerui.plugins.generics.googlepay.redirect.withReturnUrlPrefix
+import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import java.util.Base64
+import kotlin.coroutines.resume
+import kotlin.coroutines.resumeWithException
 
 /**
  * Drives the interactive Klarna flow end to end, gluing the [KlarnaPlugin] protocol to the native
@@ -29,13 +33,17 @@ import java.util.Base64
  *    and calls `initialize(clientToken)` → `load(null)` once Klarna confirms it (`onInitialized`).
  *    Deliberately does **not** call `loadPaymentReview()` — that's a US-market-only API (a multi-step
  *    checkout order-review page) that throws for any other `purchase_country`; every market this
- *    plugin targets renders fully off `load()` alone.
- * 2. [submit] — unlike Google Pay (where the sheet runs *before* `/validate`), Klarna's own reference
- *    flow (web's `klarna_installments` plugin) POSTs `/validate` first using only the `/init` step id,
- *    THEN calls the SDK's `authorize()` (and `finalize()` if required) to let Klarna itself confirm —
- *    so [submit] calls [KlarnaHost.submitPayment] first and only drives the widget once that returns.
- * 3. on `onAuthorized`/`onFinalized` — if `/validate` asked for a genuine redirect, resolves it via
- *    [RedirectionResolver] and launches it exactly like [eu.purse.partnerui.plugins.generics.googlepay.GooglePayCoordinator].
+ *    plugin targets renders fully off `load()` alone. Also stashes an `authorize()` callback (see
+ *    [authorizeWidget]) into `PartnerUiContext.collected`, alongside the `/init` step id.
+ * 2. [submit] — a single [KlarnaHost.submitPayment] call now does everything: [KlarnaPlugin]'s own
+ *    `postValidation` calls the stashed [authorizeWidget] callback *after* `/validate` succeeds —
+ *    unlike Google Pay (sheet runs *before* `/validate`), Klarna's own reference flow (web's
+ *    `klarna_installments` plugin) only opens its payment step once `/validate` itself returns
+ *    `SUCCESS`, confirmed against both the plugin and the orchestrator that calls it
+ *    (`headless-checkout-validation.ts`). [submit] itself only resolves whatever redirect the
+ *    (already-authorized) result carries.
+ * 3. [authorizeWidget] suspends until `onAuthorized`/`onFinalized` resolves it — [submit] never
+ *    touches the widget directly once `/validate` is in flight.
  *
  * Knows nothing about `:headless-checkout` — [KlarnaHost] is the seam (see its doc).
  *
@@ -75,7 +83,10 @@ class KlarnaCoordinator(
     private var host: KlarnaHost? = null
     private var view: KlarnaPaymentView? = null
     private var partnerWireValue: String? = null
-    private var pendingResult: ValidationResult? = null
+
+    /** Resolved by `onAuthorized`/`onFinalized`/`onErrorOccurred` — see [authorizeWidget]. `null`
+     * whenever no authorize() call is currently in flight. */
+    private var pendingAuthorize: CancellableContinuation<Boolean>? = null
 
     /** Same re-entrancy guard as `GooglePayCoordinator.submitting` — see its doc. */
     private var submitting = false
@@ -100,34 +111,34 @@ class KlarnaCoordinator(
         }
 
         override fun onAuthorized(view: KlarnaPaymentView, approved: Boolean, authToken: String?, finalizedRequired: Boolean?) {
-            if (!approved) {
-                submitting = false
-                listener.onCanceled()
-                return
-            }
             if (finalizedRequired == true) {
                 view.finalize(null)
-            } else {
-                resolveOutcome()
+                return
             }
+            pendingAuthorize?.resume(approved)
+            pendingAuthorize = null
         }
 
         override fun onReauthorized(view: KlarnaPaymentView, approved: Boolean, authToken: String?) {
-            // Not driven by this flow — submit() always calls authorize(), never reauthorize().
+            // Not driven by this flow — authorizeWidget() always calls authorize(), never reauthorize().
         }
 
         override fun onFinalized(view: KlarnaPaymentView, approved: Boolean, authToken: String?) {
-            if (!approved) {
-                submitting = false
-                listener.onCanceled()
-                return
-            }
-            resolveOutcome()
+            pendingAuthorize?.resume(approved)
+            pendingAuthorize = null
         }
 
         override fun onErrorOccurred(view: KlarnaPaymentView, error: KlarnaPaymentsSDKError) {
-            submitting = false
-            listener.onError(error.describe())
+            val pending = pendingAuthorize
+            pendingAuthorize = null
+            if (pending != null) {
+                pending.resumeWithException(IllegalStateException(error.describe()))
+            } else {
+                // Not mid-authorize (e.g. a load-time failure) — nothing suspended to resume;
+                // report directly instead.
+                submitting = false
+                listener.onError(error.describe())
+            }
         }
     }
 
@@ -146,21 +157,21 @@ class KlarnaCoordinator(
     }
 
     /**
-     * Build the request (`/init`) against [host], stash its `step_id`, and inflate the native widget
-     * into [container]. Call once the session is initialized — this is also the reset point for
-     * [submitting], mirroring `GooglePayCoordinator.prepare`.
+     * Build the request (`/init`) against [host], stash its `step_id` **and** [authorizeWidget]
+     * into `PartnerUiContext.collected` (both keyed for [KlarnaPlugin] to read at `preValidation`/
+     * `postValidation` time), and inflate the native widget into [container]. Call once the session
+     * is initialized — this is also the reset point for [submitting], mirroring
+     * `GooglePayCoordinator.prepare`.
      */
     fun prepare(host: KlarnaHost) {
         this.host = host
         submitting = false
-        pendingResult = null
         activity.lifecycleScope.launch {
             try {
                 val context = host.buildContext()
                 partnerWireValue = context.partner.wireValue
                 val plugin = KlarnaPlugin(context.partner)
                 val request = withContext(Dispatchers.IO) { plugin.buildRequest(context) }
-                host.setCollected(mapOf(KlarnaPlugin.COLLECTED_STEP_ID to request.stepId))
                 logClientTokenPayload(request.clientToken)
 
                 val paymentView = KlarnaPaymentView(activity, KlarnaMapper.PAYMENT_METHOD_CATEGORY, callback)
@@ -172,6 +183,17 @@ class KlarnaCoordinator(
                 // deviates from the documented integration.
                 container.addView(paymentView, ViewGroup.LayoutParams(MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
                 view = paymentView
+
+                // Both entries together — host.setCollected replaces the whole map for this item,
+                // so stashing them separately would drop one.
+                val authorize: KlarnaAuthorize = { authorizeWidget(paymentView) }
+                host.setCollected(
+                    mapOf(
+                        KlarnaPlugin.COLLECTED_STEP_ID to request.stepId,
+                        KlarnaPlugin.COLLECTED_AUTHORIZE to authorize,
+                    ),
+                )
+
                 paymentView.initialize(request.clientToken)
             } catch (e: Exception) {
                 listener.onError(e.message)
@@ -180,31 +202,45 @@ class KlarnaCoordinator(
     }
 
     /**
-     * Run `/validate` first, then let Klarna's own SDK authorize/finalize the session — see class doc
-     * for why this ordering (opposite of Google Pay's) matches web's reference implementation. Call
-     * once [prepare] reported ready and the shopper tapped "Pay with Klarna".
+     * Calls Klarna's own `authorize()`, suspending until `onAuthorized`/`onFinalized` resolves it.
+     * Invoked by [KlarnaPlugin.postValidation] — *not* called directly by [submit] — since it only
+     * runs once `/validate` itself already succeeded (see class doc).
+     */
+    private suspend fun authorizeWidget(paymentView: KlarnaPaymentView): Boolean =
+        suspendCancellableCoroutine { cont ->
+            pendingAuthorize = cont
+            paymentView.authorize(sessionData = null, autoFinalize = true)
+        }
+
+    /**
+     * The one call that now does everything: `/validate`, then — inside [KlarnaPlugin]'s own
+     * `postValidation`, only if `/validate` succeeded — [authorizeWidget]. This just resolves
+     * whatever redirect the (already-authorized) result carries. Call once [prepare] reported ready
+     * and the shopper tapped the checkout's own submit action.
      */
     fun submit() {
         if (submitting) return
         val host = host ?: return listener.onError("call prepare() first")
-        val paymentView = view ?: return listener.onError("call prepare() first")
+        if (view == null) return listener.onError("call prepare() first")
         submitting = true
         activity.lifecycleScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { host.submitPayment() }
-                pendingResult = result
-                paymentView.authorize(sessionData = null, autoFinalize = true)
+                resolveOutcome(result, host)
+            } catch (e: KlarnaAuthorizationDeclined) {
+                submitting = false
+                listener.onCanceled()
             } catch (e: Exception) {
-                // `/validate` never landed (or errored) — safe to let the shopper retry.
+                // `/validate` never landed, errored, or Klarna's own authorize() failed outright —
+                // safe to let the shopper retry.
                 submitting = false
                 listener.onError(e.message)
             }
         }
     }
 
-    private fun resolveOutcome() {
-        val host = host ?: return
-        val result = pendingResult ?: return listener.onError("missing /validate result")
+    private fun resolveOutcome(result: ValidationResult, host: KlarnaHost) {
+        submitting = false
         Log.d(TAG, "validate response: global_status=${result.globalStatus} redirection=${result.raw.optJSONObject("redirection")}")
         val action = RedirectionResolver.resolve(
             validateResponse = result.raw,

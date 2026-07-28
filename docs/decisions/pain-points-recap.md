@@ -40,11 +40,11 @@ PayPal.
 
 | Requirement | Status on this headless port |
 |---|---|
-| CB (Secure Fields Android, SDK-11769) | **Not yet built.** A separate SecureFields Android 3-D Secure module is in progress out-of-band; nothing in `:partner-ui` integrates it yet. |
+| CB (Secure Fields Android, SDK-11769) | **Done** — `CardPlugin`/`CardCoordinator` (`plugins.vaults.purse.creditcard`) wrap the published SecureFields Android SDK for the `purse` vault vendor specifically; `/init`+`/validate` wired, 3-D Secure resolved via the same `RedirectionResolver` Google Pay uses. Built **Compose-first** — see §3's third point for what that costs. |
 | Google Pay | Done — protocol, sheet, and 3-D Secure redirect all working, including the gateway-specific (Ingenico/Adyen/default) builder split. |
 | PayPal | **Not yet built.** Also where the redirect-return-URL gap above bites hardest. |
 | Illicado | Done — but as a **secondary** (gift-card co-payment) method, not a primary card flow. The ticket groups it with CB/Google Pay/PayPal as if it's one more primary method; in Purse's own model it isn't, so "Illicado works" doesn't close the same gap CB/PayPal do. |
-| Vault fallback | **Not addressed.** `MethodConfiguration.VaultInfo`/`PrimaryMethod.supportedBrands` model vault *configuration*, but no fallback-when-vaulting-fails path exists anywhere in this port yet. |
+| Vault fallback | **Still not addressed.** `MethodConfiguration.VaultInfo`/`PrimaryMethod.supportedBrands` model vault *configuration*, and the `purse` vendor itself is now wired — but there's no fallback-when-vaulting-fails path (e.g. to `pci_proxy`, or to a non-vaulted flow) anywhere in this port. Landing the `purse` vendor didn't close this row; it's a distinct requirement from "a vault vendor works." |
 
 Klarna is also fully built on this port (protocol, native `KlarnaPaymentView`, redirect) but isn't
 one of SDK-12039's four required methods — it's scope the branch took on beyond the ticket, useful
@@ -85,14 +85,28 @@ schemes with no OS-enforced ownership. [Verified App Links](https://developer.an
 are the correct answer before PayPal's redirect adds another one — worth deciding once, not per
 method.
 
+- **The card plugin is Compose; Google Pay and Klarna are the View system — same SDK, two UI
+  toolkits.** `CardCoordinator` uses SecureFields Android's own Compose surface
+  (`rememberSecureFields`/`VaultForm`), because that's the SDK's primary integration path today; web
+  has no such split — a browser page is one DOM regardless of which plugin renders into it. A
+  merchant integrating **both** a View-based primary (Google Pay/Klarna) and the card plugin needs
+  a Compose entry point somewhere in an otherwise View-based app (this repo's own demo does it via a
+  single `ComposeView` embedded in its XML layout) — one more piece of integration surface web
+  merchants never have to think about. Upside: Compose's `rememberLauncherForActivityResult` sidesteps
+  the "construct in `onCreate`, before `STARTED`" lifecycle rule `GooglePayCoordinator`/
+  `KlarnaCoordinator` both carry — so it's not a strictly worse integration model, just a
+  **different** one, coexisting with the other two rather than replacing them.
+
 ---
 
 ## Bottom line
 
 Going headless hasn't changed the answer to what SDK-12039 asked. Native Android redirect handling
-*is* feasible, exactly as this repo's Google Pay work demonstrates — but the two backend-owned gaps
-this doc's predecessor already found (ambiguous "redirect required" signal, backend-controlled
-return URLs) are still open, and they land squarely on PayPal, the one required method most likely
-to need them next. CB and vault fallback remain unbuilt on this architecture entirely. "Functionally
-identical to web" holds for what's shipped, with two concrete asterisks (plugin activation, redirect
-manifest wiring) that are integration cost, not missing functionality.
+*is* feasible, exactly as this repo's Google Pay and card work both demonstrate — but the two
+backend-owned gaps this doc's predecessor already found (ambiguous "redirect required" signal,
+backend-controlled return URLs) are still open, and they land squarely on PayPal, the one required
+method still not built. Of the ticket's four required methods, three are now done (CB, Google Pay,
+Illicado-as-secondary); vault fallback remains unaddressed entirely. "Functionally identical to
+web" holds for what's shipped, with three concrete asterisks now (plugin activation, redirect
+manifest wiring, and the card plugin's own Compose-vs-View-system split) that are integration cost,
+not missing functionality.

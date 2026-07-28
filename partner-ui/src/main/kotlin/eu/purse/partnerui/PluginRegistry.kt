@@ -6,6 +6,7 @@ import eu.purse.core.session.LegacyPaymentSession
 import eu.purse.core.vault.VaultVendor
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayModule
 import eu.purse.partnerui.plugins.partners.klarna.KlarnaModule
+import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardModule
 
 /** Data a [PluginBuilder] receives to construct a plugin — web's `PluginBuilderData`. */
 data class PluginBuilderData(
@@ -53,6 +54,7 @@ object PluginRegistry {
         // again later (e.g. GooglePayModule.register()) is harmless (last registration wins).
         GooglePayModule.register()
         KlarnaModule.register()
+        CardModule.register()
     }
 
     /** Register a plugin for an exact `(partner, method)`. Idempotent (last registration wins). */
@@ -63,6 +65,11 @@ object PluginRegistry {
     /** Register a fallback for a method regardless of partner (e.g. a default Google Pay builder). */
     fun registerFallback(method: Method, builder: PluginBuilder) {
         methodFallbacks[method] = builder
+    }
+
+    /** Register a card-vaulting plugin for [vendor] (`configurations.vault.vendor`). */
+    fun registerVault(vendor: VaultVendor, builder: PluginBuilder) {
+        vaultPlugins[vendor] = builder
     }
 
     /**

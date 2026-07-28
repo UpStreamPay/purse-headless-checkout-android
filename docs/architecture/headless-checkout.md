@@ -9,9 +9,9 @@ payment* and lets a merchant build their own checkout UI on top. It mirrors the 
 | Module | Package | Mirrors web | Responsibility |
 |---|---|---|---|
 | `:core` | `eu.purse.core` | `sdk` + `model` + `common` | Payment API client, environment targets, the `Partner`/`Method`/`VaultVendor`/`CardBrand` enums, `MethodConfiguration`, the raw `LegacyPaymentSession` DTO + its base64 `widget.data` decode, and the typed `ItemPayload`/`ValidationResult`. No orchestration. |
-| `:partner-ui` | `eu.purse.partnerui` + `eu.purse.partnerui.plugins.generics.googlepay` + `eu.purse.partnerui.plugins.partners.klarna` | `partner-ui` (contract + `plugins/generics/googlepay` + `plugins/partners/klarna-installments`) | The plugin lifecycle **contract** — `PartnerUiPlugin`, `PartnerUiContext`, `PluginRegistry` (with runtime `register`) — **and** the concrete **Google Pay (Ingenico/Worldline)** and **Klarna** plugins living in the same module: pure protocol plus, respectively, the Play-Services sheet coordinator + 3-D Secure redirect, and the native `KlarnaPaymentView` coordinator. Registered by default (`PluginRegistry`'s own `init` block). Each reaches `:headless-checkout` only through the `GooglePayHost` / `KlarnaHost` interface it defines — implemented by `PurseHeadlessCheckout.googlePayHost` / `.klarnaHost` — so the module dependency never points from `:partner-ui` to `:headless-checkout`. |
+| `:partner-ui` | `eu.purse.partnerui` + `.plugins.generics.googlepay` + `.plugins.partners.klarna` + `.plugins.vaults.purse.creditcard` | `partner-ui` (contract + `plugins/generics/googlepay` + `plugins/partners/klarna-installments` + `plugins/vaults/purse/creditcard`) | The plugin lifecycle **contract** — `PartnerUiPlugin`, `PartnerUiContext`, `PluginRegistry` (with runtime `register`/`registerVault`) — **and** the concrete **Google Pay (Ingenico/Worldline)**, **Klarna**, and **Purse vault credit-card** plugins living in the same module: pure protocol plus, respectively, the Play-Services sheet coordinator + 3-D Secure redirect, the native `KlarnaPaymentView` coordinator, and a Compose-first coordinator wrapping the SecureFields Android SDK. Registered by default (`PluginRegistry`'s own `init` block). Each reaches `:headless-checkout` only through the `GooglePayHost` / `KlarnaHost` / `CardHost` interface it defines — implemented by `PurseHeadlessCheckout.googlePayHost` / `.klarnaHost` / `.cardHost` — so the module dependency never points from `:partner-ui` to `:headless-checkout`. |
 | `:headless-checkout` | `eu.purse.checkout` | `headless-checkout` | `PurseHeadlessCheckout`: session decode, the built payment model, the splitter, and the plugin-driven "create payment" pipeline. |
-| `:app` | `eu.purse.checkout.demo` | playground | Smoke test: mint a session via alfred → `init` → print methods/split; drives Google Pay or Klarna. |
+| `:app` | `eu.purse.checkout.demo` | playground | Smoke test: mint a session via alfred → `init` → print methods/split; drives Google Pay, Klarna, or a Purse-vaulted card. |
 
 Dependency direction: `app → { headless-checkout, partner-ui }`, `headless-checkout →
 { core, partner-ui }`, `partner-ui → core`.
@@ -173,17 +173,26 @@ instead of web's `Klarna.Payments` JS SDK:
   `KlarnaMapper.parseInitConfig` extracts `plugin_result.logs.klarna_client_token`, and
   `KlarnaMapper.extractStepId` reads the top-level `step_id` `/init` returns (web's
   `context.dmz.initialStepId`). `preValidation` builds an otherwise-empty `/validate` payload carrying
-  only that `step_id` — ported verbatim from web's `klarna_installments.preValidation`, which
-  deliberately does **not** call Klarna's own `authorize()` before `/validate`.
+  only that `step_id` — ported verbatim from web's `klarna_installments.preValidation`. `postValidation`
+  is where Klarna's own `authorize()` step actually happens — confirmed against both the plugin
+  itself and the orchestrator that calls it (`headless-checkout-validation.ts`'s `preValidateItems` →
+  `validate` → `postValidateItems`, run in that order, `postValidateItems` only once `/validate`
+  returns `SUCCESS`). `postValidation` calls the live `authorize()` callback `KlarnaCoordinator`
+  stashed in `PartnerUiContext.collected` (keyed `KlarnaPlugin.COLLECTED_AUTHORIZE`, alongside the
+  `step_id`) — since this plugin has no Klarna SDK types of its own, matching how the sheet token
+  reaches Google Pay's `preValidation`. This is why one `checkout.submitPayment()` call is enough to
+  both submit and open Klarna's own payment step — no separate coordinator-driven call needed after
+  the fact.
 - **Interactive** (`KlarnaCoordinator`, the native widget): inflates a `KlarnaPaymentView` into a host
   container view, `initialize(clientToken)` → `load(null)`, and reports "ready" off
-  `onLoadPaymentReview`'s `showForm` flag — the native analog of web's `e.show_form` check. Unlike
-  Google Pay (sheet runs *before* `/validate`), `KlarnaCoordinator.submit()` mirrors web's own ordering:
-  it calls `KlarnaHost.submitPayment()` (`/validate`) **first**, using only the `step_id`, and only
-  *then* drives the widget's `authorize()`/`finalize()` — because web's `postValidation` calls
-  `Klarna.authorize()` after `/validate`, not before. Once authorized/finalized, it resolves any
-  redirect via the same `RedirectionResolver` (and shared `RedirectionCheckoutContract`/Activity)
-  Google Pay uses, keyed by `KlarnaMapper.METHOD` (`installments`) instead of `googlepay`.
+  `onLoadPaymentReview`'s `showForm` flag — the native analog of web's `e.show_form` check.
+  `KlarnaCoordinator.submit()` is now just `KlarnaHost.submitPayment()` plus resolving whatever
+  redirect the (already-authorized) result carries — `authorizeWidget()` is a private suspend
+  function `postValidation` calls, not something `submit()` drives directly. Redirects resolve via
+  the same `RedirectionResolver` (and shared `RedirectionCheckoutContract`/Activity) Google Pay uses,
+  keyed by `KlarnaMapper.METHOD` (`installments`) instead of `googlepay`. A declined authorization
+  throws `KlarnaAuthorizationDeclined`, which `submit()` reports as `Listener.onCanceled()` rather
+  than `onError()`.
 - **Return URL**: `KlarnaPaymentView.returnURL` needs a deep link back into the **same Activity**
   hosting the live widget (unlike Google Pay's 3-D Secure, which uses a self-contained Activity this
   module ships) — so the host app declares its own `singleTask` intent-filter (see the demo's
@@ -192,9 +201,45 @@ instead of web's `Klarna.Payments` JS SDK:
 No registration call needed — hand the coordinator a `checkout.klarnaHost(item, returnUrl)` per
 Klarna item; `PluginRegistry` already has `KlarnaModule` registered by default.
 
+### Card / Purse vault (`eu.purse.partnerui.plugins.vaults.purse.creditcard`, inside `:partner-ui`)
+
+The third primary plugin, and the first **vault** plugin (`PluginRegistry.registerVault`, keyed by
+`VaultVendor` rather than `(partner, method)` — any partner's `creditcard` method can be
+Purse-vaulted). Ports web's `plugins/vaults/purse/creditcard` bridge plus the generic
+`plugins/generics/hostedfields` plugin it plugs into, using the SecureFields Android SDK
+(`eu.purse.securefields`, published separately — see SDK-11769) for the actual card fields.
+
+- **Protocol** (`CardPlugin : PartnerUiPlugin`, pure JSON): unlike Google Pay/Klarna, `/init` gates
+  nothing about rendering — SecureFields tokenizes independently of it — so `preValidation` does
+  both steps itself: `POST /init` for a `step_id` (`CardMapper.parseInit`), then builds the
+  `/validate` payload from the vault token `CardCoordinator` already collected via
+  `PartnerUiContext.collected`. No separate `buildRequest` phase, unlike the other two plugins.
+- **Interactive** (`CardCoordinator`, **Compose-first** — unlike `GooglePayCoordinator`/
+  `KlarnaCoordinator`, which are imperative classes driving View-system widgets): a composable,
+  `rememberCardCoordinator(host, listener)`, wraps SecureFields' own `rememberSecureFields` (its
+  Compose entry point) and exposes the live `SecureFieldsAndroid` instance for the host to render
+  with SecureFields' `VaultForm`/`VaultField` composables. `submit()` tokenizes
+  (`sdk.submit(SubmitOptions(selectedNetwork = …))`), hands the vault token + bin + resolved
+  gateway scheme to `CardHost.submitPayment()` through the same `setCollected` seam Google
+  Pay/Klarna use, then resolves any 3-D Secure redirect via the same shared `RedirectionResolver`/
+  `RedirectionCheckoutContract` — but launched through Compose's
+  `rememberLauncherForActivityResult` rather than `ComponentActivity.registerForActivityResult`,
+  which sidesteps the "construct before STARTED" lifecycle caveat the other two coordinators carry.
+- **Brand resolution**: the resolved co-badged brand (e.g. a French card that's both CB and VISA)
+  is converted between three distinct vocabularies — the session's `CardBrand`
+  (`vault.supported_brands`), SecureFields' own `Brand` (its BIN-lookup vocabulary), and the
+  Payment API's gateway scheme string (`payment_data.card.selected_network`, e.g.
+  `"CARTE_BANCAIRE"`) — `CardCoordinator`'s private `toGatewayScheme()` mirrors SecureFields
+  Android's own internal (non-public) `schemeFor()`.
+
+No registration call needed — render `coordinator.sdk` with SecureFields' `VaultForm`/`VaultField`
+and call `coordinator.submit()` from your own "Pay" trigger once `coordinator.formValid` is `true`;
+`PluginRegistry` already has `CardModule` registered by default (see `PluginRegistry.registerVault`).
+
 ## Deferred (intentionally not built yet)
 
-Other primary plugins (PayPal, card vaulting), Apple Pay (same shape as Google Pay), the `adyen`/
-`stripe` Google Pay gateway builders beyond the `default` fallback, the rendering host (web's
-`<purse-partner-ui>` element), the `ancv-connect` two-phase secondary flow, the splitter's
-voucher→loyalty→primary autofill middleware, and wallet (saved-token) sessions.
+Other primary plugins (PayPal), Apple Pay (same shape as Google Pay), the `adyen`/`stripe` Google
+Pay gateway builders beyond the `default` fallback, the rendering host (web's `<purse-partner-ui>`
+element) for anything other than the card plugin's own Compose surface, the `ancv-connect`
+two-phase secondary flow, the splitter's voucher→loyalty→primary autofill middleware, and wallet
+(saved-token) sessions.

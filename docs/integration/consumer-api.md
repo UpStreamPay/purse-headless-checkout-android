@@ -195,10 +195,11 @@ Registered partners today: `illicado-giftcard`, `buybox-giftcard`, `maxxing-loya
 
 ---
 
-## 6. Interactive plugins (Google Pay, Klarna)
+## 6. Interactive plugins (Google Pay, Klarna, Card)
 
 Interactive plugins collect data outside the headless split/validate flow (a payment sheet, a
-native widget) before `submitPayment` runs. Three pieces make up the pattern for every such plugin:
+native widget, a card form) before `submitPayment` runs. Three pieces make up the pattern for
+every such plugin:
 
 1. A **`*Host` interface** in `:partner-ui` — what the plugin's coordinator needs from the checkout,
    implemented by `PurseHeadlessCheckout`.
@@ -214,6 +215,7 @@ native widget) before `submitPayment` runs. Three pieces make up the pattern for
 | `pluginContext` | `fun pluginContext(item: PaymentItem): PartnerUiContext` | Build the context object a plugin coordinator needs to drive its own steps before submit. |
 | `googlePayHost` | `fun googlePayHost(item: PaymentItem): GooglePayHost` | The `GooglePayHost` implementation for `item`. |
 | `klarnaHost` | `fun klarnaHost(item: PaymentItem, klarnaReturnUrl: String): KlarnaHost` | The `KlarnaHost` implementation for `item`. `klarnaReturnUrl` falls back to the session's own return URL if you don't have a better one. |
+| `cardHost` | `fun cardHost(item: PrimaryMethod): CardHost` | The `CardHost` implementation for `item`. Takes `PrimaryMethod` specifically (not the generic `PaymentItem`) since `CardHost.supportedBrands` reads `item.supportedBrands`. |
 
 ### `PartnerUiContext`
 
@@ -289,7 +291,7 @@ renders into.
 | Function | Signature | Notes |
 |---|---|---|
 | `prepare` | `fun prepare(host: KlarnaHost)` | Runs `/init`, inflates the native `KlarnaPaymentView` into `container`. |
-| `submit` | `fun submit()` | Runs `/validate` **first** (opposite order from Google Pay), then drives the widget's `authorize()`/`finalize()`. Call once `Listener.onReady(true)` fired and the shopper tapped "Pay with Klarna". |
+| `submit` | `fun submit()` | Runs `/validate`, which itself triggers Klarna's own `authorize()`/`finalize()` internally (via `KlarnaPlugin.postValidation`, only once `/validate` succeeds) — not something `submit()` drives as a separate step. Call once `Listener.onReady(true)` fired and the shopper tapped your submit action. |
 
 **`KlarnaCoordinator.Listener`** callbacks:
 
@@ -302,6 +304,50 @@ renders into.
 | `onError(message: String?)` | Any failure — widget load, `/validate`, authorize/finalize, or redirect launch. |
 
 Same caveat as Google Pay: a returned `Approved` redirect outcome is not proof of payment success.
+
+### Card (Purse vault / SecureFields)
+
+**Compose-first** — unlike `GooglePayCoordinator`/`KlarnaCoordinator` above (plain classes driving
+View-system widgets), the card plugin's interactive half is a `@Composable` function. Rendering it
+requires the SecureFields Android SDK's own Compose surface (`VaultForm`/`VaultField`) — your app
+needs a Compose entry point somewhere in its view hierarchy (e.g. a `ComposeView` embedded in an
+otherwise View-based layout, as this SDK's own demo does).
+
+**`CardHost`** (implemented by `PurseHeadlessCheckout.cardHost(item)`):
+
+| Member | Meaning |
+|---|---|
+| `environment: PurseEnvironment` | Drives SecureFields' own `VaultEnvironment` (a distinct enum — converted internally). |
+| `vaultTenantId: String?` | Session's `vault.vendor_front_data.purse.tenant_id` — required by SecureFields' `tenantId` param. |
+| `supportedBrands: List<CardBrand>` | `item.configuration.vault.supportedBrands` — which card schemes SecureFields should accept. Empty falls back to VISA/MASTERCARD/CB. |
+| `redirectionReturnUrl: String?` | Same role as `GooglePayHost.redirectionReturnUrl` — threaded into a genuine 3-D Secure redirect. |
+| `buildContext(): PartnerUiContext` | — |
+| `setCollected(data: Map<String, Any?>)` | — |
+| `suspend submitPayment(): ValidationResult` | — |
+
+**`rememberCardCoordinator(host: CardHost, listener: CardCoordinator.Listener): CardCoordinator`** —
+a composable, not a class you construct. No `onCreate`/`STARTED` lifecycle caveat (unlike Google
+Pay/Klarna) — call it from anywhere in your composition; its 3-D Secure redirect launcher
+(`rememberLauncherForActivityResult`) manages its own lifecycle.
+
+| Member | Signature | Notes |
+|---|---|---|
+| `sdk` | `val sdk: SecureFieldsAndroid` | Render this with SecureFields' own `VaultForm(coordinator.sdk)` (full form) or `VaultField(coordinator.sdk.cardNumber)` etc. (custom layout, one field at a time). |
+| `formValid` | `var formValid: Boolean` (Compose state) | Whether the card form currently validates — drive your "Pay" button's `enabled` off this. |
+| `submit` | `fun submit()` | Tokenizes via SecureFields, then runs `/init`+`/validate` through `host`. Call once `formValid` is `true` and the shopper tapped "Pay". No-op while a prior tap's flow is still in progress. |
+
+**`CardCoordinator.Listener`** callbacks:
+
+| Callback | Fires |
+|---|---|
+| `onReady(ready: Boolean)` | The form's validity changed (mirrors `formValid`, provided as a callback too for symmetry with the other two coordinators). |
+| `onResult(summary: String)` | Terminal success with no follow-up redirect needed. |
+| `onRequiresAction()` | A 3-D Secure step is being launched (informational). |
+| `onCanceled()` | The redirect was dismissed without completing. |
+| `onError(message: String?)` | Any failure — tokenization, `/validate`, or redirect launch. |
+
+Same caveat as Google Pay/Klarna: a returned `Approved` redirect outcome is not proof of payment
+success.
 
 ### Registering a new plugin, or opting a built-in one out (`PluginRegistry`)
 

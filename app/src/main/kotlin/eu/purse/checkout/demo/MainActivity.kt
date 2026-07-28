@@ -2,11 +2,30 @@ package eu.purse.checkout.demo
 
 import android.os.Bundle
 import android.view.View
+import android.view.ViewGroup
+import android.widget.FrameLayout
+import android.widget.RadioButton
 import android.widget.TextView
 import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.ComposeView
+import androidx.compose.ui.unit.dp
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.wallet.button.ButtonConstants
@@ -21,10 +40,16 @@ import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.checkout.payment.item.SecondaryMethod
 import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.core.payment.Method
+import eu.purse.core.vault.VaultVendor
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayCoordinator
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayMapper
 import eu.purse.partnerui.plugins.partners.klarna.KlarnaCoordinator
+import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardCoordinator
+import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardHost
+import eu.purse.partnerui.plugins.vaults.purse.creditcard.rememberCardCoordinator
+import eu.purse.securefields.VaultForm
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONObject
@@ -44,6 +69,21 @@ import java.util.Base64
  * rendered per method — the headless secondaries API: `getSecondaryToken` (→ `/init`) then
  * `applySecondary(token, amount)`. The section stays hidden until such a session exists.
  *
+ * Google Pay is an **xpay**: its own branded button is shown as soon as it's ready — never gated
+ * behind a "select this row" step — and it's fully self-contained, mirroring `usp-widget`'s own
+ * `googlepay` plugin (`onDataUpdate` appends the button once `isReadyToPay` resolves; its
+ * `onButtonClicked` dispatches `requestValidate` itself once the sheet returns, with no separate
+ * submit action at all) and the pre-headless `master` demo's own `renderXpay` split. See
+ * [googlePayListener] / [onCreate].
+ *
+ * Klarna and the Purse-vaulted card don't have that one-tap shape, so they render as a collapsible
+ * list instead (mirroring [renderSecondaryForms]'s shape): no row starts selected, and selecting
+ * one is the single action that both commits it via `setPrimary` and mounts its actual payment
+ * control — see [renderPrimaryMethods] / [selectPrimary]. Submission for *these* is **one global
+ * button** (`submitPaymentButton`), enabled once [PurseHeadlessCheckout.isPaymentFulfilled] AND the
+ * selected primary reports itself ready, dispatching to whichever coordinator's `submit()` matches
+ * the selection — see [updateSubmitButtonState] / [onSubmitPayment].
+ *
  * Deliberately bare: raw [HttpURLConnection] on a background [Thread] for alfred, no ViewModel/DI,
  * no payment UI.
  */
@@ -60,13 +100,60 @@ class MainActivity : AppCompatActivity() {
     /** Klarna coordinator — constructed in [onCreate] so its ActivityResult launcher registers. */
     private lateinit var klarna: KlarnaCoordinator
 
-    // Whichever primary candidates the current session actually offers — both are prepared
-    // independently (neither `/init` call needs a primary committed yet, see PursePaymentSplitter's
-    // doc: `remaining` doesn't depend on it), and `setPrimary` is only called once the shopper taps
-    // the matching button. Resolving these once at init and reusing them here avoids picking one
-    // method's presence to silently hide the other's button when a session offers both.
+    // Klarna's rendering container must be the SAME instance KlarnaCoordinator was constructed
+    // with (its own doc: constructed in onCreate, before STARTED) — so unlike Google Pay's button
+    // or the card's ComposeView (both freely recreated per mount below), this one is built once
+    // and re-parented into whichever row is currently selected.
+    private lateinit var klarnaContainerView: FrameLayout
+
+    /** One row per primary method this demo can drive — see [renderPrimaryMethods]. */
+    private class PrimaryRow(
+        val method: PrimaryMethod,
+        val header: View,
+        val radio: RadioButton,
+        val caret: TextView,
+        val body: FrameLayout,
+    )
+    private val primaryRows = mutableListOf<PrimaryRow>()
+
+    /** Google Pay's own primary candidate, if the session offers it — resolved once at
+     * [initCheckout] and prepared immediately (unlike Klarna/card, it's an xpay: never gated
+     * behind row selection). `null` when absent. */
     private var googlePayItem: PrimaryMethod? = null
-    private var klarnaItem: PrimaryMethod? = null
+
+    /** `true` from the moment the shopper taps the Google Pay button (which commits it via
+     * `setPrimary` immediately, fulfilling the split before the sheet has done anything) until a
+     * different primary is selected — see [updateSubmitButtonState]'s doc for why this exists:
+     * without it, "no row selected" is indistinguishable from "Google Pay just committed itself
+     * as primary," and the global button would light up mid-sheet. */
+    private var googlePaySelected: Boolean = false
+
+    /** The currently selected primary from [primaryRows] (or `null` — secondaries alone, or
+     * nothing yet; Google Pay is tracked separately, see [googlePaySelected]) — mirrors what was
+     * last passed to `checkout.setPrimary` *from the row list*; kept here only so
+     * [onSubmitPayment] knows which coordinator to dispatch to. */
+    private var selectedPrimary: PrimaryMethod? = null
+
+    /** Whether the selected primary is actually ready to submit (Klarna's widget loaded, the card
+     * form validates) — `false` the instant a new row is selected, until that method's own
+     * callback says otherwise. Not meaningful for Google Pay (excluded from the global button
+     * entirely) or when no primary is selected (secondaries-only doesn't need this gate). */
+    private var primaryReady: Boolean = false
+
+    /** The card coordinator's live `submit` function, reported up once its composable exists —
+     * see [mountCard] / `CardPaymentForm`'s `onSubmitReady`. `null` whenever card isn't selected. */
+    private var cardSubmit: (() -> Unit)? = null
+
+    /** Re-entrancy guard for [submitPaymentButton] — same rationale as the individual
+     * coordinators' own `submitting` flags, just hoisted here now that one button drives all of
+     * them. Cleared on every terminal outcome (result/canceled/error), not on `onRequiresAction`
+     * (a redirect is still in flight). */
+    private var submitting = false
+
+    /** Restarted every [initCheckout] — keeps [submitPaymentButton]'s enabled state in sync with
+     * the split (a secondary applied/removed changes `isPaymentFulfilled` independently of any
+     * primary selection). */
+    private var fulfilledObserverJob: Job? = null
 
     // The orchestration session's own top-level `id` (the v2 ClientSession id `POST
     // /orchestration_session` itself returns — distinct from `widget.data`'s `payment_session.id`)
@@ -96,16 +183,23 @@ class MainActivity : AppCompatActivity() {
 
     private val klarnaListener = object : KlarnaCoordinator.Listener {
         override fun onReady(ready: Boolean) {
-            binding.klarnaPayButton.visibility = if (ready) View.VISIBLE else View.GONE
+            primaryReady = ready
+            updateSubmitButtonState()
         }
-        override fun onResult(summary: String) = appendOutput("Klarna → $summary")
+        override fun onResult(summary: String) {
+            appendOutput("Klarna → $summary")
+            submitting = false
+            updateSubmitButtonState()
+        }
         override fun onRequiresAction() = appendOutput("Klarna → redirect required…")
         override fun onCanceled() {
-            binding.klarnaPayButton.isEnabled = true
+            submitting = false
+            updateSubmitButtonState()
             Toast.makeText(this@MainActivity, R.string.klarna_canceled, Toast.LENGTH_LONG).show()
         }
         override fun onError(message: String?) {
-            binding.klarnaPayButton.isEnabled = true
+            submitting = false
+            updateSubmitButtonState()
             // A toast alone disappears before you can read a full KlarnaPaymentsSDKError detail
             // dump (name/action/invalidFields/sessionId/fatal) — keep it in the scrolling output too.
             appendOutput("Klarna → error: $message")
@@ -122,11 +216,11 @@ class MainActivity : AppCompatActivity() {
         // No GooglePayModule.register()/KlarnaModule.register() needed — PluginRegistry
         // auto-registers every built-in plugin; the session alone gates what's actually offered.
         googlePay = GooglePayCoordinator(this, googlePayListener)
-        klarna = KlarnaCoordinator(this, binding.klarnaContainer, klarnaListener)
 
         // The branded Google Pay button — chrome only (no tokenization), so a generic
         // allowedPaymentMethods is enough here; the real one (with the gateway's tokenization spec)
-        // is built per-session by GooglePayCoordinator.prepare() for the actual sheet request.
+        // is built per-session by GooglePayCoordinator.prepare() in initCheckout(). It's an xpay
+        // (see class doc): always the trigger itself, never gated behind a "select" step.
         binding.googlePayButton.initialize(
             ButtonOptions.newBuilder()
                 .setButtonType(ButtonConstants.ButtonType.PAY)
@@ -134,26 +228,34 @@ class MainActivity : AppCompatActivity() {
                 .setAllowedPaymentMethods(GooglePayMapper.buttonAllowedPaymentMethodsJson().toString())
                 .build(),
         )
+        binding.googlePayButton.setOnClickListener {
+            val co = checkout
+            // Deselect any open Klarna/card row first — Google Pay is taking over as the primary,
+            // and leaving a row visually "selected" would misrepresent what's actually about to
+            // be submitted.
+            if (co != null && selectedPrimary != null) selectPrimary(co, null)
+            // Commit Google Pay as the primary only now that the shopper actually chose it.
+            googlePaySelected = true
+            co?.setPrimary(googlePayItem)
+            updateSubmitButtonState() // setPrimary alone can fulfill the split — see its doc.
+            // Belt-and-suspenders alongside GooglePayCoordinator's own re-entrancy guard: a double
+            // tap here would otherwise fire two payment sheets and POST /validate twice for the
+            // same session — the second call comes back 409 (idempotency conflict).
+            binding.googlePayButton.isEnabled = false
+            googlePay.launchSheet()
+        }
+
+        // Built once here (not per-mount, unlike the card's ComposeView below)
+        // because KlarnaCoordinator captures this exact container reference at construction time —
+        // see its own "construct before STARTED" doc. selectPrimary() re-parents it into whichever
+        // row is currently selected.
+        klarnaContainerView = FrameLayout(this)
+        klarna = KlarnaCoordinator(this, klarnaContainerView, klarnaListener)
 
         binding.alfredBaseUrlText.text = getString(R.string.label_alfred_base_url, alfredBaseUrl())
         binding.createSessionButton.setOnClickListener { createSession() }
         binding.initCheckoutButton.setOnClickListener { initCheckout() }
-        binding.googlePayButton.setOnClickListener {
-            // Commit Google Pay as the primary only now that the shopper actually chose it — see
-            // the googlePayItem/klarnaItem doc for why this isn't decided back in initCheckout().
-            checkout?.setPrimary(googlePayItem)
-            // Belt-and-suspenders alongside GooglePayCoordinator's own re-entrancy guard: a double
-            // tap here would otherwise fire two payment sheets and POST /validate twice for the same
-            // session — the second call comes back 409 (idempotency conflict).
-            binding.googlePayButton.isEnabled = false
-            googlePay.launchSheet()
-        }
-        binding.klarnaPayButton.setOnClickListener {
-            checkout?.setPrimary(klarnaItem)
-            // Same belt-and-suspenders re-entrancy guard as the Google Pay button above.
-            binding.klarnaPayButton.isEnabled = false
-            klarna.submit()
-        }
+        binding.submitPaymentButton.setOnClickListener { onSubmitPayment() }
         binding.getSessionViaAlfredButton.setOnClickListener { getSessionViaAlfred() }
         binding.captureButton.setOnClickListener { captureViaAlfred() }
     }
@@ -211,33 +313,210 @@ class MainActivity : AppCompatActivity() {
             renderSecondaryForms(null)
             null
         }
-        binding.googlePayButton.visibility = View.GONE
-        binding.googlePayButton.isEnabled = true
-        binding.klarnaContainer.visibility = View.GONE
-        binding.klarnaContainer.removeAllViews()
-        binding.klarnaPayButton.visibility = View.GONE
-        binding.klarnaPayButton.isEnabled = true
-        googlePayItem = null
-        klarnaItem = null
         binding.alfredSessionIdInput.setText(resolveDefaultAlfredSessionId(widgetData))
         binding.alfredSessionResult.visibility = View.GONE
         binding.capturePaymentIdInput.setText("")
         binding.captureAmountInput.setText(checkout?.session?.amount?.toPlainString().orEmpty())
         binding.captureResult.visibility = View.GONE
+        fulfilledObserverJob?.cancel()
+        selectedPrimary = null
+        primaryReady = false
+        googlePaySelected = false
+        cardSubmit = null
+        submitting = false
+        binding.googlePayButton.visibility = View.GONE
+        binding.googlePayButton.isEnabled = true
+        googlePayItem = null
+        binding.submitPaymentButton.visibility = if (checkout != null) View.VISIBLE else View.GONE
         checkout?.let {
             binding.outputText.text = summarize(it)
             renderSecondaryForms(it)
-            // Prepare every primary candidate the session actually offers, independently — neither
-            // /init call needs a primary committed yet (PursePaymentSplitter.remaining doesn't depend
-            // on it), so one method's presence must never hide another's button. setPrimary is only
-            // called once the shopper taps the matching button (see the click listeners in onCreate).
+            renderPrimaryMethods(it)
+            updateSubmitButtonState()
+            // Re-checked on every emission — a secondary applied/removed changes isPaymentFulfilled
+            // independently of whatever primary (if any) is currently selected.
+            fulfilledObserverJob = lifecycleScope.launch { it.isPaymentFulfilled.collect { updateSubmitButtonState() } }
+            // Google Pay is an xpay — prepared immediately regardless of anything else the
+            // shopper does, unlike Klarna/card which wait for their row to be selected.
             googlePayItem = it.primaryMethods.firstOrNull { p -> p.method == Method.GooglePay }
             googlePayItem?.let { gpay -> googlePay.prepare(it.googlePayHost(gpay)) }
+        } ?: renderPrimaryMethods(null)
+    }
 
-            klarnaItem = it.primaryMethods.firstOrNull { p -> p.method == Method.Installments }
-            klarnaItem?.let { klarnaMethod ->
-                binding.klarnaContainer.visibility = View.VISIBLE
-                klarna.prepare(it.klarnaHost(klarnaMethod, klarnaReturnUrl()))
+    /**
+     * [submitPaymentButton]'s enabled state: the split must be fulfilled, and — unless no primary
+     * is needed at all (secondaries alone cover it) — the selected primary must itself report
+     * ready (Klarna's widget loaded, the card form valid). [googlePaySelected] is checked
+     * explicitly and disables the button outright: Google Pay's own `setPrimary` call can fulfill
+     * the split the instant the shopper taps its button, well before the sheet has done anything —
+     * without this check that's indistinguishable from "no primary needed, secondaries alone cover
+     * it" (`selectedPrimary == null`), and the global button would light up mid-sheet. Google Pay's
+     * own submission is entirely self-contained (see class doc), so this button simply never
+     * applies while it's the one in flight.
+     */
+    private fun updateSubmitButtonState() {
+        val co = checkout
+        val ready = co != null && co.isPaymentFulfilled.value && (selectedPrimary == null || primaryReady)
+        binding.submitPaymentButton.isEnabled = ready && !googlePaySelected && !submitting
+    }
+
+    /**
+     * Dispatches to whichever coordinator matches [selectedPrimary] — Klarna and the card share
+     * this one button. `null` (secondaries alone) calls `submitPayment()` directly since no
+     * plugin/coordinator is involved.
+     */
+    private fun onSubmitPayment() {
+        val co = checkout ?: return
+        when (selectedPrimary?.method) {
+            Method.Installments -> {
+                submitting = true
+                updateSubmitButtonState()
+                klarna.submit()
+            }
+            Method.CreditCard -> {
+                submitting = true
+                updateSubmitButtonState()
+                cardSubmit?.invoke()
+            }
+            null -> {
+                submitting = true
+                updateSubmitButtonState()
+                lifecycleScope.launch {
+                    try {
+                        val result = withContext(Dispatchers.IO) { co.submitPayment() }
+                        appendOutput("Submit → global_status=${result.globalStatus}")
+                    } catch (e: Exception) {
+                        appendOutput("Submit → error: ${e.message}")
+                        Toast.makeText(this@MainActivity, getString(R.string.submit_payment_error, e.message), Toast.LENGTH_LONG).show()
+                    } finally {
+                        submitting = false
+                        updateSubmitButtonState()
+                    }
+                }
+            }
+            else -> Unit // Google Pay never becomes selectedPrimary — see updateSubmitButtonState's doc.
+        }
+    }
+
+    /**
+     * Rebuild the primary-method list: one collapsible row per primary this demo drives *besides*
+     * Google Pay (Klarna, a Purse-vaulted card — Google Pay is an xpay, handled entirely by its own
+     * branded button, see class doc), mirroring [renderSecondaryForms]'s shape but mutually
+     * exclusive — selecting a row commits it via [PurseHeadlessCheckout.setPrimary] and is the
+     * only thing that mounts its actual payment control (see [selectPrimary]). No row starts
+     * selected, so nothing's `/init`'d or rendered until the shopper picks one.
+     */
+    private fun renderPrimaryMethods(co: PurseHeadlessCheckout?) {
+        val container = binding.primaryContainer
+        container.removeAllViews()
+        primaryRows.clear()
+
+        // Only methods this demo actually has a coordinator for here — matches the set
+        // klarna/card coordinators below know how to mount. Google Pay is excluded on purpose.
+        val methods = co?.primaryMethods?.filter {
+            it.method == Method.Installments ||
+                (it.method == Method.CreditCard && it.configuration.vault?.vendor == VaultVendor.PURSE)
+        }.orEmpty()
+        binding.primarySection.visibility = if (methods.isEmpty()) View.GONE else View.VISIBLE
+        if (co == null) return
+
+        methods.forEach { method ->
+            val item = layoutInflater.inflate(R.layout.item_primary_method, container, false)
+            val header = item.findViewById<View>(R.id.header)
+            val radio = item.findViewById<RadioButton>(R.id.primaryRadio)
+            val caret = item.findViewById<TextView>(R.id.expandCaret)
+            val body = item.findViewById<FrameLayout>(R.id.primaryBody)
+            item.findViewById<TextView>(R.id.methodTitle).text = primaryMethodTitle(method)
+
+            val row = PrimaryRow(method, header, radio, caret, body)
+            primaryRows += row
+            header.setOnClickListener {
+                selectPrimary(co, if (row.body.isVisible) null else row)
+            }
+            container.addView(item)
+        }
+    }
+
+    private fun primaryMethodTitle(method: PrimaryMethod): String = when (method.method) {
+        Method.Installments -> "Klarna"
+        Method.CreditCard -> "Card"
+        else -> method.id
+    }
+
+    /**
+     * Select [row] (or deselect, with `null`, collapsing everything back down) — mutually
+     * exclusive across [primaryRows]. This is the one place `setPrimary` is called for a primary:
+     * unlike the old always-shown layout, choosing a method and committing it as the primary are
+     * now the same action, matching how the gift-card list treats "check balance" as a distinct,
+     * deliberate step rather than something that happens just because a form exists on screen.
+     * Only the selected row's actual payment control gets mounted (see `mount*` below) — an
+     * unselected Klarna/card row does no `/init` or SecureFields work at all.
+     */
+    private fun selectPrimary(co: PurseHeadlessCheckout, row: PrimaryRow?) {
+        primaryRows.forEach { r ->
+            val open = r === row
+            r.body.isVisible = open
+            r.radio.isChecked = open
+            r.caret.text = if (open) "▾" else "▸"
+            if (!open) r.body.removeAllViews()
+        }
+        selectedPrimary = row?.method
+        primaryReady = false
+        googlePaySelected = false
+        co.setPrimary(row?.method)
+        updateSubmitButtonState()
+        if (row == null) return
+
+        row.body.removeAllViews()
+        when (row.method.method) {
+            Method.Installments -> mountKlarna(row.body, row.method, co)
+            Method.CreditCard -> mountCard(row.body, row.method, co)
+            else -> Unit
+        }
+    }
+
+    /** Re-parents the shared Klarna container into [body] and prepares the widget (`/init` +
+     * load) — deferred until the row is selected. No pay button of its own: the global
+     * [submitPaymentButton] drives submission once [primaryReady] flips (see [klarnaListener]). */
+    private fun mountKlarna(body: FrameLayout, method: PrimaryMethod, co: PurseHeadlessCheckout) {
+        (klarnaContainerView.parent as? ViewGroup)?.removeView(klarnaContainerView)
+        body.addView(klarnaContainerView)
+        klarna.prepare(co.klarnaHost(method, klarnaReturnUrl()))
+    }
+
+    /** Sets a fresh card ComposeView's content into [body] — Compose builds/renders SecureFields
+     * itself on first composition, so "mounted" and "prepared" are the same step here. No pay
+     * button inside the form itself: [submitPaymentButton] drives submission, gated on
+     * [primaryReady] which the form reports up via `onFormValidChanged`. */
+    private fun mountCard(body: FrameLayout, method: PrimaryMethod, co: PurseHeadlessCheckout) {
+        val composeView = ComposeView(this)
+        body.addView(composeView)
+        composeView.setContent {
+            MaterialTheme {
+                CardPaymentForm(
+                    host = co.cardHost(method),
+                    onSubmitReady = { submit -> cardSubmit = submit },
+                    onFormValidChanged = { valid ->
+                        primaryReady = valid
+                        updateSubmitButtonState()
+                    },
+                    onResult = { summary ->
+                        appendOutput("Card → $summary")
+                        submitting = false
+                        updateSubmitButtonState()
+                    },
+                    onRequiresAction = { appendOutput("Card → 3-D Secure required…") },
+                    onCanceled = {
+                        submitting = false
+                        updateSubmitButtonState()
+                    },
+                    onError = { message ->
+                        appendOutput("Card → error: $message")
+                        submitting = false
+                        updateSubmitButtonState()
+                        Toast.makeText(this@MainActivity, getString(R.string.card_error, message), Toast.LENGTH_LONG).show()
+                    },
+                )
             }
         }
     }
@@ -520,6 +799,61 @@ class MainActivity : AppCompatActivity() {
             responseBody
         } finally {
             connection.disconnect()
+        }
+    }
+}
+
+/**
+ * The card (Purse vault / SecureFields) primary — entirely Compose, unlike Google Pay/Klarna above.
+ * `rememberCardCoordinator` renders the SecureFields form via its own `VaultForm` composable; this
+ * just adds a status line and reports two things up to [MainActivity] rather than owning its own
+ * "Pay" button: [onSubmitReady] (the coordinator's live `submit` function, once it exists) and
+ * [onFormValidChanged] (whether the form currently validates) — both drive the single global
+ * `submitPaymentButton`, the same way Google Pay's own `onReady` drives its own branded button.
+ * Top-level (not a private method on [MainActivity]) since it needs nothing from the Activity
+ * beyond the callbacks passed in. `setPrimary` already happened when this row was selected (see
+ * `MainActivity.selectPrimary`).
+ */
+@Composable
+private fun CardPaymentForm(
+    host: CardHost,
+    onSubmitReady: (submit: () -> Unit) -> Unit,
+    onFormValidChanged: (Boolean) -> Unit,
+    onResult: (String) -> Unit,
+    onRequiresAction: () -> Unit,
+    onCanceled: () -> Unit,
+    onError: (String?) -> Unit,
+) {
+    var status by remember { mutableStateOf("") }
+    val listener = remember {
+        object : CardCoordinator.Listener {
+            override fun onResult(summary: String) {
+                status = summary
+                onResult(summary)
+            }
+            override fun onRequiresAction() {
+                status = "3-D Secure required…"
+                onRequiresAction()
+            }
+            override fun onCanceled() = onCanceled()
+            override fun onError(message: String?) {
+                status = "error: $message"
+                onError(message)
+            }
+        }
+    }
+    val coordinator = rememberCardCoordinator(host, listener)
+
+    LaunchedEffect(coordinator) { onSubmitReady { coordinator.submit() } }
+    LaunchedEffect(coordinator.formValid) { onFormValidChanged(coordinator.formValid) }
+
+    Column(modifier = Modifier.fillMaxWidth()) {
+        Text("Card", style = MaterialTheme.typography.titleMedium)
+        Spacer(Modifier.height(8.dp))
+        VaultForm(coordinator.sdk, modifier = Modifier.fillMaxWidth().height(200.dp))
+        if (status.isNotBlank()) {
+            Spacer(Modifier.height(8.dp))
+            Text(status)
         }
     }
 }

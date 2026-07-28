@@ -80,7 +80,9 @@ class PurseHeadlessCheckoutTest {
     @Test
     fun `submitPayment fails while no partner-ui plugin is registered`() {
         val checkout = checkout()
-        checkout.setPrimary(checkout.primaryMethods.first())
+        // PayPal wallet has no plugin yet (unlike the purse-vault card primary, which now resolves
+        // to CardPlugin by default — see PluginRegistry's init block).
+        checkout.setPrimary(checkout.primaryMethods.single { it.partner == Partner.Paypal })
 
         assertThrows(PurseCheckoutException.NoPluginRegistered::class.java) {
             runBlocking { checkout.submitPayment() }

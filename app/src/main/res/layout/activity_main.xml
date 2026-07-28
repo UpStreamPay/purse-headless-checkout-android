@@ -105,6 +105,12 @@
 
         </LinearLayout>
 
+        <!-- Google Pay is an "xpay" — usp-widget's own googlepay plugin appends this button as
+             soon as isReadyToPay resolves (onDataUpdate) and its own onButtonClicked dispatches
+             requestValidate itself once the sheet returns, with no separate submit step; the
+             pre-headless `master` demo mirrors this with a dedicated renderXpay group, kept apart
+             from the "other primaries" radio list below. So this button is always visible once
+             ready — never gated behind selecting a row first. -->
         <com.google.android.gms.wallet.button.PayButton
             android:id="@+id/googlePayButton"
             android:layout_width="match_parent"
@@ -113,25 +119,55 @@
             android:visibility="gone"
             tools:visibility="visible" />
 
-        <!-- KlarnaPaymentView is inflated into this container programmatically by
-             KlarnaCoordinator.prepare() once the session offers Klarna installments. wrap_content
-             matches Klarna's own documented sample ("Render payment view" at the native-view doc) —
-             the widget itself resizes to its content; the earlier fixed-height workaround here was
-             based on a misread of the SDK's internal WebView sizing and has been reverted. -->
-        <FrameLayout
-            android:id="@+id/klarnaContainer"
+        <!-- The remaining primaries this demo drives (Klarna, card) — one collapsible row per
+             method, mirroring the secondary (gift card) list above: tap a row's header to select
+             it, which commits it via setPrimary AND reveals its actual payment control — only the
+             selected row's SecureFields/Klarna setup is ever mounted. Mutually exclusive (unlike
+             the gift-card list, since only one primary applies at a time) — see
+             MainActivity.selectPrimary. Google Pay never appears here — see the button above. -->
+        <LinearLayout
+            android:id="@+id/primarySection"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:layout_marginTop="16dp"
+            android:visibility="gone"
+            tools:visibility="visible">
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="1dp"
+                android:background="?android:attr/listDivider" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="@string/section_primary"
+                android:textAppearance="?attr/textAppearanceSubtitle1" />
+
+            <LinearLayout
+                android:id="@+id/primaryContainer"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+
+        </LinearLayout>
+
+        <!-- One global submit action for whichever primary is selected (Klarna, card) plus
+             secondaries — mirrors usp-widget's own single PayButton / the pre-headless `master`
+             demo's shared payButton: enabled once the split is fulfilled AND (no primary is
+             needed, or the selected primary reports itself ready) — see
+             MainActivity.updateSubmitButtonState. Google Pay is the one deliberate exception: its
+             own branded button above is the trigger (Google's own tap-to-pay convention), never
+             this one. -->
+        <com.google.android.material.button.MaterialButton
+            android:id="@+id/submitPaymentButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
-            android:visibility="gone"
-            tools:visibility="visible" />
-
-        <com.google.android.material.button.MaterialButton
-            android:id="@+id/klarnaPayButton"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="8dp"
-            android:text="@string/btn_pay_with_klarna"
+            android:text="@string/btn_submit_payment"
+            android:enabled="false"
             android:visibility="gone"
             tools:visibility="visible" />
 
