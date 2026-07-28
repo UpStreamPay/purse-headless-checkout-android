@@ -9,6 +9,7 @@ relative to `/validate`, its UI surface, its quirks, and its failure modes.
 | **[Google Pay](google-pay.md)** | any partner / `googlepay` (Ingenico, Adyen, generic) | generic-style (one protocol per gateway; registered per partner + method fallback) | Google's own payment sheet (xpay button) |
 | **[Klarna](klarna.md)** | `klarna` / `installments` | partner (dedicated) | native `KlarnaPaymentView` in your `ViewGroup` |
 | **[Card — Purse vault](card-purse-vault.md)** | any partner / `creditcard` with `vault.vendor = purse` | vault (keyed by vault vendor) | SecureFields Compose form |
+| **[Redirection](redirection.md)** | **whatever the session marks** `template = redirection` | generic **template** (keyed by `configurations.template`) | none — the PSP's own hosted page |
 
 For the module layout and the purse-payment engine around these, see
 [architecture/headless-checkout.md](../architecture/headless-checkout.md); for the consumer-facing
@@ -25,7 +26,7 @@ validate:  validateUi(optional) → preValidation ─ SDK POSTs /validate ─▶
 teardown:  destroyClient
 ```
 
-An **interactive** plugin (all three shipped ones are) is split in two halves, so the protocol stays
+An **interactive** plugin (all four shipped ones are) is split in two halves, so the protocol stays
 unit-testable and Play-Services/Klarna/SecureFields types never leak into `:headless-checkout`:
 
 | Half | Type | Knows about |
@@ -36,8 +37,9 @@ unit-testable and Play-Services/Klarna/SecureFields types never leak into `:head
 The two halves talk through three seams:
 
 1. **`XxxHost`** — an interface the plugin declares and `PurseHeadlessCheckout` implements
-   (`googlePayHost(item)` / `klarnaHost(item, returnUrl)` / `cardHost(item)`). This is why
-   `:partner-ui` never depends on `:headless-checkout` (which depends on it).
+   (`googlePayHost(item)` / `klarnaHost(item, returnUrl)` / `cardHost(item)` /
+   `redirectionHost(item)`). This is why `:partner-ui` never depends on `:headless-checkout` (which
+   depends on it).
 2. **`setCollected(map)`** — whatever the native step produced (a sheet token, a `step_id`, a vault
    token, even a live callback) is stashed against the item and arrives in the plugin's
    `PartnerUiContext.collected` at `preValidation`/`postValidation` time.
@@ -45,37 +47,50 @@ The two halves talk through three seams:
 
 ### Resolution — which plugin handles an item
 
-`PluginRegistry.getPlugin(partner, method, session)`, mirroring web's `getPlugin`:
+`PluginRegistry.getPlugin(partner, method, session)`, mirroring web's `getPlugin` →
+`getGenericPlugin` → `getPartnerPlugin` chain:
 
 ```
-disabled? → null
-vault vendor (configurations.vault.vendor ≠ NONE) → generic template (configurations.template)
-  → exact (partner, method) → method fallback → null
+disabled?                                          → null
+vault.vendor ≠ none                                → vault plugin
+configurations.template                            → generic template plugin   (strict equality)
+merchant_specifics.integration_mode = redirection   → the redirection generic
+exact (partner, method)                            → partner plugin
+method                                             → method fallback
+                                                   → null
 ```
 
-Nothing registers a `configurations.template` generic plugin yet (web's `redirection`/`hostedfields`
-templates have no Android port), so today's three resolve as: card by **vault vendor**, Klarna by
-**exact pair**, Google Pay by exact pair for Ingenico and by **method fallback** for everyone else.
+So today's four resolve as: card by **vault vendor**, [redirection](redirection.md) by **template**
+(or by `integration_mode`), Klarna by **exact pair**, Google Pay by exact pair for Ingenico and by
+**method fallback** for everyone else.
 
-All three shipped plugins are **registered by default** (`PluginRegistry`'s own `init` block) — the
+The `integration_mode` step sits **above** the exact-pair lookup because that's where web puts it —
+its `getPartnerPlugin` checks it before consulting its own `partner_plugins` table — so a method the
+merchant configured to redirect is driven by the redirect template even when a dedicated plugin for
+that pair exists. Template matching is **strict equality**: `redirection_suffix` resolves to no
+generic at all (web has a test on exactly that, and so does `PluginRegistryTest`).
+
+All four shipped plugins are **registered by default** (`PluginRegistry`'s own `init` block) — the
 session's `protocols` entry is the real gate on whether a method is offered, so no app-side setup
 call exists to drift out of sync with it. `PluginRegistry.disable(partner, method)` opts a built-in
-method out of one app build.
+method out of one app build. `registerGeneric(template, builder)` registers a *template* rather than
+a pair, for a generic that isn't bundled here.
 
 ### Form completeness gates the payment
 
 A plugin whose shopper-facing step is a *form* reports its validity through `setFulfilled`, and
 `isPaymentFulfilled` stays `false` (and `submitPayment` throws `ItemNotFulfilled`) while any item in
-the split reports `false`. Today only the card does this — Google Pay's sheet and Klarna's widget are
-not forms this SDK validates, and they report nothing, which leaves them ungated exactly as in web
-(where those plugins dispatch no `fulfilled` event either). Details:
+the split reports `false`. Today only the card does this — Google Pay's sheet, Klarna's widget and
+redirection's hosted page are not forms this SDK validates, and they report nothing, which leaves them
+ungated exactly as in web (where those plugins dispatch no `fulfilled` event either; the redirection
+generic explicitly dispatches `fulfilled: true` the moment its `/init` returns). Details:
 [consumer-api §6](../integration/consumer-api.md#form-completeness-gates-the-payment).
 
 ### Shared: redirects and 3-D Secure
 
-All three coordinators resolve "what does `/validate` want next?" through the same two pieces, which
-live under `plugins/generics/googlepay/redirect/` for historical reasons (Google Pay needed them
-first) and are shared verbatim:
+All four coordinators resolve "what does `/validate` want next?" through the same two pieces, shared
+verbatim from `eu.purse.partnerui.redirect` — a sibling of `plugins/`, not part of any one plugin,
+mirroring web, where the same logic lives in `sdk` and `common` rather than under a plugin folder:
 
 **`RedirectionResolver.resolve(validateResponse, partner, method, sessionReturnUrl)`** — ports web's
 `manageRedirection`, same priority order:
@@ -96,8 +111,8 @@ Two shapes are deliberately **dropped**, because neither is a genuine PSP/bank r
   `authorization_status` the very same `/validate` call already returned in `global_status`.
 
 That JWT also carries `payment_id`, read (unsigned — it arrived over the already-authenticated
-`/validate` response) by `RedirectionResolver.extractWidgetConfirmationPaymentId` and surfaced on all
-three coordinators as `Listener.onPaymentId`. Purely informational — a capture tool needs it, a
+`/validate` response) by `RedirectionResolver.extractWidgetConfirmationPaymentId` and surfaced on
+every coordinator as `Listener.onPaymentId`. Purely informational — a capture tool needs it, a
 payment does not — and absent whenever a *genuine* redirect took the confirmation one's place.
 
 **`RedirectionCheckoutActivity`** (launched via `RedirectionCheckoutContract`) renders the action in
@@ -128,4 +143,5 @@ The single biggest per-PSP difference, and the reason these pages exist:
 Google Pay   sheet ──▶ token ──▶ /validate                  (native step BEFORE)
 Card         form ──▶ vault token ──▶ /init ──▶ /validate   (native step BEFORE)
 Klarna       /validate ──▶ authorize() (in postValidation)  (native step AFTER, inside submitPayment)
+Redirection  /init ──▶ /validate ──▶ hosted page            (NO native step — the redirect IS the step)
 ```

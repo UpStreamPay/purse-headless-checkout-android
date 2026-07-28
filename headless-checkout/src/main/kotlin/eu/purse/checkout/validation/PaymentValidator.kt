@@ -36,6 +36,8 @@ class PaymentValidator(private val api: PaymentApiClient) {
         session: LegacyPaymentSession,
         collectedByMethod: Map<String, Map<String, Any?>> = emptyMap(),
     ): ValidationResult {
+        requireDistinctSources(splits)
+
         val prepared = mutableListOf<Prepared>()
         val payloads = mutableListOf<ValidateItemPayload>()
 
@@ -84,5 +86,31 @@ class PaymentValidator(private val api: PaymentApiClient) {
 
         prepared.forEach { it.plugin.postValidation(result, it.context) }
         return result
+    }
+
+    /**
+     * One `/validate` item per split, and never the same split source twice — a duplicate would ask
+     * the PSP to charge the same instrument twice in a single call.
+     *
+     * [PursePaymentSplitter][eu.purse.checkout.payment.split.PursePaymentSplitter] already makes that
+     * structurally impossible (at most one primary, plus secondaries in a map keyed by token id), so
+     * this is a tripwire, not a recovery path: it exists because [execute] accepts a plain
+     * `List<PaymentSplit>` and so cannot rely on that guarantee holding forever.
+     *
+     * Deliberately keyed on **`source.id`**, not on `(partner, method)`. Two different gift cards from
+     * the same partner (two `illicado-giftcard` tokens, say) legitimately contribute two items with
+     * identical `partner`/`method` — that's a real co-payment shape web submits too, and deduplicating
+     * on the pair would silently drop one card's slice and under-pay the order.
+     *
+     * @throws PurseCheckoutException.ValidateFailed naming the repeated source.
+     */
+    private fun requireDistinctSources(splits: List<PaymentSplit>) {
+        val repeated = splits.groupingBy { it.source.id }.eachCount().filterValues { it > 1 }.keys
+        if (repeated.isNotEmpty()) {
+            throw PurseCheckoutException.ValidateFailed(
+                "refusing to submit /validate with a repeated split source: ${repeated.joinToString()} — " +
+                    "each source must contribute exactly one item",
+            )
+        }
     }
 }

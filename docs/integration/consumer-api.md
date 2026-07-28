@@ -14,9 +14,9 @@ Everything here is the Kotlin analog of web's `@upstreampay/headless-checkout` +
 
 ### Plugins are active by default — no setup call needed
 
-Every plugin `:partner-ui` ships (Google Pay, Klarna, Purse-vaulted card) is registered
-automatically; you don't call `GooglePayModule.register()` / `KlarnaModule.register()` /
-`CardModule.register()` yourself. Whether a method actually shows
+Every plugin `:partner-ui` ships (Google Pay, Klarna, Purse-vaulted card, the generic redirection
+template) is registered automatically; you don't call `GooglePayModule.register()` /
+`KlarnaModule.register()` / `CardModule.register()` / `RedirectionModule.register()` yourself. Whether a method actually shows
 up is gated by the **session** alone — the same thing that already decides it server-side, in the
 merchant's Purse configuration. `paymentMethods` simply won't include a method the session doesn't
 offer.
@@ -196,7 +196,7 @@ Registered partners today: `illicado-giftcard`, `buybox-giftcard`, `maxxing-loya
 
 ---
 
-## 6. Interactive plugins (Google Pay, Klarna, Card)
+## 6. Interactive plugins (Google Pay, Klarna, Card, Redirection)
 
 Interactive plugins collect data outside the headless split/validate flow (a payment sheet, a
 native widget, a card form) before `submitPayment` runs. This section is the **API surface**; each
@@ -241,6 +241,7 @@ either. If you write your own coordinator around a form, call `setFulfilled` fro
 | `googlePayHost` | `fun googlePayHost(item: PaymentItem): GooglePayHost` | The `GooglePayHost` implementation for `item`. |
 | `klarnaHost` | `fun klarnaHost(item: PaymentItem, klarnaReturnUrl: String): KlarnaHost` | The `KlarnaHost` implementation for `item`. `klarnaReturnUrl` falls back to the session's own return URL if you don't have a better one. |
 | `cardHost` | `fun cardHost(item: PrimaryMethod): CardHost` | The `CardHost` implementation for `item`. Takes `PrimaryMethod` specifically (not the generic `PaymentItem`) since `CardHost.supportedBrands` reads `item.supportedBrands`. |
+| `redirectionHost` | `fun redirectionHost(item: PaymentItem): RedirectionHost` | The `RedirectionHost` implementation for `item`. Not tied to a partner or method — ask for one per item the session routes to the redirection template. |
 
 ### `PartnerUiContext`
 
@@ -257,7 +258,7 @@ data class PartnerUiContext(
 )
 ```
 
-Most consumers won't build this directly — `pluginContext`/`googlePayHost`/`klarnaHost` build it for
+Most consumers won't build this directly — `pluginContext` and the `*Host` builders above do it for
 you. `amount` is what a primary would still cover; `collected` carries whatever `setCollected` last
 stashed for this item.
 
@@ -412,22 +413,78 @@ Pay/Klarna) — call it from anywhere in your composition; its 3-D Secure redire
 Same caveat as Google Pay/Klarna: a returned `Approved` redirect outcome is not proof of payment
 success.
 
+### Redirection (generic template)
+
+> Deep dive — how detection works, the browser block, sequence diagram, quirks, failure modes:
+> **[docs/plugins/redirection.md](../plugins/redirection.md)**.
+
+The odd one out: it isn't a PSP integration but a **template**, claimed by whichever methods the
+session marks `configurations.template = "redirection"` (or whose
+`merchant_specifics.integration_mode` says the same). So you don't check for a partner or a method —
+you ask the registry:
+
+```kotlin
+fun isRedirection(item: PrimaryMethod) =
+    PluginRegistry.getPlugin(item.partner, item.method, checkout.session.source) is RedirectionPlugin
+```
+
+There is nothing to render. `/init` runs on selection (it consumes a step against the session, so
+don't fire one per offered row on screen entry), `onReady(true)` follows immediately, and your own
+"Pay" button does the rest.
+
+**`RedirectionHost`** (implemented by `PurseHeadlessCheckout.redirectionHost(item)`):
+
+| Member | Meaning |
+|---|---|
+| `redirectionReturnUrl: String?` | Same role as `GooglePayHost.redirectionReturnUrl` — the WebView's "known terminal page" hint, and the check that suppresses the widget's own confirmation page. |
+| `buildContext(): PartnerUiContext` | — |
+| `setCollected(data: Map<String, Any?>)` | — |
+| `suspend submitPayment(): ValidationResult` | — |
+
+**`RedirectionCoordinator(activity, listener)`** — construct in `onCreate` (it registers an
+`ActivityResult` launcher). One instance drives one item at a time; `prepare` rebinds it.
+
+| Member | Signature | Notes |
+|---|---|---|
+| `prepare` | `fun prepare(host: RedirectionHost)` | `POST /init`, stash `step_id` + the browser block, then `onReady(true)`. Call when the shopper selects the method. |
+| `submit` | `fun submit()` | `/validate`, then open the PSP's hosted page. No-op while a prior tap's flow is in progress. |
+
+**`RedirectionCoordinator.Listener`** callbacks:
+
+| Callback | Fires |
+|---|---|
+| `onReady(ready: Boolean)` | `/init` returned — there's no form, so the shopper can submit right away. |
+| `onResult(summary: String, globalStatus: String? = null)` | Terminal. `globalStatus == null` after a redirect return means the outcome is unknown; a non-null one whose summary says `"(no redirect returned)"` means `/validate` carried no page to open — see the deep dive. |
+| `onRequiresAction()` | The PSP's hosted page is being opened — for this template, the payment step itself. |
+| `onPaymentId(paymentId: String)` | Same as Google Pay's — informational, when `/validate` carries one. |
+| `onCanceled()` | The shopper dismissed the page without completing. |
+| `onError(message: String?)` | `/init`, `/validate`, or redirect launch failed. |
+
+Same caveat as the other three: a returned `Approved` redirect outcome is not proof of payment
+success.
+
 ### Registering a new plugin, or opting a built-in one out (`PluginRegistry`)
 
-`register`/`registerFallback` are only relevant if you're adding a plugin that isn't bundled in
-`:partner-ui` itself — built-in ones (Google Pay, Klarna) are already registered, see
+The `register*` functions are only relevant if you're adding a plugin that isn't bundled in
+`:partner-ui` itself — built-in ones are already registered, see
 [§1](#plugins-are-active-by-default--no-setup-call-needed).
 
 | Function | Signature |
 |---|---|
 | `register` | `fun register(partner: Partner, method: Method, builder: PluginBuilder)` |
 | `registerFallback` | `fun registerFallback(method: Method, builder: PluginBuilder)` |
+| `registerVault` | `fun registerVault(vendor: VaultVendor, builder: PluginBuilder)` |
+| `registerGeneric` | `fun registerGeneric(template: String, builder: PluginBuilder)` — a reusable **template** keyed by `configurations.template`, naming no partner or method; the session decides which methods it covers. |
 | `disable` | `fun disable(partner: Partner, method: Method)` — suppress a built-in plugin for this app build. |
 | `enable` | `fun enable(partner: Partner, method: Method)` — reverse a previous `disable`. |
 | `getPlugin` | `fun getPlugin(partner: Partner, method: Method, session: LegacyPaymentSession): PartnerUiPlugin?` |
 
-Resolution order: `disable`d check → vault vendor → generic template → exact `(partner, method)` →
-method fallback.
+Resolution order: `disable`d check → vault vendor → generic template (strict equality) →
+`merchant_specifics.integration_mode = redirection` → exact `(partner, method)` → method fallback.
+`getPlugin` is also the honest way to ask *what will actually handle this item* — e.g.
+`getPlugin(...) is RedirectionPlugin` to decide how to render a row, rather than re-reading `template`
+yourself and disagreeing with the registry. Full chain and rationale:
+[docs/plugins/README.md](../plugins/README.md#resolution--which-plugin-handles-an-item).
 
 ---
 

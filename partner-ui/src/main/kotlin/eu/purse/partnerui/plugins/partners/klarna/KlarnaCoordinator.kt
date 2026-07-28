@@ -9,10 +9,10 @@ import com.klarna.mobile.sdk.api.payments.KlarnaPaymentView
 import com.klarna.mobile.sdk.api.payments.KlarnaPaymentViewCallback
 import com.klarna.mobile.sdk.api.payments.KlarnaPaymentsSDKError
 import eu.purse.core.payload.ValidationResult
-import eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectionCheckoutContract
-import eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectionCheckoutResult
-import eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectionResolver
-import eu.purse.partnerui.plugins.generics.googlepay.redirect.withReturnUrlPrefix
+import eu.purse.partnerui.redirect.RedirectionCheckoutContract
+import eu.purse.partnerui.redirect.RedirectionCheckoutResult
+import eu.purse.partnerui.redirect.RedirectionResolver
+import eu.purse.partnerui.redirect.withReturnUrlPrefix
 import kotlinx.coroutines.CancellableContinuation
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch

@@ -1,4 +1,4 @@
-package eu.purse.partnerui.plugins.generics.googlepay.redirect
+package eu.purse.partnerui.redirect
 
 import android.content.Context
 import android.content.Intent
@@ -54,13 +54,13 @@ class RedirectionCheckoutContract : ActivityResultContract<RedirectAction, Redir
         }
 
     companion object {
-        const val EXTRA_RETURN_URL_PREFIX = "eu.purse.partnerui.plugins.generics.googlepay.redirect.RETURN_URL_PREFIX"
-        const val EXTRA_TYPE = "eu.purse.partnerui.plugins.generics.googlepay.redirect.TYPE"
-        const val EXTRA_URL = "eu.purse.partnerui.plugins.generics.googlepay.redirect.URL"
-        const val EXTRA_FORM_DATA = "eu.purse.partnerui.plugins.generics.googlepay.redirect.FORM_DATA"
-        const val EXTRA_HTML = "eu.purse.partnerui.plugins.generics.googlepay.redirect.HTML"
-        const val EXTRA_STATUS = "eu.purse.partnerui.plugins.generics.googlepay.redirect.STATUS"
-        const val EXTRA_MESSAGE = "eu.purse.partnerui.plugins.generics.googlepay.redirect.MESSAGE"
+        const val EXTRA_RETURN_URL_PREFIX = "eu.purse.partnerui.redirect.RETURN_URL_PREFIX"
+        const val EXTRA_TYPE = "eu.purse.partnerui.redirect.TYPE"
+        const val EXTRA_URL = "eu.purse.partnerui.redirect.URL"
+        const val EXTRA_FORM_DATA = "eu.purse.partnerui.redirect.FORM_DATA"
+        const val EXTRA_HTML = "eu.purse.partnerui.redirect.HTML"
+        const val EXTRA_STATUS = "eu.purse.partnerui.redirect.STATUS"
+        const val EXTRA_MESSAGE = "eu.purse.partnerui.redirect.MESSAGE"
         const val TYPE_GET = "get"
         const val TYPE_POST_FORM = "post_form"
         const val TYPE_POST_HTML = "post_html"

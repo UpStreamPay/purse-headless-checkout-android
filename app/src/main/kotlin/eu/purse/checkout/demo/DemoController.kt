@@ -14,10 +14,13 @@ import eu.purse.checkout.payment.item.SecondaryMethod
 import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.core.payment.Method
 import eu.purse.core.vault.VaultVendor
+import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayCoordinator
-import eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectionResolver
+import eu.purse.partnerui.plugins.generics.redirection.RedirectionCoordinator
+import eu.purse.partnerui.plugins.generics.redirection.RedirectionPlugin
 import eu.purse.partnerui.plugins.partners.klarna.KlarnaCoordinator
 import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardCoordinator
+import eu.purse.partnerui.redirect.RedirectionResolver
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -111,6 +114,10 @@ class DemoController(private val activity: ComponentActivity) {
 
     /** A submit is in flight — drives the blocking overlay and guards re-entry. */
     var submitting by mutableStateOf(false)
+        private set
+
+    /** A redirection row's `/init` came back — shown as "ready" text in place of a form. */
+    var redirectionPrepared by mutableStateOf(false)
         private set
 
     /** The card form's live `submit`, reported up by [CardPaymentForm] once its coordinator exists. */
@@ -225,6 +232,25 @@ class DemoController(private val activity: ComponentActivity) {
     }
 
     /**
+     * The generic redirection template's callbacks. `onReady` fires as soon as its `/init` returns —
+     * there is no form and no widget to wait for, which is the whole character of this template.
+     */
+    private val redirectionListener = object : RedirectionCoordinator.Listener {
+        override fun onReady(ready: Boolean) {
+            primaryReady = ready
+            redirectionPrepared = ready
+        }
+
+        override fun onResult(summary: String, globalStatus: String?) =
+            succeed(redirectionLabel, summary, globalStatus)
+
+        override fun onRequiresAction() = announceAction(redirectionLabel)
+        override fun onPaymentId(paymentId: String) = notePaymentId(redirectionLabel, paymentId)
+        override fun onCanceled() = cancel(redirectionLabel)
+        override fun onError(message: String?) = fail(redirectionLabel, message, submitting)
+    }
+
+    /**
      * Klarna's rendering container. The coordinator captures this exact instance at construction time
      * (its own "construct in onCreate" contract), so unlike the Google Pay button or the card's
      * Compose form — both created per mount — this one is built once here and hosted by whichever row
@@ -234,6 +260,7 @@ class DemoController(private val activity: ComponentActivity) {
 
     private val googlePay = GooglePayCoordinator(activity, googlePayListener)
     private val klarna = KlarnaCoordinator(activity, klarnaContainer, klarnaListener)
+    private val redirection = RedirectionCoordinator(activity, redirectionListener)
 
     // --- 1 · session ------------------------------------------------------------------------------
 
@@ -289,14 +316,34 @@ class DemoController(private val activity: ComponentActivity) {
     // --- 2 · pay ----------------------------------------------------------------------------------
 
     /**
-     * The primaries this demo can actually drive as a selectable row: Klarna, and a Purse-vaulted
-     * card. Google Pay is excluded on purpose — it has its own button (see the class doc).
+     * The primaries this demo can actually drive as a selectable row: Klarna, a Purse-vaulted card,
+     * and anything the session routes to the generic redirection template. Google Pay is excluded on
+     * purpose — it has its own button (see the class doc).
+     *
+     * Note the asymmetry, which is the point of a *generic*: Klarna and the card are matched by what
+     * they **are** (`Method.Installments`, a `creditcard` with a Purse vault), while a redirection
+     * method is matched by what the **session says about it** — see [isRedirection]. This demo names
+     * no redirection partner anywhere, so whichever ones the merchant's Purse configuration enables
+     * simply show up.
      */
     val payableMethods: List<PrimaryMethod>
         get() = checkout?.primaryMethods?.filter {
             it.method == Method.Installments ||
-                (it.method == Method.CreditCard && it.configuration.vault?.vendor == VaultVendor.PURSE)
+                (it.method == Method.CreditCard && it.configuration.vault?.vendor == VaultVendor.PURSE) ||
+                isRedirection(it)
         }.orEmpty()
+
+    /**
+     * Whether [method] resolves to the generic redirection plugin — asked of [PluginRegistry] itself
+     * rather than by re-reading `configurations.template` here, so this can't drift from the SDK's own
+     * resolution: the registry weighs a vault vendor above the template and honours
+     * `merchant_specifics.integration_mode = redirection` as a second route in, and a demo that
+     * checked only `template == "redirection"` would disagree with it in both cases.
+     */
+    fun isRedirection(method: PrimaryMethod): Boolean {
+        val session = checkout?.session?.source ?: return false
+        return PluginRegistry.getPlugin(method.partner, method.method, session) is RedirectionPlugin
+    }
 
     /** The secondaries with a registered config — the rest can't be tokenized, so no form is offered. */
     val giftCardMethods: List<SecondaryMethod>
@@ -315,14 +362,18 @@ class DemoController(private val activity: ComponentActivity) {
         val co = checkout ?: return
         selectedPrimary = method
         primaryReady = false
+        redirectionPrepared = false
         googlePayBusy = false
         cardSubmit = null
         co.setPrimary(method)
     }
 
-    fun label(method: PrimaryMethod): String = when (method.method) {
-        Method.Installments -> klarnaLabel
-        Method.CreditCard -> cardLabel
+    /** Redirection is checked first, matching [PluginRegistry]'s own priority — a method configured to
+     * redirect is driven by the template even when its `method` has a dedicated plugin. */
+    fun label(method: PrimaryMethod): String = when {
+        isRedirection(method) -> "$redirectionLabel — ${method.partner.wireValue}"
+        method.method == Method.Installments -> klarnaLabel
+        method.method == Method.CreditCard -> cardLabel
         else -> method.id
     }
 
@@ -334,6 +385,16 @@ class DemoController(private val activity: ComponentActivity) {
     fun prepareKlarna(method: PrimaryMethod) {
         val co = checkout ?: return
         klarna.prepare(co.klarnaHost(method, "${activity.packageName}.klarna://return"))
+    }
+
+    /**
+     * `/init`s the selected redirection [method] — same "on selection, not before" rule as Klarna, and
+     * it matters more here: a redirection `/init` consumes a step against the session, so firing one
+     * for every offered row on entering the pay screen would burn several.
+     */
+    fun prepareRedirection(method: PrimaryMethod) {
+        val co = checkout ?: return
+        redirection.prepare(co.redirectionHost(method))
     }
 
     /** The card form's live `submit`, once its coordinator exists (see [CardPaymentForm]). */
@@ -366,12 +427,16 @@ class DemoController(private val activity: ComponentActivity) {
     fun submit() {
         val co = checkout ?: return
         if (submitting) return
+        val selected = selectedPrimary
         submitting = true
-        when (selectedPrimary?.method) {
-            Method.Installments -> klarna.submit()
-            Method.CreditCard -> cardSubmit?.let { it() } ?: run { submitting = false }
-            null -> submitSecondariesOnly(co)
-            else -> submitting = false // Google Pay never becomes selectedPrimary — see the class doc.
+        when {
+            selected == null -> submitSecondariesOnly(co)
+            // Same priority as [label] and [PluginRegistry] — before any `method` check.
+            isRedirection(selected) -> redirection.submit()
+            selected.method == Method.Installments -> klarna.submit()
+            selected.method == Method.CreditCard -> cardSubmit?.let { it() } ?: run { submitting = false }
+            // Google Pay never becomes selectedPrimary — see the class doc.
+            else -> submitting = false
         }
     }
 
@@ -600,6 +665,7 @@ class DemoController(private val activity: ComponentActivity) {
     private fun resetPayment() {
         selectedPrimary = null
         primaryReady = false
+        redirectionPrepared = false
         submitting = false
         googlePayReady = false
         googlePayBusy = false
@@ -658,19 +724,30 @@ class DemoController(private val activity: ComponentActivity) {
         co.amountSplit.value.forEach { appendLine("  ${it.source.id} → ${it.amount}") }
     }
 
+    /**
+     * `template=` and `plugin=` are here for exactly the generic-template question: the template is
+     * what the session *declares*, the plugin is what [PluginRegistry] actually *resolved* — and the
+     * two legitimately differ (a vault vendor outranks the template; an `integration_mode` of
+     * `redirection` routes to the redirection generic with no template at all).
+     */
     private fun describe(item: PaymentItem): String {
         val kind = if (item.isSecondary) "secondary" else "primary"
         val disabled = item.disabled?.let { " [disabled: ${it.code}]" } ?: ""
         val integration = (item as? PrimaryMethod)?.integrationType?.let { " integration=${it.wireValue}" } ?: ""
+        val template = item.configuration.template?.let { " template=$it" } ?: ""
+        val plugin = checkout?.session?.source
+            ?.let { PluginRegistry.getPlugin(item.partner, item.method, it) }
+            ?.let { " plugin=${it::class.simpleName}" } ?: ""
         val brands = (item as? PrimaryMethod)?.supportedBrands
             ?.takeIf { it.isNotEmpty() }
             ?.joinToString(",") { it.wireValue }
             ?.let { " brands=$it" } ?: ""
-        return "${item.id} ($kind)$integration$brands$disabled"
+        return "${item.id} ($kind)$template$integration$plugin$brands$disabled"
     }
 
     private val klarnaLabel: String get() = activity.getString(R.string.method_klarna)
     private val cardLabel: String get() = activity.getString(R.string.method_card)
+    private val redirectionLabel: String get() = activity.getString(R.string.method_redirection)
 
     private companion object {
         const val GOOGLE_PAY = "Google Pay"

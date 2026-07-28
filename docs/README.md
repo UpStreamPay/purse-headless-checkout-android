@@ -7,10 +7,10 @@ own checkout UI on top. It mirrors the layered design of the web `usp-widget`
 
 > **Status: back-to-basics rebuild in progress.** The core purse-payment engine is in place —
 > session (V2) decode, the payment model, the splitter, the reactive `StateFlow` surface, and the
-> "create payment" pipeline — and builds green with unit tests. Three interactive plugins ship in
-> `:partner-ui` and register themselves: **Google Pay**, **Klarna** (installments) and the
-> **Purse-vaulted card** (SecureFields), plus the shared 3-D-Secure redirect Activity. PayPal is not
-> ported yet.
+> "create payment" pipeline — and builds green with unit tests. Four plugins ship in `:partner-ui`
+> and register themselves: **Google Pay**, **Klarna** (installments), the **Purse-vaulted card**
+> (SecureFields), and the **generic redirection template** (any method the session marks
+> `template = redirection`), plus the shared redirect Activity they all use. PayPal is not ported yet.
 
 ## Module layout
 
@@ -28,7 +28,7 @@ own checkout UI on top. It mirrors the layered design of the web `usp-widget`
 |---|---|
 | Understand the architecture, modules, and purse-payment flow | **[Headless checkout architecture](architecture/headless-checkout.md)** |
 | Integrate the SDK — the full consumer API (functions, events, callbacks) | **[Consumer API reference](integration/consumer-api.md)** |
-| Work on one PSP — its `/init`, sequence diagram, quirks, failure modes | **[Plugins, per PSP](plugins/README.md)** ([Google Pay](plugins/google-pay.md) · [Klarna](plugins/klarna.md) · [Card / Purse vault](plugins/card-purse-vault.md)) |
+| Work on one PSP — its `/init`, sequence diagram, quirks, failure modes | **[Plugins, per PSP](plugins/README.md)** ([Google Pay](plugins/google-pay.md) · [Klarna](plugins/klarna.md) · [Card / Purse vault](plugins/card-purse-vault.md) · [Redirection](plugins/redirection.md)) |
 | Know where this diverges from the web headless SDK | **[Pain points recap](decisions/pain-points-recap.md)** |
 | Run the demo app against a real session | **[Testing with alfred](internal/testing-with-alfred.md)** |
 

@@ -5,17 +5,22 @@ plugins {
 
 // Per-partner plugin lifecycle contract PLUS its concrete plugins — mirrors usp-widget's
 // `partner-ui` package, which bundles the `Plugin<Context>` contract alongside every partner's own
-// plugin folder (`plugins/generics/googlepay`, `plugins/partners/…`, `plugins/vaults/…`) in one
+// plugin folder (`plugins/generics/…`, `plugins/partners/…`, `plugins/vaults/…`) in one
 // package. Ships: the `PartnerUiPlugin` interface, `PartnerUiContext`, `PluginBuilder`/`getPlugin`
-// resolver (`eu.purse.partnerui`); the Google Pay (Ingenico/Worldline) plugin — pure protocol, the
-// Play-Services payment sheet, and the 3-D Secure redirect Activity (`plugins.generics.googlepay`);
+// resolver (`eu.purse.partnerui`); the shared redirect machinery — `RedirectionResolver` plus the
+// in-app-WebView return Activity, used by every plugin, so it sits alongside `plugins/` rather than
+// inside one of them, exactly as web keeps it in `sdk`/`common` (`eu.purse.partnerui.redirect`);
+// the Google Pay (Ingenico/Worldline) plugin — pure protocol plus the
+// Play-Services payment sheet (`plugins.generics.googlepay`);
 // the Klarna plugin — pure protocol plus the native `KlarnaPaymentView` widget
-// (`plugins.partners.klarna`); and the Purse vault credit-card plugin — pure protocol plus the
-// SecureFields Android SDK's Compose surface (`plugins.vaults.purse.creditcard`). Each registers
+// (`plugins.partners.klarna`); the Purse vault credit-card plugin — pure protocol plus the
+// SecureFields Android SDK's Compose surface (`plugins.vaults.purse.creditcard`); and the generic
+// redirection template — one plugin claiming every method the session marks
+// `configurations.template = "redirection"` (`plugins.generics.redirection`). Each registers
 // itself into the resolver by default (see `PluginRegistry`'s own `init` block) and reaches
-// `:headless-checkout` only through the `GooglePayHost`/`KlarnaHost`/`CardHost` interfaces it
-// defines, never a direct dependency — `:headless-checkout` depends on `:partner-ui`, not the
-// other way around.
+// `:headless-checkout` only through the `GooglePayHost`/`KlarnaHost`/`CardHost`/`RedirectionHost`
+// interfaces it defines, never a direct dependency — `:headless-checkout` depends on `:partner-ui`,
+// not the other way around.
 android {
     namespace = "eu.purse.partnerui"
     compileSdk {

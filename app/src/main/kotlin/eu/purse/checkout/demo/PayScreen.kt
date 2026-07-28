@@ -224,12 +224,41 @@ private fun PrimaryMethodRow(controller: DemoController, method: PrimaryMethod) 
             Text(text = if (selected) "▾" else "▸", style = MaterialTheme.typography.bodyLarge)
         }
         AnimatedVisibility(selected) {
-            when (method.method) {
-                Method.Installments -> KlarnaWidget(controller, method)
-                Method.CreditCard -> CardPaymentForm(controller, method)
+            // Redirection first, matching the controller's own dispatch and PluginRegistry's priority.
+            when {
+                controller.isRedirection(method) -> RedirectionNotice(controller, method)
+                method.method == Method.Installments -> KlarnaWidget(controller, method)
+                method.method == Method.CreditCard -> CardPaymentForm(controller, method)
                 else -> Unit
             }
         }
+    }
+}
+
+/**
+ * The generic redirection template's entire "UI": an explanation and a readiness line. There is
+ * deliberately nothing to fill in — the PSP's own hosted page collects everything, which is exactly
+ * why one plugin can serve every partner configured this way. `prepare` (`/init`) runs on mount, i.e.
+ * on selection, and the shared "Pay" button does the rest.
+ */
+@Composable
+private fun RedirectionNotice(controller: DemoController, method: PrimaryMethod) {
+    LaunchedEffect(method.id) { controller.prepareRedirection(method) }
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = stringResource(R.string.helper_redirection),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        Text(
+            text = if (controller.redirectionPrepared) {
+                stringResource(R.string.redirection_ready)
+            } else {
+                stringResource(R.string.redirection_preparing)
+            },
+            style = MaterialTheme.typography.titleSmall,
+            color = if (controller.redirectionPrepared) DemoStatusColors.success else LocalContentColor.current,
+        )
     }
 }
 

@@ -14,13 +14,16 @@
             android:value="true" />
 
         <!--
-          The 3-D Secure return Activity — Custom Tabs (GET) / WebView (POST) for a chained redirect
-          after a Google Pay /validate. Ships here so it merges into any integrating app with no
-          manifest work. The deep-link scheme is the app's own applicationId plus ".redirect" so it
-          can never collide with another partner's return path.
+          The shared redirect return Activity — an in-app WebView that follows whatever a /validate
+          asked for (GET, POST form, or injected HTML) and reports when the shopper comes back. Used
+          by every plugin: a 3-D Secure hop after Google Pay / a card, an external bank or ID step
+          after Klarna, and the whole payment step for the generic redirection template. Ships here
+          so it merges into any integrating app with no manifest work. The deep-link scheme is the
+          app's own applicationId plus ".redirect" so it can never collide with another partner's
+          return path.
         -->
         <activity
-            android:name="eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectionCheckoutActivity"
+            android:name="eu.purse.partnerui.redirect.RedirectionCheckoutActivity"
             android:launchMode="singleTop"
             android:exported="true">
             <intent-filter>

@@ -45,6 +45,10 @@
     <string name="giftcard_error">Couldn\'t read that card: %1$s</string>
     <string name="method_klarna">Klarna</string>
     <string name="method_card">Card</string>
+    <string name="method_redirection">Redirect to the payment page</string>
+    <string name="helper_redirection">No form to fill in — tapping Pay opens this provider\'s own page, then brings you back.</string>
+    <string name="redirection_preparing">Preparing…</string>
+    <string name="redirection_ready">Ready — tap Pay to continue.</string>
     <string name="btn_pay">Pay %1$s</string>
     <string name="btn_pay_now">Pay</string>
     <string name="submitting">Submitting payment…</string>

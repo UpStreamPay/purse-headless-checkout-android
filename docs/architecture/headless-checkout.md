@@ -9,7 +9,7 @@ payment* and lets a merchant build their own checkout UI on top. It mirrors the 
 | Module | Package | Mirrors web | Responsibility |
 |---|---|---|---|
 | `:core` | `eu.purse.core` | `sdk` + `model` + `common` | Payment API client, environment targets, the `Partner`/`Method`/`VaultVendor`/`CardBrand` enums, `MethodConfiguration`, the raw `LegacyPaymentSession` DTO + its base64 `widget.data` decode, and the typed `ItemPayload`/`ValidationResult`. No orchestration. |
-| `:partner-ui` | `eu.purse.partnerui` + `.plugins.generics.googlepay` + `.plugins.partners.klarna` + `.plugins.vaults.purse.creditcard` | `partner-ui` (contract + `plugins/generics/googlepay` + `plugins/partners/klarna-installments` + `plugins/vaults/purse/creditcard`) | The plugin lifecycle **contract** — `PartnerUiPlugin`, `PartnerUiContext`, `PluginRegistry` (with runtime `register`/`registerVault`) — **and** the concrete **Google Pay (Ingenico/Worldline)**, **Klarna**, and **Purse vault credit-card** plugins living in the same module: pure protocol plus, respectively, the Play-Services sheet coordinator + 3-D Secure redirect, the native `KlarnaPaymentView` coordinator, and a Compose-first coordinator wrapping the SecureFields Android SDK. Registered by default (`PluginRegistry`'s own `init` block). Each reaches `:headless-checkout` only through the `GooglePayHost` / `KlarnaHost` / `CardHost` interface it defines — implemented by `PurseHeadlessCheckout.googlePayHost` / `.klarnaHost` / `.cardHost` — so the module dependency never points from `:partner-ui` to `:headless-checkout`. |
+| `:partner-ui` | `eu.purse.partnerui` + `.redirect` + `.plugins.generics.googlepay` + `.plugins.generics.redirection` + `.plugins.partners.klarna` + `.plugins.vaults.purse.creditcard` | `partner-ui` (contract + `plugins/generics/googlepay` + `plugins/generics/redirection` + `plugins/partners/klarna-installments` + `plugins/vaults/purse/creditcard`) | The plugin lifecycle **contract** — `PartnerUiPlugin`, `PartnerUiContext`, `PluginRegistry` (with runtime `register`/`registerVault`/`registerGeneric`) — the **shared redirect machinery** (`eu.purse.partnerui.redirect`: `RedirectionResolver` + the in-app-WebView return Activity, a sibling of `plugins/` because all four plugins use it) — **and** the concrete **Google Pay (Ingenico/Worldline)**, **Klarna**, **Purse vault credit-card** and **generic redirection template** plugins living in the same module: pure protocol plus, respectively, the Play-Services sheet coordinator, the native `KlarnaPaymentView` coordinator, a Compose-first coordinator wrapping the SecureFields Android SDK, and a coordinator that does nothing but `/init` → `/validate` → follow the redirect. Registered by default (`PluginRegistry`'s own `init` block). Each reaches `:headless-checkout` only through the `GooglePayHost` / `KlarnaHost` / `CardHost` / `RedirectionHost` interface it defines — implemented by `PurseHeadlessCheckout.googlePayHost` / `.klarnaHost` / `.cardHost` / `.redirectionHost` — so the module dependency never points from `:partner-ui` to `:headless-checkout`. |
 | `:headless-checkout` | `eu.purse.checkout` | `headless-checkout` | `PurseHeadlessCheckout`: session decode, the built payment model, the splitter, and the plugin-driven "create payment" pipeline. |
 | `:app` | `eu.purse.checkout.demo` | playground | Smoke test: mint a session via alfred → `init` → print methods/split; drives Google Pay, Klarna, or a Purse-vaulted card. |
 
@@ -93,8 +93,12 @@ holder→poll `/init` flow. Adding a partner is a new `SecondaryConfig` + regist
 
 ## Plugin lifecycle (`:partner-ui`)
 
-A plugin integrates one `(partner, method)` pair. `getPlugin` resolves **vault → generic → partner**
-(by `configurations.vault.vendor`, then `configurations.template`, then `(partner, method)`). The
+A plugin integrates one `(partner, method)` pair — except a **generic template** plugin, which serves
+whichever pairs the session labels with its template. `getPlugin` resolves **vault → generic template
+→ `integration_mode = redirection` → partner → method fallback** (by `configurations.vault.vendor`,
+then `configurations.template`, then `settings.merchant_specifics.integration_mode`, then
+`(partner, method)`, then `method`) — the full chain, with its rationale, is in
+[docs/plugins/README.md](../plugins/README.md#resolution--which-plugin-handles-an-item). The
 lifecycle (`suspend` standing in for web's `Promise` hooks):
 
 ```
@@ -106,21 +110,23 @@ teardown:  destroyClient
 
 Concrete plugins live inside `:partner-ui` (alongside the contract, like web) and are registered by
 default — `PluginRegistry`'s own `init` block calls `GooglePayModule.register()` /
-`KlarnaModule.register()` / `CardModule.register()`, mirroring web's `getPlugin`, which needs no
+`KlarnaModule.register()` / `CardModule.register()` / `RedirectionModule.register()`, mirroring web's
+`getPlugin`, which needs no
 registration step at all. The
 session (checked in `getPlugin` against `protocols`) is the real gate on whether a method is
 offered — that's already decided server-side, so no app-side setup call is required for a built-in
 plugin to work. `PluginRegistry.disable`/`enable` opt a built-in method out/back in for a specific
-app build; `register`/`registerFallback` remain for a plugin that isn't bundled in `:partner-ui`
-itself. A `(partner, method)` with no plugin at all (e.g. card/CB, PayPal — not yet built) still
-makes `submitPayment` throw `PurseCheckoutException.NoPluginRegistered`.
+app build; `register`/`registerFallback`/`registerGeneric` remain for a plugin that isn't bundled in
+`:partner-ui` itself. A `(partner, method)` with no plugin at all (e.g. card/CB, PayPal — not yet
+built) still makes `submitPayment` throw `PurseCheckoutException.NoPluginRegistered`.
 
 Each shipped plugin has its own reference page — `/init` contract, sequence diagram, quirks, failure
 modes, host integration: **[docs/plugins](../plugins/README.md)**. What follows is only the shape of
 each, and how they differ from one another.
 
-Everything the three have in common — the protocol/interactive split, the `*Host` seam, `setCollected`,
-the shared `RedirectionResolver` + in-app-WebView redirect Activity, and why a returned redirect is
+Everything the four have in common — the protocol/interactive split, the `*Host` seam, `setCollected`,
+the shared `RedirectionResolver` + in-app-WebView redirect Activity (`eu.purse.partnerui.redirect`,
+a sibling of `plugins/` since no one plugin owns it), and why a returned redirect is
 never treated as an outcome — is written up once in
 [docs/plugins/README.md](../plugins/README.md#what-every-plugin-has-in-common).
 
@@ -174,6 +180,24 @@ Two things set it apart:
   `isPaymentFulfilled` `false` and `submitPayment` throwing `ItemNotFulfilled` until the card is
   actually filled in (see the split step above). `CardPlugin.validateUi` is the last line of defence:
   no collected vault token means the form was never successfully submitted.
+
+### Redirection (`plugins.generics.redirection`) → [full page](../plugins/redirection.md)
+
+The **generic template** family, and the first plugin here keyed purely off the session:
+`registerGeneric("redirection", …)` claims every `(partner, method)` whose `configurations.template`
+says `redirection` — plus, mirroring web's `getPartnerPlugin`, any whose
+`merchant_specifics.integration_mode` does, even ahead of a dedicated plugin for that pair. So
+`RedirectionPlugin` hardcodes neither `partner` nor `method`; it takes both from whatever the session
+resolved, which is what lets one registration serve Fintecture, Bizum, Oney, Sequra, an ACI
+`creditcard`, a `redirection`-mode PayPal `wallet`, and anything else the merchant enables without a
+line of code naming it.
+
+There is **no native step and no form**: `/init` yields only a `step_id`, `preValidation` sends that
+plus a `partner_data.browser` block (ported field-for-field from web's `getBrowserData`, but describing
+the redirect WebView that will actually render the challenge), and the PSP's own hosted page *is* the
+payment step. Consequently a `/validate` carrying **no** redirect — the happy path for every other
+plugin — means here that the PSP never handed over a page; the coordinator logs it and says so in its
+summary rather than reporting a silent success.
 
 ## Deferred (intentionally not built yet)
 

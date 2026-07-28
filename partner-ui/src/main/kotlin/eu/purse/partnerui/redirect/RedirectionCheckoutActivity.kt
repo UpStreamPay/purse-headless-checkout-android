@@ -1,4 +1,4 @@
-package eu.purse.partnerui.plugins.generics.googlepay.redirect
+package eu.purse.partnerui.redirect
 
 import android.content.Intent
 import android.os.Bundle

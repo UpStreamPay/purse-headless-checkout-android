@@ -11,11 +11,11 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import eu.purse.core.environment.PurseEnvironment
-import eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectAction
-import eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectionCheckoutContract
-import eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectionCheckoutResult
-import eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectionResolver
-import eu.purse.partnerui.plugins.generics.googlepay.redirect.withReturnUrlPrefix
+import eu.purse.partnerui.redirect.RedirectAction
+import eu.purse.partnerui.redirect.RedirectionCheckoutContract
+import eu.purse.partnerui.redirect.RedirectionCheckoutResult
+import eu.purse.partnerui.redirect.RedirectionResolver
+import eu.purse.partnerui.redirect.withReturnUrlPrefix
 import eu.purse.securefields.SecureFieldsAndroid
 import eu.purse.securefields.SecureFieldsListener
 import eu.purse.securefields.config.SecureFieldsConfig

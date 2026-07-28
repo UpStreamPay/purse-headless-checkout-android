@@ -1,10 +1,13 @@
 package eu.purse.partnerui
 
+import eu.purse.core.payment.IntegrationMode
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
 import eu.purse.core.session.LegacyPaymentSession
 import eu.purse.core.vault.VaultVendor
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayModule
+import eu.purse.partnerui.plugins.generics.redirection.RedirectionModule
+import eu.purse.partnerui.plugins.generics.redirection.RedirectionPlugin
 import eu.purse.partnerui.plugins.partners.klarna.KlarnaModule
 import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardModule
 
@@ -55,11 +58,23 @@ object PluginRegistry {
         GooglePayModule.register()
         KlarnaModule.register()
         CardModule.register()
+        RedirectionModule.register()
     }
 
     /** Register a plugin for an exact `(partner, method)`. Idempotent (last registration wins). */
     fun register(partner: Partner, method: Method, builder: PluginBuilder) {
         partnerPlugins[partner to method] = builder
+    }
+
+    /**
+     * Register a reusable **generic template** plugin under a `configurations.template` value (web's
+     * generic family — `"redirection"`, and eventually `"hostedfields"` / `"sdpx"` / `"lyra"`). Unlike
+     * [register], this names no partner or method at all: the session decides which methods the
+     * template covers, so one registration serves every `(partner, method)` whose configuration
+     * carries [template].
+     */
+    fun registerGeneric(template: String, builder: PluginBuilder) {
+        genericPlugins[template] = builder
     }
 
     /** Register a fallback for a method regardless of partner (e.g. a default Google Pay builder). */
@@ -86,6 +101,25 @@ object PluginRegistry {
         disabled -= partner to method
     }
 
+    /**
+     * Resolution order, mirroring web's `getPlugin` → `getGenericPlugin` → `getPartnerPlugin` chain:
+     *
+     * ```
+     * disabled?                                        → null
+     * vault.vendor ≠ none                              → vault plugin
+     * configurations.template                          → generic template plugin   (strict equality)
+     * merchant_specifics.integration_mode = redirection → the redirection generic
+     * exact (partner, method)                          → partner plugin
+     * method                                           → method fallback
+     * ```
+     *
+     * The `integration_mode` step sits **above** the exact-pair lookup, not below it, because that's
+     * where web puts it: its `getPartnerPlugin` checks `integration_mode === 'redirection'` and returns
+     * the redirection generic *before* consulting its own `partner_plugins` table. So a method the
+     * merchant configured to redirect is handled by the redirect template even when a dedicated plugin
+     * for that pair exists — web has a test pinning both directions of that (`redirection` routes to
+     * the generic, `popup` does not).
+     */
     fun getPlugin(partner: Partner, method: Method, session: LegacyPaymentSession): PartnerUiPlugin? {
         if (partner to method in disabled) return null
         val configuration = session.protocols[partner]?.get(method)?.configurations ?: return null
@@ -95,6 +129,9 @@ object PluginRegistry {
             ?.takeIf { it != VaultVendor.NONE }
             ?.let(vaultPlugins::get)
             ?: configuration.template?.let(genericPlugins::get)
+            ?: RedirectionPlugin.TEMPLATE
+                .takeIf { configuration.settings.integrationMode == IntegrationMode.REDIRECTION }
+                ?.let(genericPlugins::get)
             ?: partnerPlugins[partner to method]
             ?: methodFallbacks[method]
 

@@ -17,9 +17,9 @@ interface GooglePayHost {
     /**
      * The session's own configured return URL (`LegacyPaymentSession.redirection`), if any. Not
      * something to auto-follow (web's `should_submit_widget` fallback does that, and it's a
-     * browser-page concept that doesn't apply headless — see [eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectionResolver]'s
+     * browser-page concept that doesn't apply headless — see [eu.purse.partnerui.redirect.RedirectionResolver]'s
      * doc). It's threaded into a genuine 3-D Secure redirect as its
-     * [eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectAction.returnUrlPrefix], purely
+     * [eu.purse.partnerui.redirect.RedirectAction.returnUrlPrefix], purely
      * so the in-app WebView recognizes reaching it as completion and closes itself, for partners
      * whose ACS redirects here instead of this app's own deep-link scheme.
      */

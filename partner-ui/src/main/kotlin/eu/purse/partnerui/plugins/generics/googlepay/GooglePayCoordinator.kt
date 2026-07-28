@@ -7,10 +7,10 @@ import com.google.android.gms.common.api.CommonStatusCodes
 import com.google.android.gms.wallet.PaymentData
 import com.google.android.gms.wallet.contract.ApiTaskResult
 import com.google.android.gms.wallet.contract.TaskResultContracts
-import eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectionCheckoutContract
-import eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectionCheckoutResult
-import eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectionResolver
-import eu.purse.partnerui.plugins.generics.googlepay.redirect.withReturnUrlPrefix
+import eu.purse.partnerui.redirect.RedirectionCheckoutContract
+import eu.purse.partnerui.redirect.RedirectionCheckoutResult
+import eu.purse.partnerui.redirect.RedirectionResolver
+import eu.purse.partnerui.redirect.withReturnUrlPrefix
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -57,7 +57,7 @@ class GooglePayCoordinator(
 
         /**
          * The `payment_id` behind this payment, when [submit] can read one off the widget's own
-         * confirmation-page redirect (see [eu.purse.partnerui.plugins.generics.googlepay.redirect.RedirectionResolver.extractWidgetConfirmationPaymentId])
+         * confirmation-page redirect (see [eu.purse.partnerui.redirect.RedirectionResolver.extractWidgetConfirmationPaymentId])
          * — the id the orchestration API's `POST /v2/payments/{id}/captures` needs. Purely
          * informational (e.g. to prefill a "Capture" debug tool); never required for the payment
          * itself to resolve.

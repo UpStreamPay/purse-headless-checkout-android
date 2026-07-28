@@ -21,6 +21,7 @@ import eu.purse.core.session.PurseSessionParams
 import eu.purse.core.session.SessionCodec
 import eu.purse.partnerui.PartnerUiContext
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayHost
+import eu.purse.partnerui.plugins.generics.redirection.RedirectionHost
 import eu.purse.partnerui.plugins.partners.klarna.KlarnaHost
 import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardHost
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -203,6 +204,21 @@ class PurseHeadlessCheckout private constructor(
      */
     fun klarnaHost(item: PaymentItem, klarnaReturnUrl: String): KlarnaHost = object : KlarnaHost {
         override val returnUrl get() = klarnaReturnUrl
+        override fun buildContext() = pluginContext(item)
+        override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
+        override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+    }
+
+    /**
+     * The [RedirectionHost] for [item] — everything `:partner-ui`'s `RedirectionCoordinator` needs
+     * from this checkout, without that module depending on `:headless-checkout` directly.
+     *
+     * Unlike the three hosts above, this one is not tied to a single partner or method: it serves any
+     * item whose configuration resolves to the generic `redirection` template (see
+     * `PluginRegistry.getPlugin`). Ask for one per item — the coordinator rebinds on each `prepare`.
+     */
+    fun redirectionHost(item: PaymentItem): RedirectionHost = object : RedirectionHost {
+        override val redirectionReturnUrl get() = session.source.redirection
         override fun buildContext() = pluginContext(item)
         override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
         override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
