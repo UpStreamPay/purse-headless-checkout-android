@@ -7,14 +7,15 @@ own checkout UI on top. It mirrors the layered design of the web `usp-widget`
 
 > **Status: back-to-basics rebuild in progress.** The core purse-payment engine is in place —
 > session (V2) decode, the payment model, the splitter, the reactive `StateFlow` surface, and the
-> "create payment" pipeline — and builds green with unit tests. Partner plugins are **contract-only**
-> (no PayPal / Google Pay / card / redirect implementations yet), so `submitPayment` wires the
-> pipeline but has nothing to submit through until a plugin is registered.
+> "create payment" pipeline — and builds green with unit tests. Three interactive plugins ship in
+> `:partner-ui` and register themselves: **Google Pay**, **Klarna** (installments) and the
+> **Purse-vaulted card** (SecureFields), plus the shared 3-D-Secure redirect Activity. PayPal is not
+> ported yet.
 
 ## Module layout
 
 ```
-:app              eu.purse.checkout.demo   demo host (alfred session → smoke test)
+:app              eu.purse.checkout.demo   demo host, Compose: session → pay → result
    │
 :headless-checkout eu.purse.checkout       PurseHeadlessCheckout: session, model, splitter, validate
    ├── :core        eu.purse.core          Payment API client, enums, LegacyPaymentSession, decode

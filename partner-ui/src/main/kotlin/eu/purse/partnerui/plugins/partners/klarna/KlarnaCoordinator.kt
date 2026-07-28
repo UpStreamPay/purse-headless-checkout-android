@@ -67,11 +67,24 @@ class KlarnaCoordinator(
         /** The widget has been asked to render — show a "Pay with Klarna" trigger once this fires. */
         fun onReady(ready: Boolean) {}
 
-        /** Terminal success — [summary] is a human-readable status for the demo to display. */
-        fun onResult(summary: String) {}
+        /**
+         * Terminal success — [summary] is a human-readable status to display, [globalStatus] the
+         * `/validate` response's own `global_status` when this outcome came from one. `null` after a
+         * redirect return, where the real outcome is deliberately not chased (see [onRedirectReturn]).
+         */
+        fun onResult(summary: String, globalStatus: String? = null) {}
 
         /** A redirect step (e.g. an external banking/identity-verification app) is being launched. */
         fun onRequiresAction() {}
+
+        /**
+         * The `payment_id` behind this payment, when [submit]'s `/validate` response carries one —
+         * same source and caveats as
+         * [eu.purse.partnerui.plugins.generics.googlepay.GooglePayCoordinator.Listener.onPaymentId]:
+         * purely informational (e.g. prefilling a "Capture" tool), never required for the payment
+         * itself to resolve.
+         */
+        fun onPaymentId(paymentId: String) {}
 
         fun onCanceled() {}
         fun onError(message: String?) {}
@@ -242,6 +255,11 @@ class KlarnaCoordinator(
     private fun resolveOutcome(result: ValidationResult, host: KlarnaHost) {
         submitting = false
         Log.d(TAG, "validate response: global_status=${result.globalStatus} redirection=${result.raw.optJSONObject("redirection")}")
+        RedirectionResolver.extractWidgetConfirmationPaymentId(
+            validateResponse = result.raw,
+            partnerWireValue = partnerWireValue.orEmpty(),
+            methodWireValue = KlarnaMapper.METHOD,
+        )?.let { listener.onPaymentId(it) }
         val action = RedirectionResolver.resolve(
             validateResponse = result.raw,
             partnerWireValue = partnerWireValue.orEmpty(),
@@ -252,7 +270,7 @@ class KlarnaCoordinator(
             listener.onRequiresAction()
             redirectLauncher.launch(action)
         } else {
-            listener.onResult("global_status=${result.globalStatus}")
+            listener.onResult("global_status=${result.globalStatus}", result.globalStatus)
         }
     }
 

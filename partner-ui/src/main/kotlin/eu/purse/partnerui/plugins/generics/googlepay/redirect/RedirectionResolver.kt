@@ -80,11 +80,15 @@ object RedirectionResolver {
      * whether or not [resolve] ends up suppressing that same redirect, since this reads it directly
      * off the `/validate` response rather than by following anything. `null` if neither the per-item
      * `redirection_url` nor the global `redirection.url` carries one.
+     *
+     * [partnerWireValue]/[methodWireValue] identify the per-item entry to look in and both default
+     * to `""` — omit them for a split with no interactive primary at all (secondaries alone), where
+     * there is no partner item to key on and only the global `redirection.url` can carry the id.
      */
     fun extractWidgetConfirmationPaymentId(
         validateResponse: JSONObject,
-        partnerWireValue: String,
-        methodWireValue: String,
+        partnerWireValue: String = "",
+        methodWireValue: String = "",
     ): String? {
         val pluginLogs = pluginLogsFor(validateResponse, partnerWireValue, methodWireValue)
         val globalUrl = validateResponse.optJSONObject("redirection")?.optStringOrNull("url")

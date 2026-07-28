@@ -44,8 +44,13 @@ class GooglePayCoordinator(
         /** Result of the `isReadyToPay` check after [prepare] — show the button only when `true`. */
         fun onReady(ready: Boolean) {}
 
-        /** Terminal success — [summary] is a human-readable status for the demo to display. */
-        fun onResult(summary: String) {}
+        /**
+         * Terminal success — [summary] is a human-readable status to display, [globalStatus] the
+         * `/validate` response's own `global_status` when this outcome came from one. `null` after a
+         * redirect return, where the real outcome is deliberately not chased (see [onRedirectReturn])
+         * — don't render that as either success or failure without re-checking the session.
+         */
+        fun onResult(summary: String, globalStatus: String? = null) {}
 
         /** A 3-D Secure step is being launched (informational). */
         fun onRequiresAction() {}
@@ -180,7 +185,7 @@ class GooglePayCoordinator(
                     listener.onRequiresAction()
                     redirectLauncher.launch(action)
                 } else {
-                    listener.onResult("global_status=${result.globalStatus}")
+                    listener.onResult("global_status=${result.globalStatus}", result.globalStatus)
                 }
             } catch (e: Exception) {
                 // `/validate` never landed (or errored) — safe to let the shopper retry.

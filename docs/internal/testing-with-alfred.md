@@ -15,6 +15,7 @@ the Purse API on your behalf.
 - [1. Run alfred](#1-run-alfred)
 - [2. Point the app at alfred (`.env` + `10.0.2.2`)](#2-point-the-app-at-alfred-env--10022)
 - [3. Run the demo](#3-run-the-demo)
+- [The three screens](#the-three-screens)
 - [What "Create session" does](#what-create-session-does)
 - [Troubleshooting](#troubleshooting)
 
@@ -78,7 +79,7 @@ If `ALFRED_BASE_URL` is unset, the app falls back to `http://10.0.2.2:9001`, so 
 demo works out of the box with an empty `.env`.
 
 > **`.env` is read at build time.** After editing it you must **rebuild** — a reinstall of the old
-> APK won't pick up the change. The "Alfred: …" label at the top of the screen shows the URL that's
+> APK won't pick up the change. The `alfred` line on the app's first screen shows the URL that's
 > actually baked in, which is the quickest way to confirm the value.
 
 ---
@@ -89,14 +90,44 @@ demo works out of the box with an empty `.env`.
 ./gradlew :app:installDebug
 ```
 
-Then on the app: **Create session (alfred)** → `widget.data` populates → **Initialize headless
-checkout** → the session summary (id, amount, remaining, fulfilled) and payment-method list print.
+Then tap **Create session** — that one action mints the session *and* initializes the SDK off its
+`widget.data`, so the amount and method count appear right there and **Continue to payment** unlocks.
+
+---
+
+## The three screens
+
+The demo is one Activity (`MainActivity`) rendering three Compose screens off a single
+`DemoController`, which also owns the Google Pay and Klarna coordinators (both must be constructed
+before the Activity is STARTED — see their own docs).
+
+| | Screen | What it's for |
+|---|---|---|
+| 1 | **Session** (`SessionScreen`) | `Create session` (alfred + `PurseHeadlessCheckout.init` in one tap), or paste a `widget.data` by hand under *Paste a widget.data instead*. The SDK's decoded state — session id, split, every method — is under *Session details*. |
+| 2 | **Pay** (`PayScreen`) | The live total and what's left to pay, Google Pay's own button (an xpay: shown as soon as `isReadyToPay` resolves, and it submits itself), the selectable primaries (Klarna, card), and one gift-card form per secondary. One **Pay** button submits whichever primary is selected. |
+| 3 | **Result** (`ResultScreen`) | Authorized / failed / unconfirmed, then **Get transactions** and **Capture**. |
+
+Two things worth knowing about screen 3:
+
+- **The `payment_id` is prefilled.** All three coordinators report one via `Listener.onPaymentId`
+  whenever `/validate` carries it, so *Capture* is usable without hunting an id out of a log. It stays
+  editable, and some flows genuinely have none to report (see below).
+- **"Outcome unconfirmed" is a real outcome, not a bug.** After a partner redirect the coordinators
+  only report that the shopper came back — never the payment's fate (see
+  [pain points recap](../decisions/pain-points-recap.md)). Tapping **Get transactions** resolves it:
+  each transaction's `action → state` is listed, and a successful `AUTHORIZE`/`CAPTURE` promotes the
+  screen to *Payment authorized*. That path also has no `payment_id` from `/validate`, because the
+  widget-confirmation redirect that carries one is exactly what a genuine redirect replaces.
+
+Every raw JSON dump (`widget.data`, the session details, the transactions response) sits behind an
+expander, and the *Event log* on screens 2 and 3 keeps every coordinator callback in order — the
+place to read a full `KlarnaPaymentsSDKError`.
 
 ---
 
 ## What "Create session" does
 
-Two calls against alfred (see `MainActivity.createSession`):
+Two calls against alfred (see `AlfredClient.createSession`):
 
 1. `GET {ALFRED_BASE_URL}/order` — returns alfred's demo legacy order, wrapped as
    `{ "order": <legacyOrder> }`. The app unwraps the `order` field.
@@ -117,7 +148,9 @@ two compose cleanly. (Posting the *output* of alfred's `/orchestration_order` en
 | `Failed to connect to localhost/127.0.0.1:9001` | `ALFRED_BASE_URL` is `localhost` — use `10.0.2.2` (emulator) or your LAN IP (device), then **rebuild**. |
 | TLS / SSL handshake error | URL is `https` — alfred is `http`. |
 | Empty or very short method list | Session came back with few methods — the partner/method availability is entity-wide config on alfred's side; check alfred's setup in `usp-widget`. |
-| "Alfred: …" label shows the old URL | `.env` edited but not rebuilt — run `:app:installDebug` again. |
+| The `alfred` line shows the old URL | `.env` edited but not rebuilt — run `:app:installDebug` again. |
+| No Google Pay button on screen 2 | `prepare()` reported not-ready or failed (the reason lands in a snackbar and the *Event log*) — e.g. this session's Google Pay config has no `payment_method_configuration`, or the device/emulator has no Play Services wallet. Every other method still works. |
+| A method offered by the session isn't in the list | Screen 2 only offers what this demo has a coordinator for: Klarna, a Purse-vaulted card, Google Pay, and the secondaries with a registered `SecondaryConfig`. `Session details` lists everything the session actually carries. |
 
 ---
 

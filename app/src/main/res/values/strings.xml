@@ -1,59 +1,77 @@
 <resources>
     <string name="app_name">Purse Headless Demo</string>
 
-    <string name="label_alfred_base_url">Alfred: %1$s</string>
-    <string name="helper_alfred_base_url">Set ALFRED_BASE_URL in .env at the repo root (see .env.example). Run `npm run dev:alfred` from the usp-widget repo root. Emulator: 10.0.2.2. Physical device: your machine\'s LAN IP.</string>
+    <!-- Chrome shared by the three screens -->
+    <string name="step_label">Step %1$d of 3</string>
+    <string name="section_event_log">Event log</string>
 
-    <string name="btn_create_session">Create session (alfred)</string>
-    <string name="toast_create_session_failed">Failed to create session: %1$s</string>
-
+    <!-- 1 · Session -->
+    <string name="session_title">Session</string>
+    <string name="session_subtitle">Mint an orchestration session through alfred.</string>
+    <string name="label_alfred">alfred</string>
+    <string name="btn_create_session">Create session</string>
+    <string name="btn_creating_session">Creating session…</string>
+    <string name="session_error">Couldn\'t create the session: %1$s</string>
+    <string name="init_error">Couldn\'t read widget.data: %1$s</string>
+    <string name="section_widget_data">Paste a widget.data instead</string>
     <string name="hint_widget_data">widget.data</string>
-    <string name="helper_widget_data">Populated by \"Create session\", or paste a widget.data string manually</string>
+    <string name="btn_use_widget_data">Use this widget.data</string>
+    <string name="session_ready">Session ready</string>
+    <plurals name="session_methods">
+        <item quantity="one">%1$d payment method</item>
+        <item quantity="other">%1$d payment methods</item>
+    </plurals>
+    <string name="section_session_details">Session details</string>
+    <string name="btn_continue">Continue to payment</string>
 
-    <string name="btn_init_checkout">Initialize headless checkout</string>
-    <string name="error_required">Required</string>
-
-    <string name="output_placeholder">Initialize the headless checkout to inspect its session, methods and split here.</string>
-    <string name="session_error">Session error: %1$s</string>
-
-    <string name="gpay_canceled">Google Pay canceled.</string>
-    <string name="gpay_error">Google Pay error: %1$s</string>
-
-    <string name="klarna_canceled">Klarna canceled.</string>
-    <string name="klarna_error">Klarna error: %1$s</string>
-
-    <string name="card_error">Card error: %1$s</string>
-
+    <!-- 2 · Pay -->
+    <string name="pay_title">Pay</string>
+    <string name="label_total">Total</string>
+    <string name="label_remaining">Left to pay</string>
+    <string name="label_covered">Fully covered</string>
+    <string name="section_express">Express checkout</string>
     <string name="section_primary">Choose how to pay</string>
-    <string name="btn_submit_payment">Submit payment</string>
-    <string name="submit_payment_error">Submit error: %1$s</string>
-    <string name="section_secondary">Add a gift card (secondary)</string>
-    <string name="helper_giftcard">Illicado test card: PAN 9250004781234567890, CVC 123. Leave the amount blank to use as much of the balance as the order needs, or enter a smaller amount to contribute part of it.</string>
+    <string name="section_secondary">Gift card</string>
+    <string name="helper_giftcard">Test card 9250004781234567890, CVC 123.</string>
     <string name="hint_giftcard_pan">Gift card number</string>
     <string name="hint_giftcard_cvv">CVC</string>
-    <string name="hint_giftcard_amount">Amount to apply (optional)</string>
+    <string name="hint_giftcard_amount">Amount (blank = as much as needed)</string>
     <string name="btn_check_balance">Check balance</string>
     <string name="btn_apply_giftcard">Add to payment</string>
     <string name="giftcard_amount_invalid">Enter a valid amount</string>
     <string name="giftcard_balance">%1$s — balance %2$s</string>
     <string name="giftcard_balance_partial">%1$s — balance %2$s of %3$s</string>
-    <string name="giftcard_check_first">Check the balance first.</string>
-    <string name="giftcard_added">Applied %1$s of %2$s balance</string>
-    <string name="giftcard_error">Couldn\'t read card: %1$s</string>
+    <string name="giftcard_applied">Applied %1$s</string>
+    <string name="giftcard_error">Couldn\'t read that card: %1$s</string>
+    <string name="method_klarna">Klarna</string>
+    <string name="method_card">Card</string>
+    <string name="btn_pay">Pay %1$s</string>
+    <string name="btn_pay_now">Pay</string>
+    <string name="submitting">Submitting payment…</string>
+    <string name="pay_canceled">Payment canceled — nothing was charged.</string>
+    <string name="requires_action">Redirecting for authentication…</string>
+    <string name="error_required">Required</string>
 
-    <string name="alfred_session_id_hint">Session id (for alfred\'s GET /payment_session)</string>
-    <string name="get_session_via_alfred">Get Transactions</string>
-    <string name="alfred_session_fetching">Fetching via alfred…</string>
-    <string name="alfred_session_result">alfred GET /payment_session/%1$s:</string>
-    <string name="alfred_session_error">alfred error: %1$s</string>
-    <string name="alfred_session_id_required">Enter a session id first</string>
-
-    <string name="capture_payment_id_hint">Payment id (for alfred\'s POST capture)</string>
-    <string name="capture_amount_hint">Amount</string>
+    <!-- 3 · Result -->
+    <string name="result_title">Result</string>
+    <string name="result_authorized">Payment authorized</string>
+    <string name="result_failed">Payment failed</string>
+    <string name="result_unconfirmed">Outcome unconfirmed</string>
+    <string name="result_unconfirmed_hint">The shopper came back from the partner\'s redirect, which isn\'t proof of payment. Fetch the transactions below to confirm.</string>
+    <string name="result_via">via %1$s</string>
+    <string name="result_confirmed_by_transactions">Confirmed by the session\'s transactions.</string>
+    <string name="section_transactions">Transactions</string>
+    <string name="section_transactions_raw">Raw response</string>
+    <string name="hint_session_id">Session id</string>
+    <string name="btn_get_transactions">Get transactions</string>
+    <string name="transactions_fetching">Fetching…</string>
+    <string name="section_capture">Capture</string>
+    <string name="capture_needs_payment_id">No payment_id was reported — paste one to capture.</string>
+    <string name="hint_capture_payment_id">Payment id</string>
+    <string name="hint_capture_amount">Amount</string>
     <string name="btn_capture">Capture</string>
-    <string name="capture_payment_id_required">Enter a payment id first</string>
     <string name="capture_amount_invalid">Enter a valid amount</string>
-    <string name="capture_capturing">Capturing via alfred…</string>
-    <string name="capture_result">alfred POST /payments/%1$s/capture:</string>
-    <string name="capture_error">alfred error: %1$s</string>
+    <string name="capture_capturing">Capturing…</string>
+    <string name="alfred_error">alfred error: %1$s</string>
+    <string name="btn_start_over">Start a new payment</string>
 </resources>

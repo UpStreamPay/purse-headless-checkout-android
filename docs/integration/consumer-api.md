@@ -262,16 +262,29 @@ Activity is `STARTED`).
 | Callback | Fires |
 |---|---|
 | `onReady(ready: Boolean)` | After `prepare()` resolves `isReadyToPay` — show the button only when `true`. |
-| `onResult(summary: String)` | Terminal success with no follow-up redirect needed. |
+| `onResult(summary: String, globalStatus: String? = null)` | Terminal, non-error outcome with no follow-up redirect needed. `globalStatus` is the `/validate` response's own `global_status` when the outcome came from one, and `null` after a redirect return — see the note below. |
 | `onRequiresAction()` | A 3-D Secure step is being launched (informational). |
 | `onPaymentId(paymentId: String)` | Informational — a `payment_id` extracted from the widget's own confirmation-page redirect, when present. Never required for the payment to resolve. |
 | `onCanceled()` | Shopper dismissed the sheet or the redirect WebView without completing. |
 | `onError(message: String?)` | Any failure — sheet, `/validate`, or redirect launch. |
 
 **Note on `onResult`/redirect return:** a returned-from-redirect `Approved` outcome means only that
-the shopper came back into the app — **not** that the payment succeeded. Re-check status
-independently (e.g. `sessionTransactions()`) rather than trusting it. See the
-[pain points recap](../decisions/pain-points-recap.md).
+the shopper came back into the app — **not** that the payment succeeded. That's precisely the case
+`onResult` reports with a `null` `globalStatus`: don't render it as either success or failure. Re-check
+status independently (e.g. `sessionTransactions()`) rather than trusting it. Note also that a genuine
+redirect *replaces* the widget-confirmation one, so this is the same case where `onPaymentId` has
+nothing to report. See the [pain points recap](../decisions/pain-points-recap.md).
+
+`onResult`'s `globalStatus` is not a success flag either — a non-`SUCCESS` value is a declined payment,
+not an error. The demo's own three-way mapping (`PaymentOutcome.of`) is the shape to copy:
+
+```kotlin
+when {
+    globalStatus == null -> Unconfirmed   // came back from a redirect — go and check the session
+    globalStatus.equals("SUCCESS", true) -> Authorized
+    else -> Failed
+}
+```
 
 ### Klarna
 
@@ -298,20 +311,34 @@ renders into.
 | Callback | Fires |
 |---|---|
 | `onReady(ready: Boolean)` | The widget finished loading content — show the pay trigger. |
-| `onResult(summary: String)` | Terminal success with no follow-up redirect needed. |
+| `onResult(summary: String, globalStatus: String? = null)` | Terminal, non-error outcome with no follow-up redirect needed — same semantics as Google Pay's. |
 | `onRequiresAction()` | A redirect step (external banking/identity-verification app) is being launched. |
+| `onPaymentId(paymentId: String)` | Same as Google Pay's — informational, when `/validate` carries one. |
 | `onCanceled()` | Klarna declined to authorize/finalize, or the redirect was dismissed. |
 | `onError(message: String?)` | Any failure — widget load, `/validate`, authorize/finalize, or redirect launch. |
 
-Same caveat as Google Pay: a returned `Approved` redirect outcome is not proof of payment success.
+Same caveats as Google Pay: a returned `Approved` redirect outcome is not proof of payment success,
+and an `onError` before any submit (a widget that fails to load) is not a failed payment — leave the
+shopper able to pick another method rather than showing them a failure screen.
 
 ### Card (Purse vault / SecureFields)
 
 **Compose-first** — unlike `GooglePayCoordinator`/`KlarnaCoordinator` above (plain classes driving
 View-system widgets), the card plugin's interactive half is a `@Composable` function. Rendering it
 requires the SecureFields Android SDK's own Compose surface (`VaultForm`/`VaultField`) — your app
-needs a Compose entry point somewhere in its view hierarchy (e.g. a `ComposeView` embedded in an
-otherwise View-based layout, as this SDK's own demo does).
+needs a Compose entry point somewhere in its view hierarchy (this SDK's own demo is Compose
+throughout; a `ComposeView` embedded in an otherwise View-based layout works just as well).
+
+One trap worth naming: `rememberCardCoordinator` keys its SecureFields instance on the `host` object,
+so build the host with `remember(...)` rather than inline —
+
+```kotlin
+val host = remember(method.id) { checkout.cardHost(method) }   // NOT checkout.cardHost(method)
+val coordinator = rememberCardCoordinator(host, listener)
+```
+
+— otherwise every recomposition hands it a new host, tearing down and rebuilding the card form (and
+losing whatever the shopper has typed) each time anything else on the screen changes.
 
 **`CardHost`** (implemented by `PurseHeadlessCheckout.cardHost(item)`):
 
@@ -341,8 +368,9 @@ Pay/Klarna) — call it from anywhere in your composition; its 3-D Secure redire
 | Callback | Fires |
 |---|---|
 | `onReady(ready: Boolean)` | The form's validity changed (mirrors `formValid`, provided as a callback too for symmetry with the other two coordinators). |
-| `onResult(summary: String)` | Terminal success with no follow-up redirect needed. |
+| `onResult(summary: String, globalStatus: String? = null)` | Terminal, non-error outcome with no follow-up redirect needed — same semantics as Google Pay's. |
 | `onRequiresAction()` | A 3-D Secure step is being launched (informational). |
+| `onPaymentId(paymentId: String)` | Same as Google Pay's — informational, when `/validate` carries one. |
 | `onCanceled()` | The redirect was dismissed without completing. |
 | `onError(message: String?)` | Any failure — tokenization, `/validate`, or redirect launch. |
 

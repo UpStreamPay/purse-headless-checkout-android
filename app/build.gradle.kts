@@ -58,7 +58,6 @@ android {
         targetCompatibility = JavaVersion.VERSION_11
     }
     buildFeatures {
-        viewBinding = true
         buildConfig = true
         compose = true
     }
@@ -70,15 +69,17 @@ dependencies {
     implementation(project(":partner-ui"))
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.core.ktx)
+    // Material Components is still needed for the XML app theme (Theme.Material3.DayNight) the
+    // Activity window and the partner SDKs' own inflated Views (Klarna, SecureFields) render against
+    // — the demo's own UI is entirely Compose.
     implementation(libs.material)
     // lifecycleScope + coroutines to observe the SDK's StateFlow surface off the main thread.
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.kotlinx.coroutines.android)
-    // The card (Purse vault / SecureFields) form is Compose-first — see CardCoordinator's doc.
-    // Hosted inside the otherwise View-based layout via a plain ComposeView.
     implementation(platform(libs.androidx.compose.bom))
     implementation(libs.androidx.ui)
     implementation(libs.androidx.material3)
+    implementation(libs.androidx.activity.compose)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)

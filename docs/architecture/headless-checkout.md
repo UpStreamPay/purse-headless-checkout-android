@@ -143,17 +143,21 @@ The first primary plugin. Because Google Pay is interactive, it splits in two:
   the JWT arrived over the already-authenticated `/validate` response, so no signature check is
   needed just to read a field) via `RedirectionResolver.extractWidgetConfirmationPaymentId`,
   independent of whether the redirect itself gets suppressed, and surfaced through
-  `GooglePayCoordinator.Listener.onPaymentId` — purely informational (e.g. prefilling the demo's own
-  "Capture" tool below), never required for the payment to resolve.
+  `Listener.onPaymentId` — on all three coordinators, since all three can read one off the same
+  response (the demo's own "Capture" tool is unusable without it). Purely informational, never
+  required for the payment to resolve, and absent whenever a *genuine* redirect took the
+  widget-confirmation one's place.
 - **On a genuine redirect's return** (`RedirectionCheckoutResult.Approved`), the coordinator
   deliberately does **not** chase the payment outcome itself — it only reports that the shopper came
   back. A confirmed backend pain point (`docs/decisions/pain-points-recap.md` in the pre-headless
   `master` branch, "Pain point 2"): a real 3-D Secure challenge's own final redirect is constructed
   server-side by the bank/PSP, and can land on a Purse API gateway URL that 401s on the session's own
   client-facing `api_key` — nothing fixable client-side. `master`'s own resolution was the same one
-  this repo's demo now ships: an independent, on-demand "Get Transactions" tool
-  (`MainActivity.getSessionViaAlfred`) that checks status via alfred rather than auto-chaining another
-  API call after every redirect return.
+  this repo's demo now ships: an independent, on-demand "Get transactions" tool
+  (`DemoController.getTransactions` → `AlfredClient.paymentSession`) that checks status via alfred
+  rather than auto-chaining another API call after every redirect return. Its answer is what settles
+  the demo's result screen — a `null` `globalStatus` on `Listener.onResult` renders as "outcome
+  unconfirmed" until a successful `AUTHORIZE`/`CAPTURE` transaction promotes it.
 
 No registration call needed — hand the coordinator a `checkout.googlePayHost(item)` per Google Pay
 item; `PluginRegistry` already has `GooglePayModule` registered by default.

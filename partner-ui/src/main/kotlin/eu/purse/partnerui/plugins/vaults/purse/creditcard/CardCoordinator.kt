@@ -144,11 +144,24 @@ class CardCoordinator internal constructor(
         /** The SecureFields form's validity changed — mirrors `onFormValid`. */
         fun onReady(ready: Boolean) {}
 
-        /** Terminal success — [summary] is a human-readable status for the demo to display. */
-        fun onResult(summary: String) {}
+        /**
+         * Terminal success — [summary] is a human-readable status to display, [globalStatus] the
+         * `/validate` response's own `global_status` when this outcome came from one. `null` after a
+         * 3-D Secure return, where the real outcome is deliberately not chased.
+         */
+        fun onResult(summary: String, globalStatus: String? = null) {}
 
         /** A 3-D Secure step is being launched (informational). */
         fun onRequiresAction() {}
+
+        /**
+         * The `payment_id` behind this payment, when the `/validate` response carries one — same
+         * source and caveats as
+         * [eu.purse.partnerui.plugins.generics.googlepay.GooglePayCoordinator.Listener.onPaymentId]:
+         * purely informational (e.g. prefilling a "Capture" tool), never required for the payment
+         * itself to resolve.
+         */
+        fun onPaymentId(paymentId: String) {}
 
         fun onCanceled() {}
         fun onError(message: String?) {}
@@ -204,6 +217,11 @@ class CardCoordinator internal constructor(
                 "validate response: global_status=${result.globalStatus} " +
                     "redirection=${result.raw.optJSONObject("redirection")}",
             )
+            RedirectionResolver.extractWidgetConfirmationPaymentId(
+                validateResponse = result.raw,
+                partnerWireValue = partnerWireValue,
+                methodWireValue = CardMapper.METHOD,
+            )?.let { listener.onPaymentId(it) }
             val action = RedirectionResolver.resolve(
                 validateResponse = result.raw,
                 partnerWireValue = partnerWireValue,
@@ -214,7 +232,7 @@ class CardCoordinator internal constructor(
                 listener.onRequiresAction()
                 redirectLauncher.launch(action)
             } else {
-                listener.onResult("global_status=${result.globalStatus}")
+                listener.onResult("global_status=${result.globalStatus}", result.globalStatus)
             }
         } catch (e: Exception) {
             // `/validate` never landed (or errored) — safe to let the shopper retry.
