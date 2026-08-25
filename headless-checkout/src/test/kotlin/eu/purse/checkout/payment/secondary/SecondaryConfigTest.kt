@@ -2,6 +2,7 @@ package eu.purse.checkout.payment.secondary
 
 import eu.purse.checkout.PurseCheckoutException
 import eu.purse.checkout.payment.item.SecondaryMethod
+import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.MethodConfiguration
 import eu.purse.core.payment.MethodSettings
@@ -170,5 +171,27 @@ class SecondaryConfigTest {
         assertEquals(MybeezboxConfig, SecondaryConfigs.forMethod(Partner.Other("mybeezbox"), Method.GiftCard))
         // ANCV is intentionally not registered yet (two-phase polling deferred).
         assertEquals(null, SecondaryConfigs.forMethod(Partner.Other("ancv"), Method.Other("connect")))
+    }
+
+    @Test
+    fun `tokenizer distinguishes a missing CVV from a malformed one via error codes`() {
+        val tokenizer = SecondaryTokenizer(
+            eu.purse.core.api.PaymentApiClient("k", "http://localhost:1", "e", "s"),
+        )
+
+        val missing = assertThrows(PurseCheckoutException.InvalidSecondaryCard::class.java) {
+            tokenizer.tokenize(illicadoMethod, validPan, cvv = null, amount = BigDecimal.ONE)
+        }
+        assertEquals(PurseErrorCode.SECONDARY_METHOD_REQUIRED_CVV, missing.code)
+
+        val malformed = assertThrows(PurseCheckoutException.InvalidSecondaryCard::class.java) {
+            tokenizer.tokenize(illicadoMethod, validPan, cvv = "12", amount = BigDecimal.ONE)
+        }
+        assertEquals(PurseErrorCode.SECONDARY_METHOD_WRONG_CVV_FORMAT, malformed.code)
+
+        val badPan = assertThrows(PurseCheckoutException.InvalidSecondaryCard::class.java) {
+            tokenizer.tokenize(illicadoMethod, "0000", cvv = "123", amount = BigDecimal.ONE)
+        }
+        assertEquals(PurseErrorCode.SECONDARY_METHOD_WRONG_PAN_FORMAT, badPan.code)
     }
 }

@@ -2,6 +2,7 @@ package eu.purse.checkout.payment.secondary
 
 import eu.purse.checkout.PurseCheckoutException
 import eu.purse.checkout.payment.item.SecondaryMethod
+import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
 import org.json.JSONObject
@@ -79,7 +80,10 @@ object MaxxingConfig : SecondaryConfig {
         val balance = logs?.optString("eligible_euros").orEmpty().toBigDecimalOrNull() ?: BigDecimal.ZERO
         val total = logs?.optString("total_euros").orEmpty().toBigDecimalOrNull() ?: balance
         if (balance.signum() <= 0) {
-            throw PurseCheckoutException.SecondaryTokenizationFailed("loyalty card has no eligible balance")
+            throw PurseCheckoutException.SecondaryTokenizationFailed(
+                "loyalty card has no eligible balance",
+                PurseErrorCode.SECONDARY_TOKEN_EMPTY_BALANCE,
+            )
         }
         return SecondaryToken(
             id = "${method.id}-${pan.takeLast(4)}",
@@ -189,7 +193,10 @@ internal fun parseCardToken(
     val card = pluginResult.optJSONObject("payment_data")?.optJSONArray("cards")?.optJSONObject(0)
     val balance = card?.let { bigDecimalOrNull(it, "balance") } ?: BigDecimal.ZERO
     if (balance.signum() <= 0) {
-        throw PurseCheckoutException.SecondaryTokenizationFailed("secondary card has no balance")
+        throw PurseCheckoutException.SecondaryTokenizationFailed(
+            "secondary card has no balance",
+            PurseErrorCode.SECONDARY_TOKEN_EMPTY_BALANCE,
+        )
     }
     val name = nameLogKey?.let { pluginResult.optJSONObject("logs")?.optString(it) }.orEmpty()
     return SecondaryToken(

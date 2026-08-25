@@ -3,6 +3,7 @@ package eu.purse.checkout.payment.secondary
 import eu.purse.checkout.PurseCheckoutException
 import eu.purse.checkout.payment.item.SecondaryMethod
 import eu.purse.core.api.PaymentApiClient
+import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.payload.ItemPayload
 import java.math.BigDecimal
 
@@ -32,8 +33,17 @@ class SecondaryTokenizer(private val api: PaymentApiClient) {
         if (!config.validatePan(pan)) {
             throw PurseCheckoutException.InvalidSecondaryCard("invalid card number for ${method.id}")
         }
-        if (config.requiresCvv(pan) && (cvv.isNullOrBlank() || !config.validateCvv(cvv))) {
-            throw PurseCheckoutException.InvalidSecondaryCard("invalid security code for ${method.id}")
+        if (config.requiresCvv(pan) && cvv.isNullOrBlank()) {
+            throw PurseCheckoutException.InvalidSecondaryCard(
+                "a security code is required for ${method.id}",
+                PurseErrorCode.SECONDARY_METHOD_REQUIRED_CVV,
+            )
+        }
+        if (config.requiresCvv(pan) && !config.validateCvv(cvv!!)) {
+            throw PurseCheckoutException.InvalidSecondaryCard(
+                "invalid security code for ${method.id}",
+                PurseErrorCode.SECONDARY_METHOD_WRONG_CVV_FORMAT,
+            )
         }
 
         val payload = ItemPayload(
