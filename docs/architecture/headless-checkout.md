@@ -226,6 +226,24 @@ payment step. Consequently a `/validate` carrying **no** redirect — the happy 
 plugin — means here that the PSP never handed over a page; the coordinator logs it and says so in its
 summary rather than reporting a silent success.
 
+## Shipped since the POC (web-parity work)
+
+The MVP-parity pass added: suspensions (`stable=false` → `METHOD_UNSTABLE`) and the full
+disabled-state classification sets; the server-clock expiry watchdog (`GET /datetime`);
+`TERMINATED` detection on terminal API answers; the `/init` retry/coalescing guard (web's
+`initGuard`); typed error codes (`PurseErrorCode`) on every checkout exception; the live plugin
+event system (`PluginEvent` sealed class, dispatched by every coordinator, reacted to by the
+checkout, re-exposed on `pluginEvents`); driven lifecycle hooks (`onSessionSet`, `onAmountUpdate`,
+`destroyClient`, `ensureClientCompatibility`); full monitoring parity (`CheckoutEventBus`, all 40
+codes, batched to `/widget/headless_checkout`, flushed on app-background); wallet / saved cards
+(`wallet_session`, `paymentTokens`, pay-with-token, rename/delete/favorite, `SaveTokenMode`
+registration incl. `payment_preferences.registration` + `card.token_label`); merchant hooks
+(`onBeforeValidate` / `onAfterValidate`); locale-aware overridable card-form texts + a
+`PurseTheme` mapped onto SecureFields' `VaultStyles`; CDN method icons (`PurseAssets`); typed
+payment confirmation (`paymentStatus()` / `awaitPaymentOutcome()` over `sessionTransactions()`);
+and a hardened redirect WebView (progress, first-page watchdog, network-failure surfacing,
+process-death safety).
+
 ## Deferred (intentionally not built yet)
 
 PayPal BNPL ("Pay Later") and PayPal vaulting (the wallet pay-now plugin ships; see
@@ -233,5 +251,8 @@ PayPal BNPL ("Pay Later") and PayPal vaulting (the wallet pay-now plugin ships; 
 `adyen`/`stripe` Google
 Pay gateway builders beyond the `default` fallback, the rendering host (web's `<purse-partner-ui>`
 element) for anything other than the card plugin's own Compose surface, the `ancv-connect`
-two-phase secondary flow, the splitter's voucher→loyalty→primary autofill middleware, and wallet
-(saved-token) sessions.
+two-phase secondary flow, the splitter's voucher→loyalty→primary autofill middleware, the
+`pci_proxy` vault vendor (only the `purse` vault resolves a card plugin), and CVV re-entry when
+paying a saved token — `securefields-android` 1.0.0 has no tokenize-against-existing-token mode,
+so saved-token payments ride the no-CVV gates (`pay_token_no_cvv` / network tokens) until the
+SecureFields SDK grows one.
