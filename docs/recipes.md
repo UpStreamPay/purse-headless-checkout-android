@@ -307,11 +307,18 @@ fun onSessionReady(checkout: PurseHeadlessCheckout) {
     val item = checkout.primaryMethods.first { it.partner == Partner.Paypal }
     paypal.prepare(checkout.paypalHost(item))
 }
-
-// Button tap → /init → PayPal app/browser approval → (approval selects PayPal as primary)
-// → /validate — all SDK-driven, reported on the listener.
-fun onPaypalButtonTapped() = paypal.submit()
 ```
+
+The render is PayPal's own branded button (from the `payment-buttons` artifact), which shows
+itself once prepared and drives everything from its tap — `/init` → PayPal app/browser approval →
+(approval selects PayPal as primary) → `/validate`, all reported on the listener:
+
+```kotlin
+PaypalButton(paypal, Modifier.fillMaxWidth())
+```
+
+(Or, through the unified element of recipe 4, `PaymentElementUi` renders this same button. For a
+fully custom button, `paypal.submit()` on its click is the escape hatch.)
 
 ---
 
@@ -331,12 +338,35 @@ intent-filter in **your** manifest:
 </activity>
 ```
 
+**Compose (the element path)** — the render step is explicit: `PaymentElementUi` places the
+container, and only then does the element run `prepare` (`/init` → `client_token` → widget load)
+into it:
+
 ```kotlin
-private val klarna = KlarnaCoordinator(this, klarnaContainer /* a ViewGroup */, klarnaListener)
+@Composable
+fun KlarnaPayment(checkout: PurseHeadlessCheckout, method: PrimaryMethod) {
+    val element = rememberPaymentElement(checkout, method, listener)
+    // Klarna is form-like: selecting it as the split's primary is still your call (recipe 3);
+    // only the wallet buttons self-select on approval.
+    LaunchedEffect(method.id) { checkout.setPrimary(method) }
+
+    PaymentElementUi(element, Modifier.fillMaxWidth())   // ← the render: Klarna's widget appears here
+
+    Button(onClick = { element.submit() }, enabled = element.ready) { Text("Pay with Klarna") }
+}
+```
+
+**Imperative (View system)** — there is no separate render call: the `ViewGroup` you hand the
+constructor *is* the render surface, and `prepare` inflates the widget into it. "Render" and
+"prepare" collapse into one step here, which is exactly what the element path un-collapses:
+
+```kotlin
+private val klarna = KlarnaCoordinator(this, klarnaContainer /* the render surface */, klarnaListener)
 
 fun onKlarnaSelected(checkout: PurseHeadlessCheckout, item: PrimaryMethod) {
     checkout.setPrimary(item)
-    klarna.prepare(checkout.klarnaHost(item, "$packageName.klarna://return")) // /init + widget load
+    // /init → client_token → the widget renders into klarnaContainer
+    klarna.prepare(checkout.klarnaHost(item, "$packageName.klarna://return"))
 }
 
 fun onPayTapped() = klarna.submit()  // /validate first, then Klarna authorize() (web-parity order)
