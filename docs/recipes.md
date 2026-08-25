@@ -180,20 +180,20 @@ call `coordinator.sdk.setBrandSelection(...)`.
 
 ## 5. Google Pay
 
-Google Pay is **self-submitting**, exactly like web: you never call `setPrimary` or
-`submitPayment` for it. You render a Google Pay button (per Google's brand guidelines), and the
-button tap is the whole merchant contribution — the SDK opens the sheet, and the **approval**
-selects the method as primary and runs `/validate` itself (web's `validationRequested`). A
-cancelled sheet leaves the split untouched. Everything lands on the listener.
-
-The coordinator is imperative — **construct it in `onCreate`** (it registers ActivityResult
-launchers, which must happen before the Activity is started):
+Google Pay is **rendered, not driven**, exactly like web — where `getPaymentElement("googlepay")`
+hands you an element that *is* the official button with the whole flow wired inside. The Android
+analog is the `GooglePayButton` composable: it renders Google's own brand-guideline `PayButton`
+(showing the shopper's card art), shows itself only once `isReadyToPay` said yes, and from the tap
+on the SDK owns everything — sheet → the **approval** selects the method as primary → `/validate`
+→ 3-D Secure if any (web's `validationRequested`). A cancelled sheet leaves the split untouched.
+You never call `setPrimary` or `submitPayment`; outcomes land on the listener.
 
 ```kotlin
 class CheckoutActivity : ComponentActivity() {
 
+    // In onCreate scope — the coordinator registers ActivityResult launchers, which must
+    // happen before the Activity is started.
     private val googlePay = GooglePayCoordinator(this, object : GooglePayCoordinator.Listener {
-        override fun onReady(ready: Boolean) { showGooglePayButton(ready) } // isReadyToPay result
         override fun onResult(summary: String, globalStatus: String?) { /* recipe 11 if null */ }
         override fun onRequiresAction() { /* a 3-D Secure step is opening */ }
         override fun onCanceled() { /* sheet dismissed — split untouched, nothing submitted */ }
@@ -202,14 +202,20 @@ class CheckoutActivity : ComponentActivity() {
 
     fun onSessionReady(checkout: PurseHeadlessCheckout) {
         val item = checkout.primaryMethods.first { it.method == Method.GooglePay }
-        googlePay.prepare(checkout.googlePayHost(item))   // /init + isReadyToPay → onReady
+        googlePay.prepare(checkout.googlePayHost(item))   // /init + isReadyToPay
     }
-
-    // The one thing your button does. From here the SDK owns the flow:
-    // sheet → approval selects Google Pay as primary → /validate → 3DS if any → listener.
-    fun onGooglePayButtonTapped() = googlePay.launchSheet()
 }
 ```
+
+```kotlin
+// In your checkout screen — place it unconditionally; it renders nothing until ready:
+GooglePayButton(googlePay, Modifier.fillMaxWidth())
+// Optional looks: theme = ButtonTheme.LIGHT, type = ButtonType.BUY, cornerRadius = 8.dp
+```
+
+Driving the sheet from your own custom button is still possible (`googlePay.launchSheet()`, with
+readiness on `Listener.onReady`) — but Google's brand guidelines require the official button
+asset, so prefer `GooglePayButton`.
 
 ---
 

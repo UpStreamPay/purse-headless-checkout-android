@@ -7,6 +7,8 @@ import com.google.android.gms.common.api.CommonStatusCodes
 import com.google.android.gms.wallet.PaymentData
 import com.google.android.gms.wallet.contract.ApiTaskResult
 import com.google.android.gms.wallet.contract.TaskResultContracts
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.partnerui.redirect.RedirectionCheckoutResult
@@ -78,6 +80,20 @@ class GooglePayCoordinator(
     private var host: GooglePayHost? = null
     private var client: GooglePayClient? = null
 
+    /**
+     * `isReadyToPay`'s answer, as Compose state — what [GooglePayButton] shows itself on. Mirrors
+     * [Listener.onReady] for non-Compose hosts.
+     */
+    var isReady: Boolean by androidx.compose.runtime.mutableStateOf(false)
+        private set
+
+    /**
+     * The prepared request's `allowedPaymentMethods` — [GooglePayButton] hands it to Google's own
+     * `PayButton` so the button renders the shopper's actual card art per Google's guidelines.
+     */
+    var allowedPaymentMethodsJson: String? by androidx.compose.runtime.mutableStateOf(null)
+        private set
+
     /** Report a lifecycle event to the headless host (which deactivates/reacts, web-parity). */
     private fun dispatch(event: PluginEvent) {
         runCatching { host?.buildContext()?.dispatchEvent(event) }
@@ -103,6 +119,8 @@ class GooglePayCoordinator(
     fun prepare(host: GooglePayHost) {
         this.host = host
         submitting = false
+        isReady = false
+        allowedPaymentMethodsJson = null
         val client = GooglePayClient.create(activity, host.environment).also { this.client = it }
         activity.lifecycleScope.launch {
             try {
@@ -111,7 +129,10 @@ class GooglePayCoordinator(
                 val plugin = GooglePayPlugin(context.partner)
                 val req = withContext(Dispatchers.IO) { plugin.buildRequest(context) }
                 request = req
-                listener.onReady(client.isReadyToPay(req.isReadyToPayJson).awaitBoolean())
+                allowedPaymentMethodsJson = req.isReadyToPayJson.optJSONArray("allowedPaymentMethods")?.toString()
+                val ready = client.isReadyToPay(req.isReadyToPayJson).awaitBoolean()
+                isReady = ready
+                listener.onReady(ready)
             } catch (e: Exception) {
                 dispatch(PluginEvent.InitFailed(e.message))
                 listener.onError(e.message)
