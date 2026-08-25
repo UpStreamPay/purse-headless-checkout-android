@@ -61,4 +61,23 @@ class CardMapperTest {
         assertTrue(!card.has("bin"))
         assertTrue(!card.has("selected_network"))
     }
+
+    @Test
+    fun `token payment data carries the saved instrument like web patchItemPayloadWithToken`() {
+        val data = CardMapper.buildTokenPaymentData(
+            eu.purse.partnerui.PayToken(
+                value = "tok-value-1",
+                expirationDate = "2027-08-31T00:00:00Z",
+                holderName = "J DOE",
+                selectedNetwork = "VISA",
+            ),
+        )
+
+        assertEquals("tok-value-1", data.getString("token"))
+        assertEquals("purse", data.getString("vault_vendor"))
+        assertEquals("J DOE", data.getString("holder"))
+        assertEquals("2027-08-31", data.getJSONObject("card").getString("expiry_date"))
+        assertEquals("VISA", data.getJSONObject("card").getString("selected_network"))
+        assertTrue("no fresh vault token when paying a saved one", !data.has("vault_vendor_token_id"))
+    }
 }

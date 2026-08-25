@@ -34,6 +34,7 @@ enum class PurseErrorCode {
 
     // Wallet / tokens
     MISSING_WALLET_SESSION,
+    MISSING_TOKEN,
     SET_WALLET_SESSION_FAILED,
     INVALID_TOKEN_NAME,
     TOKEN_NAME_EXISTS,

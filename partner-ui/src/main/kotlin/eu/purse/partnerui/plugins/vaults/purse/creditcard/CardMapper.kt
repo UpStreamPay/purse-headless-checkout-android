@@ -68,4 +68,21 @@ object CardMapper {
             .put("vault_vendor_token_id", vaultVendorTokenId)
             .put("vault_vendor", VAULT_VENDOR)
     }
+
+    /**
+     * `/validate` `payment_data` for a **saved token** (card-on-file) — web's
+     * `patchItemPayloadWithToken` plus the vault bridge's unconditional `vault_vendor`: the opaque
+     * token value at top level, the card metadata under `card`, the holder alongside.
+     */
+    fun buildTokenPaymentData(token: eu.purse.partnerui.PayToken): JSONObject {
+        val paymentData = JSONObject()
+            .put("token", token.value)
+            .put("vault_vendor", VAULT_VENDOR)
+        token.holderName?.let { paymentData.put("holder", it) }
+        val card = JSONObject()
+        token.wireExpiryDate()?.let { card.put("expiry_date", it) }
+        token.selectedNetwork?.let { card.put("selected_network", it) }
+        if (card.length() > 0) paymentData.put("card", card)
+        return paymentData
+    }
 }

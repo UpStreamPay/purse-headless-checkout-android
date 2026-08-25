@@ -3,8 +3,10 @@ package eu.purse.checkout
 import eu.purse.checkout.payment.item.DisabledState
 import eu.purse.checkout.payment.item.MethodAvailability
 import eu.purse.checkout.payment.item.PaymentItem
+import eu.purse.checkout.payment.item.PaymentToken
 import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.checkout.payment.item.SecondaryMethod
+import eu.purse.checkout.payment.registration.RegistrationState
 import eu.purse.checkout.payment.secondary.SecondaryConfig
 import eu.purse.checkout.payment.secondary.SecondaryConfigs
 import eu.purse.checkout.payment.secondary.SecondaryToken
@@ -33,7 +35,9 @@ import eu.purse.checkout.monitoring.CheckoutEventBus
 import eu.purse.checkout.monitoring.CheckoutEventCode
 import eu.purse.checkout.monitoring.EventLevel
 import eu.purse.core.api.PaymentApiException
+import eu.purse.core.api.WalletApiClient
 import eu.purse.core.datetime.DatetimeApiClient
+import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.datetime.ServerDatetimeChecker
 import eu.purse.core.monitoring.ApiCallMonitor
 import eu.purse.core.monitoring.MonitoringApiClient
@@ -126,6 +130,33 @@ class PurseHeadlessCheckout private constructor(
     private val _paymentMethods = MutableStateFlow(visibleMethods())
     val paymentMethods: StateFlow<List<PaymentItem>> = _paymentMethods.asStateFlow()
 
+    /**
+     * The saved cards (card-on-file) this session offers — web's `paymentTokens` store, from each
+     * method's `integrated_tokens`. Empty for information-request sessions. Managing them (rename /
+     * delete / favorite) additionally needs a `wallet_session` — see [editToken] / [deleteToken] /
+     * [setTokenFavorite].
+     */
+    private val _paymentTokens = MutableStateFlow(visibleTokens())
+    val paymentTokens: StateFlow<List<PaymentToken>> = _paymentTokens.asStateFlow()
+
+    /** Wallet API access, when the widget data carried a `wallet_session`. */
+    private val walletClient: WalletApiClient? = params.walletSession?.let { wallet ->
+        WalletApiClient(
+            apiKey = params.apiKey,
+            walletApiRoot = params.environment.walletApiRoot,
+            ownerReference = wallet.ownerReference,
+            walletSessionId = wallet.sessionId,
+            merchantId = wallet.merchant,
+        )
+    }
+
+    /** The wallet's own token list — gates edit/delete/favorite (web's `ensureEditionCapability`). */
+    @Volatile
+    private var walletTokens: List<WalletApiClient.WalletToken> = emptyList()
+
+    /** Per-method save-token decisions — web's `registration` stores. */
+    private val registrationByMethod = mutableMapOf<String, RegistrationState>()
+
     private val _remainingAmountToPay = MutableStateFlow(splitter.remaining)
     val remainingAmountToPay: StateFlow<BigDecimal> = _remainingAmountToPay.asStateFlow()
 
@@ -205,6 +236,29 @@ class PurseHeadlessCheckout private constructor(
             )
         }
 
+        // Wallet session — fetch the shopper's token list once (web's `setWalletSession`); it only
+        // gates management operations and syncs names/favorites, so a failure is reported but never
+        // breaks the checkout.
+        if (walletClient != null) {
+            scope.launch(Dispatchers.IO) {
+                try {
+                    val tokens = walletClient.getTokens()
+                    walletTokens = tokens
+                    syncWalletTokens(tokens)
+                    bus.post(
+                        CheckoutEventCode.HEADLESS_CHECKOUT_SET_WALLET_SESSION,
+                        payload = monitoringPayload("walletSessionId" to params.walletSession?.sessionId),
+                    )
+                } catch (e: Exception) {
+                    bus.post(
+                        CheckoutEventCode.HEADLESS_CHECKOUT_SET_WALLET_SESSION_FAILED,
+                        EventLevel.ERROR,
+                        monitoringPayload("message" to e.message),
+                    )
+                }
+            }
+        }
+
         // Eligibility pre-check — web's `getEligibilityCheck` at session build
         // (`item-factory/primaries.ts:118`): a plugin that rejects the current client/session gets
         // its method deactivated with the filtered PLUGIN_INCOMPATIBLE code before it is rendered.
@@ -246,6 +300,190 @@ class PurseHeadlessCheckout private constructor(
 
     /** Clear the primary from the split, keeping applied secondaries — web's `clearPrimarySplit`. */
     fun clearPrimarySplit() = setPrimary(null)
+
+    // --- saved cards (wallet) ---------------------------------------------------------------------
+
+    /** Pay with a saved card — web's `token.setAsPrimarySource()`. */
+    fun setPrimaryToken(token: PaymentToken) {
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_PRIMARY_TOKEN_SET_AS_PRIMARY,
+            payload = monitoringPayload("partner" to token.partner.wireValue, "method" to token.method.wireValue),
+        )
+        splitter.setPrimary(token)
+        refresh()
+    }
+
+    /** The current save-token decision for [method] (defaults from its `SaveTokenMode`). */
+    fun registrationOf(method: PrimaryMethod): RegistrationState =
+        registrationByMethod[method.id] ?: RegistrationState(method.saveTokenMode.registeredByDefault)
+
+    /**
+     * Decide whether [method]'s fresh card should be saved at `/validate`, optionally under [name]
+     * — web's `method.register(value, {name})`. The label must match web's
+     * `^[a-zA-Z0-9\s]{1,25}$` and be unique across saved tokens.
+     *
+     * @throws PurseCheckoutException.WalletOperationFailed METHOD_NOT_REGISTERABLE /
+     * INVALID_TOKEN_NAME / TOKEN_NAME_EXISTS.
+     */
+    fun register(method: PrimaryMethod, registered: Boolean = true, name: String? = null) {
+        if (!method.canBeRegistered) {
+            throw PurseCheckoutException.WalletOperationFailed(
+                "${method.id} cannot be registered (save_token_mode=${method.saveTokenMode})",
+                PurseErrorCode.METHOD_NOT_REGISTERABLE,
+            )
+        }
+        if (name != null) validateTokenLabel(name, excludingTokenId = null)
+        registrationByMethod[method.id] =
+            RegistrationState(registered, name ?: registrationByMethod[method.id]?.name)
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_REGISTER,
+            payload = monitoringPayload(
+                "partner" to method.partner.wireValue,
+                "method" to method.method.wireValue,
+                "saveToken" to registered,
+            ),
+        )
+    }
+
+    /**
+     * Rename a saved card (`PATCH …/tokens/{id}/name`) — web's `token.edit({name})`. Needs a
+     * wallet session and the token present in the wallet. Blocking network; call off main.
+     */
+    suspend fun editToken(token: PaymentToken, name: String) {
+        val client = requireWallet()
+        requireInWallet(token)
+        validateTokenLabel(name, excludingTokenId = token.id)
+        client.editTokenName(token.id, name)
+        updateTokenItem(token.id) { it.copy(name = name) }
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_TOKEN_EDIT,
+            payload = monitoringPayload(
+                "partner" to token.partner.wireValue,
+                "method" to token.method.wireValue,
+                "tokenId" to token.id,
+            ),
+        )
+    }
+
+    /**
+     * Delete a saved card (`DELETE …/tokens/{id}`) — web's `token.delete()`: also clears it from
+     * the split and removes it from [paymentTokens].
+     */
+    suspend fun deleteToken(token: PaymentToken) {
+        val client = requireWallet()
+        requireInWallet(token)
+        client.deleteToken(token.id)
+        if (splitter.primaryMethod?.id == token.id) splitter.setPrimary(null)
+        meansOfPayment = meansOfPayment.filterNot { it.id == token.id }
+        walletTokens = walletTokens.filterNot { it.id == token.id }
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_TOKEN_DELETE,
+            payload = monitoringPayload(
+                "partner" to token.partner.wireValue,
+                "method" to token.method.wireValue,
+                "tokenId" to token.id,
+            ),
+        )
+        refresh()
+    }
+
+    /**
+     * Toggle a saved card's favorite flag — web's `token.setAsFavorite()`: optimistic local update,
+     * reverted if the wallet call fails.
+     */
+    suspend fun setTokenFavorite(token: PaymentToken) {
+        val client = requireWallet()
+        requireInWallet(token)
+        val newFavorite = !token.favorite
+        updateTokenItem(token.id) { it.copy(favorite = newFavorite) }
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_TOKEN_SET_FAVORITE,
+            payload = monitoringPayload(
+                "partner" to token.partner.wireValue,
+                "method" to token.method.wireValue,
+                "tokenId" to token.id,
+                "favorite" to newFavorite,
+            ),
+        )
+        try {
+            client.setAsFavorite(token.id, newFavorite)
+            val tokens = client.getTokens()
+            walletTokens = tokens
+            syncWalletTokens(tokens)
+        } catch (e: Exception) {
+            updateTokenItem(token.id) { it.copy(favorite = !newFavorite) }
+            throw e
+        }
+    }
+
+    /** Delete every wallet token — web's `deleteAllTokens()`. */
+    suspend fun deleteAllTokens() {
+        val client = requireWallet()
+        client.deleteAllTokens()
+        val tokenIds = visibleTokens().map { it.id }.toSet()
+        if (splitter.primaryMethod?.id in tokenIds) splitter.setPrimary(null)
+        meansOfPayment = meansOfPayment.filterNot { it is PaymentToken }
+        walletTokens = emptyList()
+        bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_DELETE_ALL_TOKENS)
+        refresh()
+    }
+
+    private fun requireWallet(): WalletApiClient =
+        walletClient ?: throw PurseCheckoutException.WalletOperationFailed(
+            "no wallet_session was attached to this checkout",
+            PurseErrorCode.MISSING_WALLET_SESSION,
+        )
+
+    private fun requireInWallet(token: PaymentToken) {
+        if (walletTokens.none { it.id == token.id }) {
+            throw PurseCheckoutException.WalletOperationFailed(
+                "token ${token.id} is not present in the wallet",
+                PurseErrorCode.MISSING_TOKEN,
+            )
+        }
+    }
+
+    /** Web's token-name rules: `^[a-zA-Z0-9\s]{1,25}$` + unique across saved tokens. */
+    private fun validateTokenLabel(name: String, excludingTokenId: String?) {
+        if (!TOKEN_LABEL_REGEX.matches(name)) {
+            throw PurseCheckoutException.WalletOperationFailed(
+                "invalid token name '$name' — 1-25 alphanumeric/space characters",
+                PurseErrorCode.INVALID_TOKEN_NAME,
+            )
+        }
+        val existsInSession = visibleTokens().any { it.id != excludingTokenId && it.name == name }
+        val existsInWallet = walletTokens.any { it.id != excludingTokenId && it.name == name }
+        if (existsInSession || existsInWallet) {
+            throw PurseCheckoutException.WalletOperationFailed(
+                "a saved card is already named '$name'",
+                PurseErrorCode.TOKEN_NAME_EXISTS,
+            )
+        }
+    }
+
+    /** Overlay the wallet's names/favorites onto the session's token items (web's subscription). */
+    private fun syncWalletTokens(tokens: List<WalletApiClient.WalletToken>) {
+        val byId = tokens.associateBy { it.id }
+        meansOfPayment = meansOfPayment.map { item ->
+            if (item is PaymentToken) {
+                val walletToken = byId[item.id] ?: return@map item
+                item.copy(
+                    favorite = walletToken.favorite ?: item.favorite,
+                    name = walletToken.name ?: item.name,
+                )
+            } else {
+                item
+            }
+        }
+        _paymentTokens.value = visibleTokens()
+    }
+
+    private fun updateTokenItem(tokenId: String, transform: (PaymentToken) -> PaymentToken) {
+        meansOfPayment = meansOfPayment.map {
+            if (it is PaymentToken && it.id == tokenId) transform(it) else it
+        }
+        _paymentTokens.value = visibleTokens()
+    }
 
     /**
      * Release everything this checkout owns — stops the expiry watchdog and any background work.
@@ -406,8 +644,7 @@ class PurseHeadlessCheckout private constructor(
     private fun deactivate(item: PaymentItem, reason: DisabledState) {
         meansOfPayment = meansOfPayment.map { if (it.id == item.id) it.withDisabled(reason) else it }
         if (reason.requiresUiClear || reason.isFiltered) {
-            val primaryInSplit = splitter.splits.map { it.source }.filterIsInstance<PrimaryMethod>().firstOrNull()
-            if (primaryInSplit?.id == item.id) {
+            if (splitter.primaryMethod?.id == item.id) {
                 // The amount really changed, so a full recompute is web-accurate here; the fresh
                 // state survives it (fatal/filtered codes are not recomputable).
                 splitter.setPrimary(null)
@@ -558,12 +795,18 @@ class PurseHeadlessCheckout private constructor(
             payload = monitoringPayload("session_id" to session.id, "nb_items" to splitter.splits.size),
         )
         return try {
+            // Every primary method in the split carries its save-token decision (defaults from its
+            // SaveTokenMode) — web's preValidateItems enhancement.
+            val registrations = splitter.splits
+                .mapNotNull { it.source as? PrimaryMethod }
+                .associate { it.id to registrationOf(it) }
             val result = PaymentValidator(apiClient()).execute(
                 splitter.splits,
                 session.source,
                 collectedByMethod,
                 hooks = hooks,
                 skipOnBeforeValidate = skipOnBeforeValidate,
+                registrationByMethod = registrations,
             )
             _sessionState.value = if (result.isSuccess) SessionState.SUBMITTED else SessionState.ERROR
             bus.post(
@@ -617,6 +860,7 @@ class PurseHeadlessCheckout private constructor(
             splitter.splits.map { it.source },
         )
         _paymentMethods.value = visibleMethods()
+        _paymentTokens.value = visibleTokens()
         notifyAmountUpdate()
     }
 
@@ -634,9 +878,13 @@ class PurseHeadlessCheckout private constructor(
         }
     }
 
-    /** [meansOfPayment] minus filtered disabled states — what the merchant may render. */
+    /** [meansOfPayment] minus filtered states and saved tokens — what [paymentMethods] renders. */
     private fun visibleMethods(): List<PaymentItem> =
-        meansOfPayment.filterNot { it.disabled?.isFiltered == true }
+        meansOfPayment.filterNot { it.disabled?.isFiltered == true || it is PaymentToken }
+
+    /** The saved tokens, minus filtered states — what [paymentTokens] renders. */
+    private fun visibleTokens(): List<PaymentToken> =
+        meansOfPayment.filterIsInstance<PaymentToken>().filterNot { it.disabled?.isFiltered == true }
 
     private fun apiClient(): PaymentApiClient =
         PaymentApiClient(params.apiKey, paymentApiRoot, params.entityId, session.id)
@@ -778,5 +1026,8 @@ class PurseHeadlessCheckout private constructor(
         /** A monitoring payload from non-null pairs. */
         internal fun monitoringPayload(vararg pairs: Pair<String, Any?>): JSONObject =
             JSONObject().apply { pairs.forEach { (key, value) -> if (value != null) put(key, value) } }
+
+        /** Web's token-name rule (`validateTokenName`). */
+        private val TOKEN_LABEL_REGEX = Regex("^[a-zA-Z0-9\\s]{1,25}$")
     }
 }

@@ -54,6 +54,14 @@ sealed class PurseCheckoutException(
         code: PurseErrorCode = PurseErrorCode.SECONDARY_METHOD_WRONG_PAN_FORMAT,
     ) : PurseCheckoutException(message, code)
 
+    /**
+     * A wallet/token management operation (rename, delete, favorite, register) failed its
+     * preconditions — missing wallet session, token not in the wallet, invalid or duplicate label,
+     * or a method that can't be registered.
+     */
+    class WalletOperationFailed(message: String, code: PurseErrorCode) :
+        PurseCheckoutException(message, code)
+
     /** The `/init` tokenization of a secondary was unsuccessful, or the card carries no balance. */
     class SecondaryTokenizationFailed(
         message: String,

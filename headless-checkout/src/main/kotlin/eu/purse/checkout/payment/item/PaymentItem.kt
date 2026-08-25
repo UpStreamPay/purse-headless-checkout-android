@@ -1,10 +1,13 @@
 package eu.purse.checkout.payment.item
 
+import eu.purse.checkout.payment.split.PrimarySource
 import eu.purse.checkout.payment.split.SplitSource
 import eu.purse.core.payment.IntegrationMode
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.MethodConfiguration
 import eu.purse.core.payment.Partner
+import eu.purse.core.payment.SaveTokenMode
+import eu.purse.core.payment.resolvedSaveTokenMode
 import eu.purse.core.vault.CardBrand
 import java.math.BigDecimal
 
@@ -45,9 +48,15 @@ data class PrimaryMethod(
     val integrationType: IntegrationMode?,
     /** `vault.supported_brands` — the card schemes this method accepts; empty when not vaulted. */
     val supportedBrands: List<CardBrand>,
-) : PaymentItem() {
+) : PaymentItem(), PrimarySource {
     override val isSecondary: Boolean get() = false
     override fun withDisabled(disabled: DisabledState?) = copy(disabled = disabled)
+
+    /** The effective save-token policy — web's `resolveSaveTokenMode` (see [SaveTokenMode]). */
+    val saveTokenMode: SaveTokenMode get() = configuration.settings.resolvedSaveTokenMode()
+
+    /** Whether the shopper can choose to save this card — web's `canBeRegistered`. */
+    val canBeRegistered: Boolean get() = saveTokenMode.canBeRegistered
 }
 
 /** A secondary (co-payment) method — gift cards, vouchers, loyalty. Drawn down before the primary. */

@@ -5,6 +5,7 @@ import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.checkout.state.SessionState
 import eu.purse.core.api.PaymentApiException
 import eu.purse.core.datetime.ServerDatetimeChecker
+import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.payment.IntegrationMode
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
@@ -295,6 +296,109 @@ class PurseHeadlessCheckoutTest {
 
         context.dispatchEvent(PluginEvent.Fulfilled(true))
         assertTrue(checkout.isPaymentFulfilled.value)
+    }
+
+    // --- saved cards (wallet) ---------------------------------------------------------------------
+
+    @Test
+    fun `the session's integrated tokens surface on paymentTokens, not on paymentMethods`() {
+        val checkout = checkout()
+
+        val token = checkout.paymentTokens.value.single()
+        assertEquals("tok-1", token.id)
+        assertEquals("my visa", token.name)
+        assertEquals("VISA •••• 4242", token.label)
+        assertEquals("424242xxxxxx4242", token.maskedPan)
+        assertTrue(token.favorite)
+        assertTrue("network token + network_token setting absent -> depends on settings", !token.paysWithoutCvv || token.networkTokenAvailable)
+        assertTrue(checkout.paymentMethods.value.none { it.id == "tok-1" })
+        // The method list is unchanged by the token's presence.
+        assertEquals(3, checkout.primaryMethods.size)
+    }
+
+    @Test
+    fun `a saved token can be the primary and fulfills the payment`() {
+        val checkout = checkout()
+
+        checkout.setPrimaryToken(checkout.paymentTokens.value.single())
+
+        assertTrue(checkout.isPaymentFulfilled.value)
+    }
+
+    @Test
+    fun `registration follows the save-token policy`() {
+        val checkout = checkout()
+        val card = checkout.primaryMethods.single { it.method == Method.CreditCard }
+        val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
+
+        // save_token_mode PREFER: shopper can choose, registered by default.
+        assertTrue(card.canBeRegistered)
+        assertTrue(checkout.registrationOf(card).registered)
+        checkout.register(card, registered = false)
+        assertFalse(checkout.registrationOf(card).registered)
+
+        // No save_token settings at all: NEVER — registering throws.
+        assertFalse(paypal.canBeRegistered)
+        val thrown = assertThrows(PurseCheckoutException.WalletOperationFailed::class.java) {
+            checkout.register(paypal)
+        }
+        assertEquals(PurseErrorCode.METHOD_NOT_REGISTERABLE, thrown.code)
+    }
+
+    @Test
+    fun `a token label must be valid and unique`() {
+        val checkout = checkout()
+        val card = checkout.primaryMethods.single { it.method == Method.CreditCard }
+
+        val invalid = assertThrows(PurseCheckoutException.WalletOperationFailed::class.java) {
+            checkout.register(card, name = "no-dashes-allowed!")
+        }
+        assertEquals(PurseErrorCode.INVALID_TOKEN_NAME, invalid.code)
+
+        val duplicate = assertThrows(PurseCheckoutException.WalletOperationFailed::class.java) {
+            checkout.register(card, name = "my visa")
+        }
+        assertEquals(PurseErrorCode.TOKEN_NAME_EXISTS, duplicate.code)
+
+        checkout.register(card, name = "holiday card")
+        assertEquals("holiday card", checkout.registrationOf(card).name)
+    }
+
+    @Test
+    fun `token management requires a wallet session`() {
+        val checkout = checkout()
+        val token = checkout.paymentTokens.value.single()
+
+        val thrown = assertThrows(PurseCheckoutException.WalletOperationFailed::class.java) {
+            runBlocking { checkout.editToken(token, "new name") }
+        }
+        assertEquals(PurseErrorCode.MISSING_WALLET_SESSION, thrown.code)
+    }
+
+    @Test
+    fun `an information_request session strips saved tokens`() {
+        val json = """
+            {
+              "id": "session-info", "information_request": true, "currency_code": "EUR",
+              "expiration_date": "2999-01-01T00:00:00Z",
+              "protocols": {
+                "purse": {
+                  "creditcard": {
+                    "configurations": {
+                      "stable": true, "labels": ["primary"],
+                      "settings": { "registration_mode": "OFF_SESSION" }
+                    },
+                    "integrated_tokens": [
+                      { "id": "tok-9", "value": "v", "favorite": false, "description": {} }
+                    ]
+                  }
+                }
+              }
+            }
+        """.trimIndent()
+        val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(json))
+
+        assertTrue(checkout.paymentTokens.value.isEmpty())
     }
 
     @Test

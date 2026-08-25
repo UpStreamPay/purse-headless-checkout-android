@@ -2,6 +2,7 @@ package eu.purse.checkout.session
 
 import eu.purse.checkout.payment.item.MethodAvailability
 import eu.purse.checkout.payment.item.PaymentItem
+import eu.purse.checkout.payment.item.PaymentToken
 import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.checkout.payment.item.SecondaryMethod
 import eu.purse.core.payment.RegistrationMode
@@ -61,6 +62,15 @@ object PaymentSessionBuilder {
                 // recompute, and recompute skips them as non-recomputable.
                 val disabled = MethodAvailability.buildTimeDisabledFor(configuration, primaryReach)
                     ?: MethodAvailability.disabledFor(configuration, isInformationRequest, primaryReach)
+
+                // Saved cards ride along their method — one PaymentToken per integrated_tokens[]
+                // row. Stripped from information-request sessions (web `payment/utils.ts`: the
+                // goal is data collection, not paying with saved cards).
+                if (!isInformationRequest) {
+                    entry.integratedTokens.forEach { token ->
+                        items += PaymentToken.from(token, partner, method, configuration, disabled)
+                    }
+                }
 
                 items += if (configuration.isSecondary) {
                     SecondaryMethod(id, partner, method, configuration, disabled)

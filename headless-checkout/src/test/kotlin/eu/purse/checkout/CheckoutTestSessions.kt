@@ -26,8 +26,23 @@ internal object CheckoutTestSessions {
                     "supported_brands": ["CARTE_BANCAIRE", "VISA", "MASTERCARD"],
                     "vendor": "purse", "token_scope": "tenant", "external_three_ds_enabled": true
                   },
-                  "settings": { "registration_mode": "ON_SESSION", "payment_min_amount": 0.01 }
-                }
+                  "settings": {
+                    "registration_mode": "ON_SESSION", "payment_min_amount": 0.01,
+                    "save_token": true, "save_token_mode": "PREFER"
+                  }
+                },
+                "integrated_tokens": [
+                  {
+                    "id": "tok-1", "value": "tok-value-1", "uniqueness_token": "uniq-1",
+                    "expiration_date": "2027-08-31T00:00:00Z", "favorite": true, "name": "my visa",
+                    "source": "MERCHANT", "created_at": "2026-01-01T00:00:00Z",
+                    "description": {
+                      "brand_name": "VISA", "display_token": "VISA •••• 4242",
+                      "holder_name": "J DOE", "masked_pan": "424242xxxxxx4242"
+                    },
+                    "network_token": { "available": true }
+                  }
+                ]
               }
             },
             "paypal": {

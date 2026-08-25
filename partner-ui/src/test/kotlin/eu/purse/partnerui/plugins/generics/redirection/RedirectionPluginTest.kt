@@ -41,7 +41,7 @@ class RedirectionPluginTest {
 
     private fun context(
         collected: Map<String, Any?> = emptyMap(),
-        token: String? = null,
+        token: eu.purse.partnerui.PayToken? = null,
     ) = PartnerUiContext(
         partner = partner,
         method = method,
@@ -139,13 +139,26 @@ class RedirectionPluginTest {
 
     @Test
     fun `preValidation forwards a context token as payment_data token`() = runBlocking {
-        val payload = RedirectionPlugin(partner, method).preValidation(context(token = "tok_123"))
+        val payload = RedirectionPlugin(partner, method)
+            .preValidation(context(token = eu.purse.partnerui.PayToken("tok_123")))
         assertEquals("tok_123", payload.paymentData.getString("token"))
+        assertFalse("no card metadata to patch on this token", payload.paymentData.has("card"))
     }
 
     @Test
-    fun `preValidation ignores a blank context token`() = runBlocking {
-        val payload = RedirectionPlugin(partner, method).preValidation(context(token = "  "))
-        assertFalse(payload.paymentData.has("token"))
+    fun `preValidation patches the full token metadata like web's patchItemPayloadWithToken`() = runBlocking {
+        val token = eu.purse.partnerui.PayToken(
+            value = "tok_456",
+            expirationDate = "2027-08-31T00:00:00Z",
+            holderName = "J DOE",
+            selectedNetwork = "VISA",
+        )
+        val payload = RedirectionPlugin(partner, method).preValidation(context(token = token))
+
+        assertEquals("tok_456", payload.paymentData.getString("token"))
+        assertEquals("J DOE", payload.paymentData.getString("holder"))
+        val card = payload.paymentData.getJSONObject("card")
+        assertEquals("2027-08-31", card.getString("expiry_date"))
+        assertEquals("VISA", card.getString("selected_network"))
     }
 }

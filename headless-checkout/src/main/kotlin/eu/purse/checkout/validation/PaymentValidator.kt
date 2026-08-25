@@ -7,7 +7,9 @@ import eu.purse.checkout.PurseHeadlessCheckout
 import eu.purse.checkout.monitoring.CheckoutEventBus
 import eu.purse.checkout.monitoring.CheckoutEventCode
 import eu.purse.checkout.monitoring.EventLevel
+import eu.purse.checkout.payment.item.PaymentToken
 import eu.purse.checkout.payment.item.PrimaryMethod
+import eu.purse.checkout.payment.registration.RegistrationState
 import eu.purse.checkout.payment.secondary.SecondaryConfigs
 import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.checkout.payment.split.PaymentSplit
@@ -16,8 +18,10 @@ import eu.purse.core.payload.ItemPayload
 import eu.purse.core.payload.ValidateItemPayload
 import eu.purse.core.payload.ValidationResult
 import eu.purse.core.session.LegacyPaymentSession
+import eu.purse.core.vault.CardBrand
 import eu.purse.partnerui.PartnerUiContext
 import eu.purse.partnerui.PartnerUiPlugin
+import eu.purse.partnerui.PayToken
 import eu.purse.partnerui.PluginRegistry
 
 /**
@@ -43,6 +47,7 @@ class PaymentValidator(private val api: PaymentApiClient) {
         collectedByMethod: Map<String, Map<String, Any?>> = emptyMap(),
         hooks: PurseCheckoutHooks? = null,
         skipOnBeforeValidate: Boolean = false,
+        registrationByMethod: Map<String, RegistrationState> = emptyMap(),
     ): ValidationResult {
         requireDistinctSources(splits)
 
@@ -74,6 +79,36 @@ class PaymentValidator(private val api: PaymentApiClient) {
                         amount = split.amount,
                         api = api,
                         collected = collectedByMethod[source.id] ?: emptyMap(),
+                        register = registrationByMethod[source.id]?.registered == true,
+                    )
+                    if (!plugin.validateUi(context)) {
+                        throw PurseCheckoutException.ValidateFailed("client-side validation failed for ${source.id}")
+                    }
+                    payloads += enhanceWithRegistration(plugin.preValidation(context), registrationByMethod[source.id])
+                    prepared += Prepared(plugin, context)
+                }
+
+                // A saved card: same plugin pipeline, but the context carries the token instead of
+                // fresh form data — web renders the element with a `token` attribute.
+                is PaymentToken -> {
+                    val plugin = PluginRegistry.getPlugin(source.partner, source.method, session)
+                        ?: throw PurseCheckoutException.NoPluginRegistered(
+                            "no :partner-ui plugin registered for ${source.partner.wireValue}-${source.method.wireValue}",
+                        )
+                    val context = PartnerUiContext(
+                        partner = source.partner,
+                        method = source.method,
+                        session = session,
+                        amount = split.amount,
+                        api = api,
+                        collected = collectedByMethod[source.id] ?: emptyMap(),
+                        token = PayToken(
+                            value = source.value,
+                            expirationDate = source.expirationDate,
+                            holderName = source.holderName.ifBlank { null },
+                            selectedNetwork = CardBrand.fromWire(source.brand)
+                                .takeIf { it != CardBrand.UNKNOWN }?.wireValue,
+                        ),
                     )
                     if (!plugin.validateUi(context)) {
                         throw PurseCheckoutException.ValidateFailed("client-side validation failed for ${source.id}")
@@ -135,6 +170,25 @@ class PaymentValidator(private val api: PaymentApiClient) {
 
         prepared.forEach { it.plugin.postValidation(result, it.context) }
         return result
+    }
+
+    /**
+     * Enhance a fresh-card payload with the save-token decision — web's `preValidateItems`
+     * (`headless-checkout-validation.ts:25-43`): `payment_preferences.registration` plus
+     * `payment_data.card.token_label` when the shopper named the card.
+     */
+    private fun enhanceWithRegistration(
+        payload: ValidateItemPayload,
+        registration: RegistrationState?,
+    ): ValidateItemPayload {
+        if (registration == null) return payload
+        payload.paymentPreferences.put("registration", registration.registered)
+        if (registration.registered && !registration.name.isNullOrBlank()) {
+            val card = payload.paymentData.optJSONObject("card")
+                ?: org.json.JSONObject().also { payload.paymentData.put("card", it) }
+            card.put("token_label", registration.name)
+        }
+        return payload
     }
 
     /**
