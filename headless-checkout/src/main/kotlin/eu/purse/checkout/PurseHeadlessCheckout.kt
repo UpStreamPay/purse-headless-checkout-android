@@ -25,9 +25,19 @@ import eu.purse.partnerui.plugins.generics.redirection.RedirectionHost
 import eu.purse.partnerui.plugins.partners.klarna.KlarnaHost
 import eu.purse.partnerui.plugins.partners.paypal.wallet.PaypalHost
 import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardHost
+import eu.purse.core.api.PaymentApiException
+import eu.purse.core.datetime.DatetimeApiClient
+import eu.purse.core.datetime.ServerDatetimeChecker
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import java.math.BigDecimal
 import java.time.Instant
@@ -53,7 +63,12 @@ class PurseHeadlessCheckout private constructor(
     val session: PaymentSession,
     /** Resolved Payment API root; calls go to `{root}/{entityId}/sessions/{sessionId}/…`. */
     val paymentApiRoot: String,
+    private val hooks: PurseCheckoutHooks?,
+    private val datetimeChecker: ServerDatetimeChecker,
+    private val watchdogIntervalMs: Long,
 ) {
+    /** Owns the expiry watchdog (and later background work); cancelled by [teardown]. */
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val splitter = PursePaymentSplitter(session.amount)
 
     /**
@@ -100,6 +115,25 @@ class PurseHeadlessCheckout private constructor(
     private val _amountSplit = MutableStateFlow(splitter.splits)
     val amountSplit: StateFlow<List<PaymentSplit>> = _amountSplit.asStateFlow()
 
+    init {
+        // Expiry watchdog — web's `onExpires` (5s poll against the server-offset-corrected clock,
+        // `server-datetime-checker.ts`). The one-shot clock sync happens on the watchdog's thread
+        // so init stays synchronous and network-free.
+        if (_sessionState.value == SessionState.READY) {
+            scope.launch(Dispatchers.IO) {
+                delay(watchdogIntervalMs)
+                datetimeChecker.sync()
+                while (isActive) {
+                    if (datetimeChecker.isExpiredForServer(session.expirationDate)) {
+                        _sessionState.value = SessionState.EXPIRED
+                        break
+                    }
+                    delay(watchdogIntervalMs)
+                }
+            }
+        }
+    }
+
     val currency: String get() = session.currency
     val isInformationRequest: Boolean get() = session.isInformationRequest
     val currentSessionId: String get() = session.id
@@ -116,6 +150,18 @@ class PurseHeadlessCheckout private constructor(
         refresh()
     }
 
+    /** Clear the primary from the split, keeping applied secondaries — web's `clearPrimarySplit`. */
+    fun clearPrimarySplit() = setPrimary(null)
+
+    /**
+     * Release everything this checkout owns — stops the expiry watchdog and any background work.
+     * The instance is unusable afterwards; web's `teardown()`. Call it when the checkout screen is
+     * dismissed for good (not on configuration changes).
+     */
+    fun teardown() {
+        scope.cancel()
+    }
+
     /** The per-partner config for a secondary method (PAN/CVV rules, take policy) — `null` if none. */
     fun secondaryConfig(method: SecondaryMethod): SecondaryConfig? = SecondaryConfigs.forMethod(method)
 
@@ -129,7 +175,14 @@ class PurseHeadlessCheckout private constructor(
      * @throws eu.purse.core.api.PaymentApiException on network/API failure.
      */
     suspend fun getSecondaryToken(method: SecondaryMethod, pan: String, cvv: String? = null): SecondaryToken =
-        SecondaryTokenizer(apiClient()).tokenize(method, pan, cvv, splitter.remaining)
+        try {
+            SecondaryTokenizer(apiClient()).tokenize(method, pan, cvv, splitter.remaining)
+        } catch (e: Exception) {
+            // A terminal API answer (already submitted / expired / gone) ends the whole session,
+            // not just this tokenization — web's `onSessionTerminated` path (`secondaries.ts:176`).
+            if (e.sessionTerminal()) _sessionState.value = SessionState.TERMINATED
+            throw e
+        }
 
     /**
      * Draw an applied [token] down against what's left. For a splittable (gift-card) token, [amount]
@@ -276,18 +329,35 @@ class PurseHeadlessCheckout private constructor(
      * invalid form (see [setFulfilled]).
      * @throws PurseCheckoutException.NoPluginRegistered while no `:partner-ui` plugins exist yet.
      */
-    suspend fun submitPayment(): ValidationResult {
+    suspend fun submitPayment(skipOnBeforeValidate: Boolean = false): ValidationResult {
         if (!splitter.fulfilled) throw PurseCheckoutException.PaymentNotFulfilled()
         unfulfilledItemId()?.let { throw PurseCheckoutException.ItemNotFulfilled(it) }
         _sessionState.value = SessionState.SUBMITTING
         return try {
-            val result = PaymentValidator(apiClient()).execute(splitter.splits, session.source, collectedByMethod)
+            val result = PaymentValidator(apiClient()).execute(
+                splitter.splits,
+                session.source,
+                collectedByMethod,
+                hooks = hooks,
+                skipOnBeforeValidate = skipOnBeforeValidate,
+            )
             _sessionState.value = if (result.isSuccess) SessionState.SUBMITTED else SessionState.ERROR
             result
         } catch (e: Throwable) {
-            _sessionState.value = SessionState.ERROR
+            _sessionState.value =
+                if (e.sessionTerminal()) SessionState.TERMINATED else SessionState.ERROR
             throw e
         }
+    }
+
+    /** Whether [this] (or its cause chain) is a terminal Payment API answer for the session. */
+    private fun Throwable.sessionTerminal(): Boolean {
+        var current: Throwable? = this
+        while (current != null) {
+            if ((current as? PaymentApiException)?.isSessionTerminal == true) return true
+            current = current.cause
+        }
+        return false
     }
 
     /** The first item in the current split that reports its form unfulfilled, if any. */
@@ -324,7 +394,23 @@ class PurseHeadlessCheckout private constructor(
          * @throws eu.purse.core.session.PurseSessionException.SessionMalformed if [widgetData]
          * can't be decoded, or the session is missing `id` / `expiration_date`.
          */
-        fun init(widgetData: String, lockedEnvironment: PurseEnvironment? = null): PurseHeadlessCheckout {
+        fun init(
+            widgetData: String,
+            lockedEnvironment: PurseEnvironment? = null,
+            hooks: PurseCheckoutHooks? = null,
+        ): PurseHeadlessCheckout = init(widgetData, lockedEnvironment, hooks, datetimeChecker = null)
+
+        /**
+         * Test seam: inject a [datetimeChecker] (and a fast watchdog) so unit tests never touch the
+         * network. Production callers use the public overload, which builds the real checker.
+         */
+        internal fun init(
+            widgetData: String,
+            lockedEnvironment: PurseEnvironment? = null,
+            hooks: PurseCheckoutHooks? = null,
+            datetimeChecker: ServerDatetimeChecker?,
+            watchdogIntervalMs: Long = WATCHDOG_INTERVAL_MS,
+        ): PurseHeadlessCheckout {
             val decoded = SessionCodec.decode(widgetData)
             val params = if (lockedEnvironment != null && lockedEnvironment != decoded.environment) {
                 decoded.copy(environment = lockedEnvironment)
@@ -339,7 +425,15 @@ class PurseHeadlessCheckout private constructor(
                 params.apiUrl.ifBlank { params.environment.paymentApiRoot }
             }
             val session = PaymentSessionBuilder.build(params.paymentSession)
-            return PurseHeadlessCheckout(params, session, apiRoot)
+            val checker = datetimeChecker ?: ServerDatetimeChecker(
+                fetchServerTime = {
+                    DatetimeApiClient(params.apiKey, params.environment.datetimeApiRoot).datetime()
+                },
+            )
+            return PurseHeadlessCheckout(params, session, apiRoot, hooks, checker, watchdogIntervalMs)
         }
+
+        /** Web's `ServerDatetimeChecker.WATCHDOG_DURATION`. */
+        const val WATCHDOG_INTERVAL_MS = 5_000L
     }
 }

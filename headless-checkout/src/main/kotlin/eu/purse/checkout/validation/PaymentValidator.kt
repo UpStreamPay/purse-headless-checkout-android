@@ -2,6 +2,7 @@ package eu.purse.checkout.validation
 
 import android.util.Log
 import eu.purse.checkout.PurseCheckoutException
+import eu.purse.checkout.PurseCheckoutHooks
 import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.checkout.payment.secondary.SecondaryConfigs
 import eu.purse.checkout.payment.secondary.SecondaryToken
@@ -36,6 +37,8 @@ class PaymentValidator(private val api: PaymentApiClient) {
         splits: List<PaymentSplit>,
         session: LegacyPaymentSession,
         collectedByMethod: Map<String, Map<String, Any?>> = emptyMap(),
+        hooks: PurseCheckoutHooks? = null,
+        skipOnBeforeValidate: Boolean = false,
     ): ValidationResult {
         requireDistinctSources(splits)
 
@@ -79,6 +82,12 @@ class PaymentValidator(private val api: PaymentApiClient) {
             }
         }
 
+        // Merchant hook between payload preparation and the POST — throwing aborts the submit
+        // (web wraps this as ON_BEFORE_VALIDATE_HOOK_FAILED). Skipped when a plugin auto-submits.
+        if (!skipOnBeforeValidate) {
+            hooks?.onBeforeValidate?.invoke(splits)
+        }
+
         // The one ground-truth point for "what did we actually send to /validate" — one item per
         // split, so the count is also the split size. Logged because a duplicate or a dropped
         // `step_id` is otherwise invisible from the outside and only shows up as an extra
@@ -96,6 +105,13 @@ class PaymentValidator(private val api: PaymentApiClient) {
             api.validate(payloads)
         } catch (e: Exception) {
             throw PurseCheckoutException.ValidateFailed("validate call failed: ${e.message}", e)
+        }
+
+        // Runs before postValidation (and so before any redirection); errors swallowed, like web.
+        try {
+            hooks?.onAfterValidate?.invoke()
+        } catch (e: Exception) {
+            Log.w(TAG, "onAfterValidate hook failed (ignored): ${e.message}")
         }
 
         prepared.forEach { it.plugin.postValidation(result, it.context) }

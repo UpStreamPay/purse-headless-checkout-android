@@ -1,6 +1,9 @@
 package eu.purse.checkout
 
 import eu.purse.checkout.payment.secondary.SecondaryToken
+import eu.purse.checkout.state.SessionState
+import eu.purse.core.api.PaymentApiException
+import eu.purse.core.datetime.ServerDatetimeChecker
 import eu.purse.core.payment.IntegrationMode
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
@@ -15,7 +18,16 @@ import java.math.BigDecimal
 
 class PurseHeadlessCheckoutTest {
 
-    private fun checkout() = PurseHeadlessCheckout.init(CheckoutTestSessions.widgetData())
+    /** A checker that never syncs (no network) and trusts the local clock. */
+    private fun offlineChecker(clock: () -> Long = System::currentTimeMillis) =
+        ServerDatetimeChecker(fetchServerTime = { throw PaymentApiException("offline") }, clock = clock)
+
+    private fun checkout(
+        widgetData: String = CheckoutTestSessions.widgetData(),
+        hooks: PurseCheckoutHooks? = null,
+        checker: ServerDatetimeChecker = offlineChecker(),
+        watchdogIntervalMs: Long = 60_000,
+    ) = PurseHeadlessCheckout.init(widgetData, null, hooks, checker, watchdogIntervalMs)
 
     @Test
     fun `init decodes the session and exposes its methods and split`() {
@@ -145,7 +157,7 @@ class PurseHeadlessCheckoutTest {
               }
             }
         """.trimIndent()
-        val checkout = PurseHeadlessCheckout.init(CheckoutTestSessions.widgetData(json))
+        val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(json))
 
         // The suspended (stable=false) and unreachable (min 50 > amount 4.80) methods are filtered.
         assertEquals(listOf("purse-creditcard"), checkout.paymentMethods.value.map { it.id })
@@ -154,6 +166,77 @@ class PurseHeadlessCheckoutTest {
         // …and a split change never resurrects them (their states are not recomputable).
         checkout.setPrimary(checkout.primaryMethods.single())
         assertEquals(listOf("purse-creditcard"), checkout.paymentMethods.value.map { it.id })
+    }
+
+    @Test
+    fun `the watchdog flips the session to EXPIRED once the server clock passes expiration`() {
+        // The fixture expires in 2999; a clock reading year 3000 makes it expired immediately.
+        val year3000 = java.time.Instant.parse("3000-01-01T00:00:00Z").toEpochMilli()
+        val checkout = checkout(checker = offlineChecker(clock = { year3000 }), watchdogIntervalMs = 1)
+
+        val deadline = System.currentTimeMillis() + 5_000
+        while (checkout.sessionState.value != SessionState.EXPIRED && System.currentTimeMillis() < deadline) {
+            Thread.sleep(10)
+        }
+        assertEquals(SessionState.EXPIRED, checkout.sessionState.value)
+        checkout.teardown()
+    }
+
+    @Test
+    fun `teardown stops the watchdog`() {
+        val year3000 = java.time.Instant.parse("3000-01-01T00:00:00Z").toEpochMilli()
+        // A long first tick leaves time to tear down before the expiry check ever runs.
+        val checkout = checkout(checker = offlineChecker(clock = { year3000 }), watchdogIntervalMs = 200)
+
+        checkout.teardown()
+        Thread.sleep(400)
+
+        assertEquals(SessionState.READY, checkout.sessionState.value)
+    }
+
+    @Test
+    fun `a throwing onBeforeValidate hook aborts the submit`() {
+        var hookSplits = -1
+        val checkout = checkout(
+            hooks = PurseCheckoutHooks(onBeforeValidate = { splits ->
+                hookSplits = splits.size
+                throw IllegalStateException("merchant said no")
+            }),
+        )
+        // A secondary-only split reaches the hook without needing a partner plugin or the network.
+        val giftCard = checkout.secondaryMethods.single()
+        checkout.applySecondary(
+            SecondaryToken(
+                id = "illicado-giftcard-1", partner = giftCard.partner, method = giftCard.method,
+                pan = "9250004781234567890", cvv = "123", name = "gift", balance = BigDecimal("10.00"),
+            ),
+        )
+
+        val thrown = assertThrows(IllegalStateException::class.java) {
+            runBlocking { checkout.submitPayment() }
+        }
+        assertEquals("merchant said no", thrown.message)
+        assertEquals(1, hookSplits)
+        assertEquals(SessionState.ERROR, checkout.sessionState.value)
+    }
+
+    @Test
+    fun `clearPrimarySplit removes the primary but keeps applied secondaries`() {
+        val checkout = checkout()
+        val giftCard = checkout.secondaryMethods.single()
+        checkout.applySecondary(
+            SecondaryToken(
+                id = "illicado-giftcard-1", partner = giftCard.partner, method = giftCard.method,
+                pan = "9250004781234567890", cvv = "123", name = "gift", balance = BigDecimal("2.00"),
+            ),
+        )
+        checkout.setPrimary(checkout.primaryMethods.single { it.method == Method.CreditCard })
+        assertTrue(checkout.isPaymentFulfilled.value)
+
+        checkout.clearPrimarySplit()
+
+        assertFalse(checkout.isPaymentFulfilled.value)
+        assertEquals(1, checkout.appliedSecondaries.size)
     }
 
     @Test
