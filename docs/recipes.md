@@ -343,21 +343,15 @@ fun KlarnaPayment(checkout: PurseHeadlessCheckout, method: PrimaryMethod) {
 }
 ```
 
-**Under the hood** (View system) — there is no separate render call: the `ViewGroup` you hand the
-constructor *is* the render surface, and `prepare` inflates the widget into it. "Render" and
-"prepare" collapse into one step here, which is exactly what the element path un-collapses:
+On submit the order is web-parity: `/validate` first, then — only on its success — Klarna's own
+`authorize()` inside the plugin's `postValidation`.
 
-```kotlin
-private val klarna = KlarnaCoordinator(this, klarnaContainer /* the render surface */, klarnaListener)
-
-fun onKlarnaSelected(checkout: PurseHeadlessCheckout, item: PrimaryMethod) {
-    checkout.setPrimary(item)
-    // /init → client_token → the widget renders into klarnaContainer
-    klarna.prepare(checkout.klarnaHost(item, "$packageName.klarna://return"))
-}
-
-fun onPayTapped() = klarna.submit()  // /validate first, then Klarna authorize() (web-parity order)
-```
+**Under the hood** the element wraps `rememberKlarnaCoordinator(listener)` +
+`prepare(checkout.klarnaHost(method, returnUrl))` + `submit()`. For a View-system screen,
+construct `KlarnaCoordinator(activity, container, listener)` in `onCreate` — there is no separate
+render call on that path: the `ViewGroup` you hand the constructor *is* the render surface, and
+`prepare` inflates the widget into it (render and prepare collapse into one step, which is exactly
+what the element path un-collapses).
 
 ---
 
