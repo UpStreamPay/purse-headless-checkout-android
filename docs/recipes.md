@@ -57,7 +57,7 @@ lifecycleScope.launch {
         when (state) {
             SessionState.READY      -> Unit                   // build your UI
             SessionState.SUBMITTING -> showSpinner()
-            SessionState.SUBMITTED  -> Unit                   // spent — see recipe 11
+            SessionState.SUBMITTED  -> Unit                   // spent — see recipe 12
             SessionState.ERROR      -> showRetry()            // transient, session still usable
             SessionState.EXPIRED,                             // watchdog fired (server clock)
             SessionState.TERMINATED -> restartCheckout()      // fatal — mint a new session
@@ -103,7 +103,7 @@ val schemes = checkout.schemeAssets(card) // [(cb.svg, "Cartes Bancaires"), (vis
 ```
 
 Amount-driven disabled states **recompute automatically** as the split changes: apply a gift card
-and a primary whose minimum is no longer reachable dims itself (recipe 8).
+and a primary whose minimum is no longer reachable dims itself (recipe 10).
 
 ---
 
@@ -124,21 +124,72 @@ payButton.setOnClickListener {
     lifecycleScope.launch {
         try {
             val result = withContext(Dispatchers.IO) { checkout.submitPayment() }
-            // result.globalStatus, result.raw — but for redirect flows prefer recipe 11.
+            // result.globalStatus, result.raw — but for redirect flows prefer recipe 12.
         } catch (e: PurseCheckoutException) {
-            handle(e.code) // typed — see recipe 13
+            handle(e.code) // typed — see recipe 15
         }
     }
 }
 ```
 
-> Interactive methods (card, Google Pay, PayPal, Klarna, redirection) are normally submitted
-> **through their coordinator** (recipes 4–7), which wraps `submitPayment()` with the
-> vendor-specific steps. Call `submitPayment()` yourself only for flows you drive end to end.
+> Interactive methods (card, Google Pay, PayPal, Klarna, redirection) are normally rendered
+> through the **unified payment element** (recipe 4) — or driven through their individual
+> coordinators (recipes 5–9) — which wrap `submitPayment()` with the vendor-specific steps. Call
+> `submitPayment()` yourself only for flows you drive end to end.
 
 ---
 
-## 4. Card payment (Compose + SecureFields)
+## 4. The payment element — render any method with one API
+
+The Compose analog of web's `getPaymentElement`: one call resolves the same plugin `/validate`
+will use, renders whatever that method needs on screen — the SecureFields card form, the official
+Google Pay / PayPal button, Klarna's native widget, nothing at all for a redirection method — and
+wires launchers, `prepare`, and lifecycle automatically. One listener shape
+(`PaymentElementListener`) covers every method.
+
+```kotlin
+@Composable
+fun SelectedMethod(checkout: PurseHeadlessCheckout, method: PrimaryMethod) {
+    val element = rememberPaymentElement(checkout, method, listener = object : PaymentElementListener {
+        override fun onResult(summary: String, globalStatus: String?) { /* recipe 12 if null */ }
+        override fun onCanceled() { }
+        override fun onError(message: String?) { }
+    })
+
+    Column {
+        // The method's surface: card form / wallet button / Klarna widget. No-op when
+        // element.hasUi is false (redirection methods — their hosted page IS the payment step).
+        PaymentElementUi(element, Modifier.fillMaxWidth())
+
+        // Your own Pay button drives form-like methods; wallet buttons submit themselves.
+        if (!element.selfSubmitting) {
+            Button(onClick = { element.submit() }, enabled = element.ready) { Text("Pay") }
+        }
+    }
+}
+```
+
+The element's three flags tell you how to lay out the row, per method:
+
+| Method | `hasUi` | `selfSubmitting` | You render |
+|---|---|---|---|
+| Card (Purse vault) | ✓ | — | the element (form) + your Pay button |
+| Google Pay / PayPal | ✓ | ✓ | the element (their branded button), nothing else |
+| Klarna | ✓ | — | the element (widget) + your Pay button |
+| Redirection template | — | — | just your Pay button |
+
+Create the element **when the shopper selects the method**, not for every row of the list —
+creation runs the method's `prepare`, which for Klarna and redirection methods is a `POST /init`
+(a network round-trip and a session step). `element.ready` (Compose state) gates your Pay button;
+selection itself is handled for you: form methods go through `checkout.setPrimary(method)` as in
+recipe 3, wallet buttons commit their method on approval.
+
+Recipes 5–9 below show what each method's element does under the hood, and the imperative
+coordinator path for non-Compose screens.
+
+---
+
+## 5. Card payment (Compose + SecureFields)
 
 The card form is Compose-first. `rememberCardCoordinator` owns the SecureFields instance;
 `VaultForm` renders it. PAN/expiry/CVC validation and brand detection happen **inside**
@@ -153,7 +204,7 @@ fun CardPayment(checkout: PurseHeadlessCheckout, method: PrimaryMethod) {
     val coordinator = rememberCardCoordinator(host, listener = object : CardCoordinator.Listener {
         override fun onReady(ready: Boolean) { /* form validity — gate your Pay button */ }
         override fun onResult(summary: String, globalStatus: String?) {
-            // globalStatus == null after a 3-D Secure return → confirm via recipe 11.
+            // globalStatus == null after a 3-D Secure return → confirm via recipe 12.
         }
         override fun onRequiresAction() { /* 3-D Secure launching (informational) */ }
         override fun onCanceled() { }
@@ -178,7 +229,7 @@ call `coordinator.sdk.setBrandSelection(...)`.
 
 ---
 
-## 5. Google Pay
+## 6. Google Pay
 
 Google Pay is **rendered, not driven**, exactly like web — where `getPaymentElement("googlepay")`
 hands you an element that *is* the official button with the whole flow wired inside. The Android
@@ -194,7 +245,7 @@ class CheckoutActivity : ComponentActivity() {
     // In onCreate scope — the coordinator registers ActivityResult launchers, which must
     // happen before the Activity is started.
     private val googlePay = GooglePayCoordinator(this, object : GooglePayCoordinator.Listener {
-        override fun onResult(summary: String, globalStatus: String?) { /* recipe 11 if null */ }
+        override fun onResult(summary: String, globalStatus: String?) { /* recipe 12 if null */ }
         override fun onRequiresAction() { /* a 3-D Secure step is opening */ }
         override fun onCanceled() { /* sheet dismissed — split untouched, nothing submitted */ }
         override fun onError(message: String?) { }
@@ -219,7 +270,7 @@ asset, so prefer `GooglePayButton`.
 
 ---
 
-## 6. PayPal (wallet, pay-now)
+## 7. PayPal (wallet, pay-now)
 
 Self-submitting like Google Pay — no `setPrimary`, no `submitPayment`. `prepare` is cheap (no
 `/init`: PayPal's order is only created on the button tap, so an abandoned selection never leaves
@@ -240,7 +291,7 @@ fun onPaypalButtonTapped() = paypal.submit()
 
 ---
 
-## 7. Klarna (installments)
+## 8. Klarna (installments)
 
 Klarna renders its own native widget into a container you provide, and needs a return-URL
 intent-filter in **your** manifest:
@@ -269,7 +320,7 @@ fun onPayTapped() = klarna.submit()  // /validate first, then Klarna authorize()
 
 ---
 
-## 8. Redirection methods (generic template)
+## 9. Redirection methods (generic template)
 
 One coordinator serves **every** method the session labels `template: "redirection"` (or
 `integration_mode: "redirection"`) — Fintecture, Bizum, Oney, Sequra… — without naming any of them:
@@ -287,11 +338,11 @@ fun onPayTapped() = redirection.submit()  // /validate → PSP page in the harde
 ```
 
 The shopper returning from the PSP page reports `onResult(..., globalStatus = null)`: that means
-"they came back", **not** "it worked" — settle it with recipe 11.
+"they came back", **not** "it worked" — settle it with recipe 12.
 
 ---
 
-## 9. Gift cards & co-payment (secondary methods)
+## 10. Gift cards & co-payment (secondary methods)
 
 Secondaries (gift cards, vouchers, loyalty) tokenize through `/init`, then draw down the amount
 before the primary. Client-side PAN/CVV rules per partner are available up front:
@@ -343,7 +394,7 @@ per-session usage limits and balances are enforced by the splitter.
 
 ---
 
-## 10. Saved cards (wallet)
+## 11. Saved cards (wallet)
 
 When the session carries `integrated_tokens` they surface on `paymentTokens` (never mixed into
 `paymentMethods`), each with display metadata:
@@ -405,7 +456,7 @@ lifecycleScope.launch(Dispatchers.IO) {
 
 ---
 
-## 11. Confirm the payment after a redirect
+## 12. Confirm the payment after a redirect
 
 On web, the final redirect lands on your success page — on Android the shopper lands **back in
 your app**, so "they returned" must be settled against the session's own transactions. Never treat
@@ -436,7 +487,7 @@ aggregated into one row on v1. `PaymentSessionStatus` already accounts for that;
 
 ---
 
-## 12. Events & monitoring
+## 13. Events & monitoring
 
 **Plugin lifecycle events** — everything the plugins report (the analog of web's
 `element.on(...)`), flattened onto one flow. The SDK already *reacts* to the load-bearing ones
@@ -472,7 +523,7 @@ backgrounds) to Purse's monitoring API — nothing to wire.
 
 ---
 
-## 13. Hooks
+## 14. Hooks
 
 Run merchant logic around `/validate` — e.g. persist the split server-side before committing:
 
@@ -497,7 +548,7 @@ web's `xpay` trigger.
 
 ---
 
-## 14. Error handling
+## 15. Error handling
 
 Every SDK exception carries a machine-readable `code` (shared vocabulary with web) and a
 documentation link:
@@ -524,7 +575,7 @@ loop.
 
 ---
 
-## 15. Customization — locale, texts, theme
+## 16. Customization — locale, texts, theme
 
 ```kotlin
 val checkout = PurseHeadlessCheckout.init(
@@ -554,7 +605,7 @@ Without overrides the card form falls back to the SDK's localized resources (`va
 
 ---
 
-## 16. Lifecycle & teardown
+## 17. Lifecycle & teardown
 
 ```kotlin
 override fun onDestroy() {

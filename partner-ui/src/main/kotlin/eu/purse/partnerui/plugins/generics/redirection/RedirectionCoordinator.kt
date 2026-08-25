@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
 import eu.purse.core.payload.ValidationResult
+import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.partnerui.redirect.RedirectionCheckoutResult
@@ -37,39 +38,32 @@ import kotlinx.coroutines.withContext
  * *and* Oney) reuses this same instance: [prepare] rebinds it to whichever item the shopper selected,
  * exactly as the demo does when switching rows.
  */
-class RedirectionCoordinator(
+class RedirectionCoordinator private constructor(
     private val activity: ComponentActivity,
-    private val listener: Listener,
+    private val listener: PaymentElementListener,
+    registerLaunchers: Boolean,
 ) {
-    interface Listener {
-        /** `/init` succeeded — there is no form to fill, so the shopper can submit immediately. */
-        fun onReady(ready: Boolean) {}
+    /**
+     * Same contract as [PaymentElementListener] — kept as a nested name for source compatibility.
+     * `onReady` means `/init` succeeded (there is no form, the shopper can submit immediately);
+     * `onRequiresAction` is the PSP's hosted page opening — for this template, the payment step.
+     */
+    interface Listener : PaymentElementListener
 
-        /**
-         * Terminal success — [summary] is a human-readable status to display, [globalStatus] the
-         * `/validate` response's own `global_status` when this outcome came from one. `null` after a
-         * redirect return, where the real outcome is deliberately not chased (see [onRedirectReturn]).
-         */
-        fun onResult(summary: String, globalStatus: String? = null) {}
+    /** Imperative construction — must run in the Activity's `onCreate`, before it is STARTED. */
+    constructor(activity: ComponentActivity, listener: PaymentElementListener) :
+        this(activity, listener, registerLaunchers = true)
 
-        /** The PSP's hosted page is being opened — for this template, the payment step itself. */
-        fun onRequiresAction() {}
+    /** Launch seam — see [GooglePayCoordinator]'s twin fields for the rationale. */
+    internal var launchRedirect: ((eu.purse.partnerui.redirect.RedirectAction) -> Unit)? = null
 
-        /**
-         * The `payment_id` behind this payment, when the `/validate` response carries one — same
-         * source and caveats as
-         * [GooglePayCoordinator.Listener.onPaymentId][eu.purse.partnerui.plugins.generics.googlepay.GooglePayCoordinator.Listener.onPaymentId]:
-         * purely informational (e.g. prefilling a "Capture" tool), never required for the payment
-         * itself to resolve.
-         */
-        fun onPaymentId(paymentId: String) {}
-
-        fun onCanceled() {}
-        fun onError(message: String?) {}
+    init {
+        if (registerLaunchers) {
+            val redirectLauncher =
+                activity.registerForActivityResult(RedirectionCheckoutContract()) { onRedirectReturn(it) }
+            launchRedirect = { action -> redirectLauncher.launch(action) }
+        }
     }
-
-    private val redirectLauncher =
-        activity.registerForActivityResult(RedirectionCheckoutContract()) { onRedirectReturn(it) }
 
     private var host: RedirectionHost? = null
     private var request: RedirectionRequest? = null
@@ -170,7 +164,7 @@ class RedirectionCoordinator(
         if (action != null) {
             dispatch(PluginEvent.Redirect)
             listener.onRequiresAction()
-            redirectLauncher.launch(action)
+            launchRedirect?.invoke(action)
         } else {
             Log.w(TAG, "no redirect to follow — a redirection method's /validate normally carries one")
             listener.onResult(
@@ -180,7 +174,7 @@ class RedirectionCoordinator(
         }
     }
 
-    private fun onRedirectReturn(result: RedirectionCheckoutResult) {
+    internal fun onRedirectReturn(result: RedirectionCheckoutResult) {
         when (result) {
             // Same caveat as the other coordinators — Approved means the shopper came back, not that
             // the payment succeeded; re-check status independently.
@@ -195,7 +189,11 @@ class RedirectionCoordinator(
         }
     }
 
-    private companion object {
+    internal companion object {
         const val TAG = "RedirectionCoordinator"
+
+        /** Compose factory seam — [rememberRedirectionCoordinator] injects a managed launcher. */
+        fun forCompose(activity: ComponentActivity, listener: PaymentElementListener) =
+            RedirectionCoordinator(activity, listener, registerLaunchers = false)
     }
 }

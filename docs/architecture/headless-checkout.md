@@ -249,10 +249,15 @@ process-death safety).
 PayPal BNPL ("Pay Later") and PayPal vaulting (the wallet pay-now plugin ships; see
 [docs/plugins/paypal.md](../plugins/paypal.md)), Apple Pay (same shape as Google Pay), the
 `adyen`/`stripe` Google
-Pay gateway builders beyond the `default` fallback, the rendering host (web's `<purse-partner-ui>`
-element) for anything other than the card plugin's own Compose surface, the `ancv-connect`
+Pay gateway builders beyond the `default` fallback, the `ancv-connect`
 two-phase secondary flow, the splitter's voucher→loyalty→primary autofill middleware, the
 `pci_proxy` vault vendor (only the `purse` vault resolves a card plugin), and CVV re-entry when
 paying a saved token — `securefields-android` 1.0.0 has no tokenize-against-existing-token mode,
 so saved-token payments ride the no-CVV gates (`pay_token_no_cvv` / network tokens) until the
 SecureFields SDK grows one.
+
+The rendering host (web's `<purse-partner-ui>` element) is **no longer deferred**: the unified
+payment element (`eu.purse.checkout.element.rememberPaymentElement` + `PaymentElementUi`) is its
+Compose analog, dispatching to each plugin's rendered surface — the SecureFields card form, the
+official Google Pay / PayPal buttons, Klarna's native widget — behind one shape and one
+`PaymentElementListener` contract, with launchers and `prepare` wired automatically.

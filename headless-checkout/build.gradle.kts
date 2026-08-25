@@ -1,5 +1,8 @@
 plugins {
     alias(libs.plugins.android.library)
+    // For the unified payment element (web's `getPaymentElement` analog) — the one Compose
+    // surface this otherwise-headless module ships; everything else stays UI-free.
+    alias(libs.plugins.kotlin.compose)
 }
 
 // The headless purse-payment SDK — mirrors usp-widget's `headless-checkout` package. Owns the
@@ -22,6 +25,10 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_11
         targetCompatibility = JavaVersion.VERSION_11
+    }
+
+    buildFeatures {
+        compose = true
     }
 
     testOptions {
@@ -49,6 +56,12 @@ dependencies {
     // ProcessLifecycleOwner — the Android analog of web's `beforeunload`: the analytics batch
     // queue flushes when the app goes to background (see CheckoutEventBus wiring).
     implementation(libs.androidx.lifecycle.process)
+
+    // The unified payment element (`eu.purse.checkout.element`) — the module's one Compose
+    // surface, dispatching to the partner surfaces `:partner-ui` renders.
+    implementation(platform(libs.androidx.compose.bom))
+    implementation(libs.androidx.ui)
+    implementation(libs.androidx.compose.runtime)
 
     // org.json is provided by the Android platform at compile/runtime (part of android.jar) —
     // no production dependency needed. The Android platform stub throws on the unit test

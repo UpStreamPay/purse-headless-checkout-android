@@ -9,6 +9,7 @@ import com.google.android.gms.wallet.contract.ApiTaskResult
 import com.google.android.gms.wallet.contract.TaskResultContracts
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
+import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.partnerui.redirect.RedirectionCheckoutResult
@@ -39,43 +40,41 @@ import kotlin.coroutines.resumeWithException
  * which must happen before the Activity is STARTED. The host is supplied later, per payment, via
  * [prepare]. Outcomes are reported on [listener].
  */
-class GooglePayCoordinator(
+class GooglePayCoordinator private constructor(
     private val activity: ComponentActivity,
-    private val listener: Listener,
+    private val listener: PaymentElementListener,
+    registerLaunchers: Boolean,
 ) {
-    interface Listener {
-        /** Result of the `isReadyToPay` check after [prepare] — show the button only when `true`. */
-        fun onReady(ready: Boolean) {}
+    /**
+     * Same contract as [PaymentElementListener] — kept as a nested name for source compatibility
+     * and per-method docs. `onReady` is the `isReadyToPay` answer after [prepare]; `onResult` with
+     * a `null` globalStatus is a redirect return whose real outcome must be re-checked against the
+     * session (see [onRedirectReturn]).
+     */
+    interface Listener : PaymentElementListener
 
-        /**
-         * Terminal success — [summary] is a human-readable status to display, [globalStatus] the
-         * `/validate` response's own `global_status` when this outcome came from one. `null` after a
-         * redirect return, where the real outcome is deliberately not chased (see [onRedirectReturn])
-         * — don't render that as either success or failure without re-checking the session.
-         */
-        fun onResult(summary: String, globalStatus: String? = null) {}
+    /** Imperative construction — must run in the Activity's `onCreate`, before it is STARTED. */
+    constructor(activity: ComponentActivity, listener: PaymentElementListener) :
+        this(activity, listener, registerLaunchers = true)
 
-        /** A 3-D Secure step is being launched (informational). */
-        fun onRequiresAction() {}
+    /**
+     * Launch seams — filled by the constructor's own launchers, or injected by
+     * [rememberGooglePayCoordinator] with Compose-managed ones (which may be created after the
+     * Activity is STARTED, where `registerForActivityResult` would throw).
+     */
+    internal var launchPaymentData: ((com.google.android.gms.tasks.Task<PaymentData>) -> Unit)? = null
+    internal var launchRedirect: ((eu.purse.partnerui.redirect.RedirectAction) -> Unit)? = null
 
-        /**
-         * The `payment_id` behind this payment, when [submit] can read one off the widget's own
-         * confirmation-page redirect (see [eu.purse.partnerui.redirect.RedirectionResolver.extractWidgetConfirmationPaymentId])
-         * — the id the orchestration API's `POST /v2/payments/{id}/captures` needs. Purely
-         * informational (e.g. to prefill a "Capture" debug tool); never required for the payment
-         * itself to resolve.
-         */
-        fun onPaymentId(paymentId: String) {}
-
-        fun onCanceled() {}
-        fun onError(message: String?) {}
+    init {
+        if (registerLaunchers) {
+            val paymentDataLauncher =
+                activity.registerForActivityResult(TaskResultContracts.GetPaymentDataResult()) { onPaymentData(it) }
+            val redirectLauncher =
+                activity.registerForActivityResult(RedirectionCheckoutContract()) { onRedirectReturn(it) }
+            launchPaymentData = { task -> paymentDataLauncher.launch(task) }
+            launchRedirect = { action -> redirectLauncher.launch(action) }
+        }
     }
-
-    private val paymentDataLauncher =
-        activity.registerForActivityResult(TaskResultContracts.GetPaymentDataResult()) { onPaymentData(it) }
-
-    private val redirectLauncher =
-        activity.registerForActivityResult(RedirectionCheckoutContract()) { onRedirectReturn(it) }
 
     private var host: GooglePayHost? = null
     private var client: GooglePayClient? = null
@@ -154,10 +153,10 @@ class GooglePayCoordinator(
         // Task straight from loadPaymentData() throws "The task has to be executed before using this
         // API to resolve its result." So wait for completion first, on this same (main) thread.
         client.loadPaymentDataTask(req.paymentDataRequestJson)
-            .addOnCompleteListener { completedTask -> paymentDataLauncher.launch(completedTask) }
+            .addOnCompleteListener { completedTask -> launchPaymentData?.invoke(completedTask) }
     }
 
-    private fun onPaymentData(taskResult: ApiTaskResult<PaymentData>) {
+    internal fun onPaymentData(taskResult: ApiTaskResult<PaymentData>) {
         val host = host ?: run { submitting = false; return listener.onError("not prepared") }
         when (taskResult.status.statusCode) {
             CommonStatusCodes.SUCCESS -> {
@@ -218,7 +217,7 @@ class GooglePayCoordinator(
                 if (action != null) {
                     dispatch(PluginEvent.Redirect)
                     listener.onRequiresAction()
-                    redirectLauncher.launch(action)
+                    launchRedirect?.invoke(action)
                 } else {
                     listener.onResult("global_status=${result.globalStatus}", result.globalStatus)
                 }
@@ -230,7 +229,7 @@ class GooglePayCoordinator(
         }
     }
 
-    private fun onRedirectReturn(result: RedirectionCheckoutResult) {
+    internal fun onRedirectReturn(result: RedirectionCheckoutResult) {
         when (result) {
             // Approved only means the shopper came back — NOT the payment outcome. It deliberately
             // does not chase that outcome itself: a real 3-D Secure challenge's own final redirect is
@@ -257,7 +256,11 @@ class GooglePayCoordinator(
             }
         }
 
-    private companion object {
+    internal companion object {
         const val TAG = "GooglePayCoordinator"
+
+        /** Compose factory seam — [rememberGooglePayCoordinator] injects managed launchers. */
+        fun forCompose(activity: ComponentActivity, listener: PaymentElementListener) =
+            GooglePayCoordinator(activity, listener, registerLaunchers = false)
     }
 }

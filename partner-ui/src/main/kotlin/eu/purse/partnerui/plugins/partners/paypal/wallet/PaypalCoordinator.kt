@@ -5,6 +5,9 @@ import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
 import eu.purse.core.environment.PurseEnvironment
 import eu.purse.core.payload.ValidationResult
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.redirect.RedirectAction
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
@@ -35,42 +38,40 @@ import kotlinx.coroutines.withContext
  * which must happen before the Activity is STARTED. The host is supplied later, per payment, via
  * [prepare]. Outcomes are reported on [listener].
  */
-class PaypalCoordinator(
+class PaypalCoordinator private constructor(
     private val activity: ComponentActivity,
-    private val listener: Listener,
+    private val listener: PaymentElementListener,
+    registerLaunchers: Boolean,
 ) {
-    interface Listener {
-        /** PayPal is usable for this session — show the branded button only when `true`. */
-        fun onReady(ready: Boolean) {}
+    /**
+     * Same contract as [PaymentElementListener] — kept as a nested name for source compatibility.
+     * `onReady` means PayPal is usable for this session; `onResult` with a `null` globalStatus is
+     * a redirect return whose real outcome must be re-checked against the session.
+     */
+    interface Listener : PaymentElementListener
 
-        /**
-         * Terminal success — [summary] is a human-readable status to display, [globalStatus] the
-         * `/validate` response's own `global_status` when this outcome came from one. `null` after a
-         * redirect return, where the real outcome is deliberately not chased (see [onRedirectReturn])
-         * — don't render that as either success or failure without re-checking the session.
-         */
-        fun onResult(summary: String, globalStatus: String? = null) {}
+    /** Imperative construction — must run in the Activity's `onCreate`, before it is STARTED. */
+    constructor(activity: ComponentActivity, listener: PaymentElementListener) :
+        this(activity, listener, registerLaunchers = true)
 
-        /** PayPal's approval, or a chained 3-D Secure step, is being launched (informational). */
-        fun onRequiresAction() {}
+    /** Launch seams — see [GooglePayCoordinator]'s twin fields for the rationale. */
+    internal var launchPaypal: ((PaypalCheckoutInput) -> Unit)? = null
+    internal var launchRedirect: ((RedirectAction) -> Unit)? = null
 
-        /**
-         * The `payment_id` behind this payment, when [submit] can read one off the widget's own
-         * confirmation-page redirect (see [RedirectionResolver.extractWidgetConfirmationPaymentId])
-         * — the id the orchestration API's `POST /v2/payments/{id}/captures` needs. Purely
-         * informational; never required for the payment itself to resolve.
-         */
-        fun onPaymentId(paymentId: String) {}
-
-        fun onCanceled() {}
-        fun onError(message: String?) {}
+    init {
+        if (registerLaunchers) {
+            val paypalLauncher =
+                activity.registerForActivityResult(PaypalCheckoutContract()) { onPaypalResult(it) }
+            val redirectLauncher =
+                activity.registerForActivityResult(RedirectionCheckoutContract()) { onRedirectReturn(it) }
+            launchPaypal = { input -> paypalLauncher.launch(input) }
+            launchRedirect = { action -> redirectLauncher.launch(action) }
+        }
     }
 
-    private val paypalLauncher =
-        activity.registerForActivityResult(PaypalCheckoutContract()) { onPaypalResult(it) }
-
-    private val redirectLauncher =
-        activity.registerForActivityResult(RedirectionCheckoutContract()) { onRedirectReturn(it) }
+    /** PayPal is prepared for this session, as Compose state — what [PaypalButton] shows itself on. */
+    var isReady: Boolean by androidx.compose.runtime.mutableStateOf(false)
+        internal set
 
     private var host: PaypalHost? = null
     private var partnerWireValue: String? = null
@@ -99,6 +100,7 @@ class PaypalCoordinator(
         this.host = host
         submitting = false
         partnerWireValue = host.buildContext().partner.wireValue
+        isReady = true
         listener.onReady(true)
     }
 
@@ -128,7 +130,7 @@ class PaypalCoordinator(
                 // step id travels with the approval's own output in one call (see onPaypalResult).
                 pendingStepId = request.stepId
                 listener.onRequiresAction()
-                paypalLauncher.launch(
+                launchPaypal?.invoke(
                     PaypalCheckoutInput(
                         orderId = request.orderId,
                         clientId = config.clientId,
@@ -143,7 +145,7 @@ class PaypalCoordinator(
         }
     }
 
-    private fun onPaypalResult(result: PaypalCheckoutResult) {
+    internal fun onPaypalResult(result: PaypalCheckoutResult) {
         val host = host ?: run { submitting = false; return listener.onError("not prepared") }
         when (result) {
             is PaypalCheckoutResult.Approved -> {
@@ -219,13 +221,13 @@ class PaypalCoordinator(
         if (action != null) {
             dispatch(PluginEvent.Redirect)
             listener.onRequiresAction()
-            redirectLauncher.launch(action)
+            launchRedirect?.invoke(action)
         } else {
             listener.onResult("global_status=${result.globalStatus}", result.globalStatus)
         }
     }
 
-    private fun onRedirectReturn(result: RedirectionCheckoutResult) {
+    internal fun onRedirectReturn(result: RedirectionCheckoutResult) {
         when (result) {
             // Approved only means the shopper came back — NOT the payment outcome. It deliberately
             // does not chase that outcome itself: a real 3-D Secure challenge's own final redirect is
@@ -244,8 +246,12 @@ class PaypalCoordinator(
         }
     }
 
-    private companion object {
+    internal companion object {
         const val TAG = "PaypalCoordinator"
+
+        /** Compose factory seam — [rememberPaypalCoordinator] injects managed launchers. */
+        fun forCompose(activity: ComponentActivity, listener: PaymentElementListener) =
+            PaypalCoordinator(activity, listener, registerLaunchers = false)
     }
 }
 
