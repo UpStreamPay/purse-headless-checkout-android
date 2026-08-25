@@ -178,14 +178,38 @@ The element's three flags tell you how to lay out the row, per method:
 | Klarna | ✓ | — | the element (widget) + your Pay button |
 | Redirection template | — | — | just your Pay button |
 
-Create the element **when the shopper selects the method**, not for every row of the list —
-creation runs the method's `prepare`, which for Klarna and redirection methods is a `POST /init`
-(a network round-trip and a session step). `element.ready` (Compose state) gates your Pay button;
-selection itself is handled for you: form methods go through `checkout.setPrimary(method)` as in
-recipe 3, wallet buttons commit their method on approval.
+### Create vs render vs ready — the element's lifecycle
 
-Recipes 5–9 below show what each method's element does under the hood, and the imperative
-coordinator path for non-Compose screens.
+Two distinct steps hide behind the element, and it helps to keep them apart:
+
+- **Create = prepare (data).** `rememberPaymentElement(...)` triggers the method's `prepare` —
+  web's element *initialization*, not its rendering. What that costs depends on the method:
+
+  | Method | What creating the element actually runs |
+  |---|---|
+  | Card (Purse vault) | nothing — SecureFields mounts on its own; the card's `/init` happens at submit |
+  | Google Pay | `POST /init` (gateway config) + the `isReadyToPay` check |
+  | PayPal | almost nothing — its `/init` is deferred to the button tap, so an abandoned selection never leaves an orphan PayPal order |
+  | Klarna | `POST /init` → `client_token` → inflate + load the native widget |
+  | Redirection template | `POST /init` → holds the `step_id` for `/validate` |
+
+  Because an `/init` costs a network round-trip **and a session step**, create the element **when
+  the shopper selects the method** — not for every row of the list.
+
+- **Render = pixels.** `PaymentElementUi(element)` places the surface (form / button / widget).
+  One deliberate coupling: **Klarna's prepare waits for the render** — its native widget must
+  inflate into a real container, so the `/init` only fires once `PaymentElementUi` is actually
+  placed. A Klarna element you never render never `/init`s, which is the safe behavior.
+
+- **`ready` = the bridge.** Compose state that flips once prepare (and, for the card, form
+  validity) says the method is usable — gate your Pay button on it. The wallet buttons use it
+  themselves to decide when to appear.
+
+Selection is handled for you: form-like methods go through `checkout.setPrimary(method)` as in
+recipe 3; wallet buttons commit their method on approval.
+
+Recipes 5–9 below show each method's element under the hood — the imperative coordinator path for
+non-Compose screens, where `prepare(host)` is the visible name of the "create" step above.
 
 ---
 
