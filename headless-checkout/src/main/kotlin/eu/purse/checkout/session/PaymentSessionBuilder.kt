@@ -56,7 +56,11 @@ object PaymentSessionBuilder {
                 }
 
                 val id = "${partner.wireValue}-${method.wireValue}"
-                val disabled = MethodAvailability.disabledFor(configuration, isInformationRequest, primaryReach)
+                // Permanent build-time states (suspension, unreachable min-amount) win over the
+                // amount-driven ones — web sets them in `buildDisabledWritable` before the first
+                // recompute, and recompute skips them as non-recomputable.
+                val disabled = MethodAvailability.buildTimeDisabledFor(configuration, primaryReach)
+                    ?: MethodAvailability.disabledFor(configuration, isInformationRequest, primaryReach)
 
                 items += if (configuration.isSecondary) {
                     SecondaryMethod(id, partner, method, configuration, disabled)

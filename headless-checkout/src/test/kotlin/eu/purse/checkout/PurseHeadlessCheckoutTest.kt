@@ -112,6 +112,51 @@ class PurseHeadlessCheckoutTest {
     }
 
     @Test
+    fun `a suspended or unreachable method never appears in the public list`() {
+        val json = """
+            {
+              "id": "session-filter", "amount": 4.80, "currency_code": "EUR",
+              "expiration_date": "2999-01-01T00:00:00Z",
+              "protocols": {
+                "purse": {
+                  "creditcard": {
+                    "configurations": {
+                      "stable": true, "labels": ["primary"], "position": 1,
+                      "settings": { "registration_mode": "ON_SESSION" }
+                    }
+                  }
+                },
+                "klarna": {
+                  "installments": {
+                    "configurations": {
+                      "stable": false, "labels": ["primary"], "position": 2,
+                      "settings": { "registration_mode": "ON_SESSION" }
+                    }
+                  }
+                },
+                "alma": {
+                  "cb3x": {
+                    "configurations": {
+                      "stable": true, "labels": ["primary"], "position": 3,
+                      "settings": { "registration_mode": "ON_SESSION", "payment_min_amount": 50.00 }
+                    }
+                  }
+                }
+              }
+            }
+        """.trimIndent()
+        val checkout = PurseHeadlessCheckout.init(CheckoutTestSessions.widgetData(json))
+
+        // The suspended (stable=false) and unreachable (min 50 > amount 4.80) methods are filtered.
+        assertEquals(listOf("purse-creditcard"), checkout.paymentMethods.value.map { it.id })
+        assertEquals(1, checkout.primaryMethods.size)
+
+        // …and a split change never resurrects them (their states are not recomputable).
+        checkout.setPrimary(checkout.primaryMethods.single())
+        assertEquals(listOf("purse-creditcard"), checkout.paymentMethods.value.map { it.id })
+    }
+
+    @Test
     fun `submitPayment fails while no partner-ui plugin is registered`() {
         val checkout = checkout()
         // Every primary this fixture offers now resolves to a shipped plugin, so opt one out to

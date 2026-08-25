@@ -56,6 +56,15 @@ class PurseHeadlessCheckout private constructor(
 ) {
     private val splitter = PursePaymentSplitter(session.amount)
 
+    /**
+     * The live means-of-payment list — starts as the session's build output and is recomputed on
+     * every split change, preserving non-recomputable disabled states (a suspension or a plugin
+     * failure survives amount changes). Items whose disabled state is a filtered code
+     * ([DisabledState.isFiltered]) are kept here but never exposed — web removes them from `mops`
+     * outright (`payment.ts:88-97`).
+     */
+    private var meansOfPayment: List<PaymentItem> = session.meansOfPayment
+
     /** Interactively-collected data per method id (e.g. a Google Pay token) — see [setCollected]. */
     private val collectedByMethod = mutableMapOf<String, Map<String, Any?>>()
 
@@ -72,7 +81,7 @@ class PurseHeadlessCheckout private constructor(
     )
     val sessionState: StateFlow<SessionState> = _sessionState.asStateFlow()
 
-    private val _paymentMethods = MutableStateFlow(session.meansOfPayment)
+    private val _paymentMethods = MutableStateFlow(visibleMethods())
     val paymentMethods: StateFlow<List<PaymentItem>> = _paymentMethods.asStateFlow()
 
     private val _remainingAmountToPay = MutableStateFlow(splitter.remaining)
@@ -95,8 +104,8 @@ class PurseHeadlessCheckout private constructor(
     val isInformationRequest: Boolean get() = session.isInformationRequest
     val currentSessionId: String get() = session.id
 
-    val primaryMethods: List<PrimaryMethod> get() = session.meansOfPayment.filterIsInstance<PrimaryMethod>()
-    val secondaryMethods: List<SecondaryMethod> get() = session.meansOfPayment.filterIsInstance<SecondaryMethod>()
+    val primaryMethods: List<PrimaryMethod> get() = _paymentMethods.value.filterIsInstance<PrimaryMethod>()
+    val secondaryMethods: List<SecondaryMethod> get() = _paymentMethods.value.filterIsInstance<SecondaryMethod>()
 
     /** Applied secondary tokens, in the order they were added. */
     val appliedSecondaries: List<SecondaryToken> get() = splitter.appliedSecondaries
@@ -289,9 +298,18 @@ class PurseHeadlessCheckout private constructor(
         _remainingAmountToPay.value = splitter.remaining
         _isPaymentFulfilled.value = splitter.fulfilled && unfulfilledItemId() == null
         _amountSplit.value = splitter.splits
-        _paymentMethods.value =
-            MethodAvailability.recompute(session.meansOfPayment, session.isInformationRequest, splitter.remaining)
+        meansOfPayment = MethodAvailability.recompute(
+            meansOfPayment,
+            session.isInformationRequest,
+            splitter.remaining,
+            splitter.splits.map { it.source },
+        )
+        _paymentMethods.value = visibleMethods()
     }
+
+    /** [meansOfPayment] minus filtered disabled states — what the merchant may render. */
+    private fun visibleMethods(): List<PaymentItem> =
+        meansOfPayment.filterNot { it.disabled?.isFiltered == true }
 
     private fun apiClient(): PaymentApiClient =
         PaymentApiClient(params.apiKey, paymentApiRoot, params.entityId, session.id)

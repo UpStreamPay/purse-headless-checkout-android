@@ -27,8 +27,9 @@ class PaymentSessionBuilderTest {
         registrationMode: RegistrationMode = RegistrationMode.ON_SESSION,
         minAmount: BigDecimal? = null,
         maxAmount: BigDecimal? = null,
+        stable: Boolean = true,
     ) = MethodConfiguration(
-        stable = true,
+        stable = stable,
         template = null,
         labels = labels,
         position = position,
@@ -138,7 +139,10 @@ class PaymentSessionBuilderTest {
     }
 
     @Test
-    fun `a method below its minimum amount is disabled with MinAmountNotMet`() {
+    fun `a minimum above the full order amount is AmountConditionUnreachable at build time`() {
+        // MIN_AMOUNT_NOT_MET is reserved for the live recompute (the *remaining* amount fell below
+        // the minimum); at build time an unreachable minimum is permanent and filtered — web's
+        // `buildDisabledWritable`.
         val built = PaymentSessionBuilder.build(
             session(
                 amount = BigDecimal("2.00"),
@@ -151,9 +155,25 @@ class PaymentSessionBuilderTest {
         )
 
         val disabled = built.meansOfPayment.single().disabled
-        assertTrue(disabled is DisabledState.MinAmountNotMet)
-        assertEquals(BigDecimal("5.00"), (disabled as DisabledState.MinAmountNotMet).minAmount)
-        assertEquals(BigDecimal("2.00"), disabled.restToPay)
+        assertTrue(disabled is DisabledState.AmountConditionUnreachable)
+        assertEquals(BigDecimal("5.00"), (disabled as DisabledState.AmountConditionUnreachable).minAmount)
+        assertEquals(BigDecimal("2.00"), disabled.orderAmount)
+    }
+
+    @Test
+    fun `a suspended method carries MethodUnstable at build time`() {
+        val built = PaymentSessionBuilder.build(
+            session(
+                amount = BigDecimal("10.00"),
+                protocols = mapOf(
+                    Partner.Purse to mapOf(
+                        Method.CreditCard to MethodEntry(configuration(stable = false)),
+                    ),
+                ),
+            ),
+        )
+
+        assertEquals(DisabledState.MethodUnstable, built.meansOfPayment.single().disabled)
     }
 
     @Test
