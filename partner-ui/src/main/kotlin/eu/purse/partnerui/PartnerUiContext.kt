@@ -38,11 +38,50 @@ data class PartnerUiContext(
     val dispatchEvent: (PluginEvent) -> Unit = {},
 )
 
-/** Presentation preferences forwarded to a plugin — web's `Options` (theme/locale/…), trimmed. */
+/**
+ * Presentation preferences forwarded to a plugin — web's `Options` (theme/locale/hostedForm…),
+ * trimmed to what the Android plugins render themselves.
+ */
 data class PluginOptions(
+    /** BCP-47 locale (e.g. `"fr-FR"`); `null` falls back to the device locale. */
     val locale: String? = null,
-    val theme: String? = null,
+    /** Styling for partner-rendered fields (the SecureFields card form). */
+    val theme: PurseTheme? = null,
+    /** Text overrides for the card form — the card subset of web's `HostedFormUIOptions`. */
+    val cardFormTexts: CardFormTexts = CardFormTexts(),
 )
+
+/**
+ * Overridable copy for the card form. `null` falls back to the SDK's localized resources
+ * (`purse_card_*` strings) — web falls back to its own translation table the same way.
+ */
+data class CardFormTexts(
+    val cardNumberPlaceholder: String? = null,
+    val expDatePlaceholder: String? = null,
+    val cvvPlaceholder: String? = null,
+    val holderNamePlaceholder: String? = null,
+)
+
+/**
+ * Styling for the partner-rendered card fields — the Android analog of web's `PartnerUITheme`
+ * input scope, shaped to what SecureFields' `VaultStyles` can apply (CSS-like string values, e.g.
+ * `"16px"`, `"#1a1a1a"`). Pseudo-variants mirror web's `:focus` / `:invalid`.
+ */
+data class PurseTheme(
+    val input: FieldStyle? = null,
+    val inputFocus: FieldStyle? = null,
+    val inputInvalid: FieldStyle? = null,
+) {
+    data class FieldStyle(
+        val color: String? = null,
+        val placeholderColor: String? = null,
+        val backgroundColor: String? = null,
+        val fontFamily: String? = null,
+        val fontSize: String? = null,
+        val lineHeight: String? = null,
+        val fontWeight: String? = null,
+    )
+}
 
 /**
  * A saved instrument to pay with — the fields of web partner-ui's `Token` attribute that

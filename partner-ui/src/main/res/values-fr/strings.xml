@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="purse_card_number_placeholder">Numéro de carte</string>
+    <string name="purse_card_exp_date_placeholder">MM / AA</string>
+    <string name="purse_card_cvv_placeholder">Cryptogramme</string>
+    <string name="purse_card_holder_name_placeholder">Nom sur la carte</string>
+</resources>

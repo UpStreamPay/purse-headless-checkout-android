@@ -10,8 +10,11 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.res.stringResource
 import eu.purse.core.environment.PurseEnvironment
 import eu.purse.partnerui.PluginEvent
+import eu.purse.partnerui.PurseTheme
+import eu.purse.partnerui.R
 import eu.purse.partnerui.redirect.RedirectAction
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.partnerui.redirect.RedirectionCheckoutResult
@@ -23,6 +26,7 @@ import eu.purse.securefields.config.SecureFieldsConfig
 import eu.purse.securefields.config.SecureFieldsFieldsConfig
 import eu.purse.securefields.config.VaultEnvironment
 import eu.purse.securefields.config.VaultFieldConfig
+import eu.purse.securefields.config.VaultStyles
 import eu.purse.securefields.events.BrandDetectedPayload
 import eu.purse.securefields.events.BrandUserSelectionPayload
 import eu.purse.securefields.events.FormValidPayload
@@ -78,18 +82,32 @@ fun rememberCardCoordinator(host: CardHost, listener: CardCoordinator.Listener):
             .distinct()
             .ifEmpty { listOf(Brand.VISA, Brand.MASTERCARD, Brand.CB) }
     }
-    val config = remember(brands) {
+    // Placeholder copy: merchant overrides (PluginOptions.cardFormTexts) win; otherwise the SDK's
+    // localized resources (values/, values-fr/, …) — web's HostedFormUIOptions-over-translations.
+    val options = remember(host) { host.buildContext().options }
+    val texts = options.cardFormTexts
+    val cardNumberPlaceholder =
+        texts.cardNumberPlaceholder ?: stringResource(R.string.purse_card_number_placeholder)
+    val expDatePlaceholder =
+        texts.expDatePlaceholder ?: stringResource(R.string.purse_card_exp_date_placeholder)
+    val cvvPlaceholder = texts.cvvPlaceholder ?: stringResource(R.string.purse_card_cvv_placeholder)
+    val holderNamePlaceholder =
+        texts.holderNamePlaceholder ?: stringResource(R.string.purse_card_holder_name_placeholder)
+    val config = remember(
+        brands, cardNumberPlaceholder, expDatePlaceholder, cvvPlaceholder, holderNamePlaceholder, options.theme,
+    ) {
         SecureFieldsConfig(
             brands = brands,
             fields = SecureFieldsFieldsConfig(
                 // No `view` targets — SecureFields builds its own composited form (`sdk.formView`)
                 // for `VaultForm`/`VaultField` to host, instead of the View-system's per-field
                 // `VaultFieldView` targets.
-                cardNumber = VaultFieldConfig(placeholder = "Card number"),
-                expDate = VaultFieldConfig(placeholder = "MM / YY"),
-                cvv = VaultFieldConfig(placeholder = "CVV"),
-                holderName = VaultFieldConfig(placeholder = "Name on card"),
+                cardNumber = VaultFieldConfig(placeholder = cardNumberPlaceholder),
+                expDate = VaultFieldConfig(placeholder = expDatePlaceholder),
+                cvv = VaultFieldConfig(placeholder = cvvPlaceholder),
+                holderName = VaultFieldConfig(placeholder = holderNamePlaceholder),
             ),
+            styles = options.theme?.toVaultStyles(),
         )
     }
     val sdk = rememberSecureFields(
@@ -219,7 +237,13 @@ class CardCoordinator internal constructor(
                 // enum is a different, vault-internal vocabulary than what the Payment API's
                 // `selected_network` expects (matching session `vault.supported_brands`).
                 val gatewayScheme = selectedBrand?.toGatewayScheme()
-                when (val tokenized = withContext(Dispatchers.IO) { sdk.submit(SubmitOptions(selectedNetwork = gatewayScheme)) }) {
+                // saveToken forwards the checkout's registration decision to the vault — web's
+                // `client.submit({saveToken: context.register})`.
+                val submitOptions = SubmitOptions(
+                    selectedNetwork = gatewayScheme,
+                    saveToken = host.buildContext().register,
+                )
+                when (val tokenized = withContext(Dispatchers.IO) { sdk.submit(submitOptions) }) {
                     is SubmitResult.Success -> capture(tokenized, gatewayScheme)
                     is SubmitResult.Error -> {
                         submitting = false
@@ -297,6 +321,27 @@ private fun Brand.toGatewayScheme(): String? = when (this) {
     Brand.ONEY -> "ONEY"
     Brand.UNKNOWN -> null
 }
+
+/** The SDK's [PurseTheme] (input scope + pseudo-variants) → SecureFields' [VaultStyles]. */
+private fun PurseTheme.toVaultStyles(): VaultStyles = (input ?: PurseTheme.FieldStyle()).toVaultStyles(
+    focus = inputFocus?.toVaultStyles(),
+    invalid = inputInvalid?.toVaultStyles(),
+)
+
+private fun PurseTheme.FieldStyle.toVaultStyles(
+    focus: VaultStyles? = null,
+    invalid: VaultStyles? = null,
+): VaultStyles = VaultStyles(
+    fontFamily = fontFamily,
+    fontSize = fontSize,
+    lineHeight = lineHeight,
+    fontWeight = fontWeight,
+    color = color,
+    placeholderColor = placeholderColor,
+    backgroundColor = backgroundColor,
+    focus = focus,
+    invalid = invalid,
+)
 
 /** Purse's [PurseEnvironment] (Payment API) → SecureFields' own [VaultEnvironment] (vault gateway)
  * — distinct enums, see [CardBrand][eu.purse.core.vault.CardBrand]'s doc on the parallel `Brand` split. */

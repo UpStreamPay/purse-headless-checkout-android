@@ -31,7 +31,13 @@ class PurseHeadlessCheckoutTest {
         hooks: PurseCheckoutHooks? = null,
         checker: ServerDatetimeChecker = offlineChecker(),
         watchdogIntervalMs: Long = 60_000,
-    ) = PurseHeadlessCheckout.init(widgetData, null, hooks, checker, watchdogIntervalMs)
+    ) = PurseHeadlessCheckout.init(
+        widgetData,
+        lockedEnvironment = null,
+        hooks = hooks,
+        datetimeChecker = checker,
+        watchdogIntervalMs = watchdogIntervalMs,
+    )
 
     @Test
     fun `init decodes the session and exposes its methods and split`() {

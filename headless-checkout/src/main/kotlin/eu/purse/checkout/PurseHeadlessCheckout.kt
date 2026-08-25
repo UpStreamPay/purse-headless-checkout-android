@@ -22,8 +22,10 @@ import eu.purse.core.environment.PurseEnvironment
 import eu.purse.core.payload.ValidationResult
 import eu.purse.core.session.PurseSessionParams
 import eu.purse.core.session.SessionCodec
+import eu.purse.core.assets.PurseAssets
 import eu.purse.partnerui.PartnerUiContext
 import eu.purse.partnerui.PartnerUiPlugin
+import eu.purse.partnerui.PluginOptions
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayHost
@@ -82,6 +84,8 @@ class PurseHeadlessCheckout private constructor(
     /** Resolved Payment API root; calls go to `{root}/{entityId}/sessions/{sessionId}/…`. */
     val paymentApiRoot: String,
     private val hooks: PurseCheckoutHooks?,
+    /** Presentation preferences (locale, theme, text overrides) forwarded to every plugin. */
+    val options: PluginOptions,
     private val datetimeChecker: ServerDatetimeChecker,
     private val watchdogIntervalMs: Long,
 ) {
@@ -593,8 +597,18 @@ class PurseHeadlessCheckout private constructor(
         amount = splitter.remaining,
         api = apiClient(),
         collected = collectedByMethod[item.id] ?: emptyMap(),
+        options = options,
+        register = (item as? PrimaryMethod)?.let { registrationOf(it).registered } ?: false,
         dispatchEvent = { event -> onPluginEvent(item, event) },
     )
+
+    /** The CDN badge SVG for [item] — web's `iconUrl` on every payment item. */
+    fun iconUrl(item: PaymentItem): String =
+        PurseAssets.resolveIconUrl(item.partner, item.method, item.isSecondary, params.environment)
+
+    /** Card-scheme badges + labels for a vaulted card method — web's `additionalAssets`. */
+    fun schemeAssets(method: PrimaryMethod): List<PurseAssets.CardSchemeAsset> =
+        PurseAssets.buildCardSchemeAssets(method.supportedBrands, params.environment)
 
     /**
      * The host-side reaction to a plugin's lifecycle events — the Kotlin analog of web's
@@ -903,7 +917,8 @@ class PurseHeadlessCheckout private constructor(
             widgetData: String,
             lockedEnvironment: PurseEnvironment? = null,
             hooks: PurseCheckoutHooks? = null,
-        ): PurseHeadlessCheckout = init(widgetData, lockedEnvironment, hooks, datetimeChecker = null)
+            options: PluginOptions = PluginOptions(),
+        ): PurseHeadlessCheckout = init(widgetData, lockedEnvironment, hooks, options, datetimeChecker = null)
 
         /**
          * Test seam: inject a [datetimeChecker] (and a fast watchdog) so unit tests never touch the
@@ -913,6 +928,7 @@ class PurseHeadlessCheckout private constructor(
             widgetData: String,
             lockedEnvironment: PurseEnvironment? = null,
             hooks: PurseCheckoutHooks? = null,
+            options: PluginOptions = PluginOptions(),
             datetimeChecker: ServerDatetimeChecker?,
             watchdogIntervalMs: Long = WATCHDOG_INTERVAL_MS,
         ): PurseHeadlessCheckout {
@@ -940,7 +956,7 @@ class PurseHeadlessCheckout private constructor(
             if (datetimeChecker == null) {
                 installMonitoring(params, sessionId = params.paymentSession.id)
             }
-            return PurseHeadlessCheckout(params, session, apiRoot, hooks, checker, watchdogIntervalMs)
+            return PurseHeadlessCheckout(params, session, apiRoot, hooks, options, checker, watchdogIntervalMs)
         }
 
         /** Web's `ServerDatetimeChecker.WATCHDOG_DURATION`. */

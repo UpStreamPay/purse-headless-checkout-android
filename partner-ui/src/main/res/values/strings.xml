@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Default (English) copy for partner-rendered fields. Merchants override per checkout via
+     PluginOptions.cardFormTexts, or per locale by resource qualification. -->
+<resources>
+    <string name="purse_card_number_placeholder">Card number</string>
+    <string name="purse_card_exp_date_placeholder">MM / YY</string>
+    <string name="purse_card_cvv_placeholder">CVV</string>
+    <string name="purse_card_holder_name_placeholder">Name on card</string>
+</resources>
