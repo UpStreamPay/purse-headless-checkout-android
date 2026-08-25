@@ -16,6 +16,15 @@ All snippets assume:
 import eu.purse.checkout.PurseHeadlessCheckout
 ```
 
+**Conventions used by the snippets.** The SDK exposes its reactive state as `StateFlow`s, and a
+flow only emits to whoever *collects* it — a suspending loop that must live inside a coroutine.
+The snippets start that coroutine with `lifecycleScope.launch { … }`: `lifecycleScope` is
+AndroidX's per-`Activity`/`Fragment` coroutine scope (`androidx.lifecycle.lifecycleScope`, from
+`lifecycle-runtime-ktx`), which cancels its coroutines automatically when the screen is destroyed,
+so a collector can never leak or touch dead views. Inside `collect { value -> … }` the lambda runs
+once per emission, receiving the flow's current value. In Compose, skip both and use
+`checkout.isPaymentFulfilled.collectAsState()` / `collectAsStateWithLifecycle()` instead.
+
 ---
 
 ## 1. Initialize the checkout
@@ -106,8 +115,9 @@ The split model is **one primary + N secondaries**. Selecting and submitting:
 checkout.setPrimary(method)          // or checkout.clearPrimarySplit()
 
 lifecycleScope.launch {
-    // Only true once the split covers the amount AND every form in it is valid.
-    checkout.isPaymentFulfilled.collect { payButton.isEnabled = it }
+    // Emits on every split/form change; only true once the split covers the amount
+    // AND every form in it is valid.
+    checkout.isPaymentFulfilled.collect { fulfilled -> payButton.isEnabled = fulfilled }
 }
 
 payButton.setOnClickListener {
