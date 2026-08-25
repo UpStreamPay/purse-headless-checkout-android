@@ -4,6 +4,7 @@ import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
 import eu.purse.core.payload.ValidationResult
+import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.partnerui.redirect.RedirectionCheckoutResult
 import eu.purse.partnerui.redirect.RedirectionResolver
@@ -73,6 +74,11 @@ class RedirectionCoordinator(
     private var host: RedirectionHost? = null
     private var request: RedirectionRequest? = null
 
+    /** Report a lifecycle event to the headless host (which deactivates/reacts, web-parity). */
+    private fun dispatch(event: PluginEvent) {
+        runCatching { host?.buildContext()?.dispatchEvent(event) }
+    }
+
     /** Same re-entrancy guard as `GooglePayCoordinator.submitting` — see its doc. */
     private var submitting = false
 
@@ -105,6 +111,7 @@ class RedirectionCoordinator(
                 )
                 listener.onReady(true)
             } catch (e: Exception) {
+                dispatch(PluginEvent.InitFailed(e.message))
                 listener.onError(e.message)
             }
         }
@@ -161,6 +168,7 @@ class RedirectionCoordinator(
         )?.withReturnUrlPrefix(host.redirectionReturnUrl)
 
         if (action != null) {
+            dispatch(PluginEvent.Redirect)
             listener.onRequiresAction()
             redirectLauncher.launch(action)
         } else {
@@ -179,7 +187,10 @@ class RedirectionCoordinator(
             RedirectionCheckoutResult.Approved ->
                 listener.onResult("returned from the payment page — check the session status independently to confirm the outcome")
 
-            RedirectionCheckoutResult.Canceled -> listener.onCanceled()
+            RedirectionCheckoutResult.Canceled -> {
+                dispatch(PluginEvent.Cancelled)
+                listener.onCanceled()
+            }
             is RedirectionCheckoutResult.Failed -> listener.onError(result.message)
         }
     }

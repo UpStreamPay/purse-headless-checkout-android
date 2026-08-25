@@ -7,6 +7,7 @@ import com.google.android.gms.common.api.CommonStatusCodes
 import com.google.android.gms.wallet.PaymentData
 import com.google.android.gms.wallet.contract.ApiTaskResult
 import com.google.android.gms.wallet.contract.TaskResultContracts
+import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.partnerui.redirect.RedirectionCheckoutResult
 import eu.purse.partnerui.redirect.RedirectionResolver
@@ -76,6 +77,11 @@ class GooglePayCoordinator(
 
     private var host: GooglePayHost? = null
     private var client: GooglePayClient? = null
+
+    /** Report a lifecycle event to the headless host (which deactivates/reacts, web-parity). */
+    private fun dispatch(event: PluginEvent) {
+        runCatching { host?.buildContext()?.dispatchEvent(event) }
+    }
     private var partnerWireValue: String? = null
     private var request: GooglePayRequest? = null
 
@@ -107,6 +113,7 @@ class GooglePayCoordinator(
                 request = req
                 listener.onReady(client.isReadyToPay(req.isReadyToPayJson).awaitBoolean())
             } catch (e: Exception) {
+                dispatch(PluginEvent.InitFailed(e.message))
                 listener.onError(e.message)
             }
         }
@@ -149,11 +156,13 @@ class GooglePayCoordinator(
 
             CommonStatusCodes.CANCELED -> {
                 submitting = false
+                dispatch(PluginEvent.Cancelled)
                 listener.onCanceled()
             }
 
             else -> {
                 submitting = false
+                dispatch(PluginEvent.ClientError("Google Pay failed: ${taskResult.status.statusMessage}"))
                 listener.onError("Google Pay failed: ${taskResult.status.statusMessage}")
             }
         }
@@ -182,6 +191,7 @@ class GooglePayCoordinator(
                     sessionReturnUrl = host.redirectionReturnUrl,
                 )?.withReturnUrlPrefix(host.redirectionReturnUrl)
                 if (action != null) {
+                    dispatch(PluginEvent.Redirect)
                     listener.onRequiresAction()
                     redirectLauncher.launch(action)
                 } else {
@@ -206,7 +216,10 @@ class GooglePayCoordinator(
             // here.
             RedirectionCheckoutResult.Approved -> listener.onResult("returned from 3-D Secure — check the session status independently to confirm the outcome")
 
-            RedirectionCheckoutResult.Canceled -> listener.onCanceled()
+            RedirectionCheckoutResult.Canceled -> {
+                dispatch(PluginEvent.Cancelled)
+                listener.onCanceled()
+            }
             is RedirectionCheckoutResult.Failed -> listener.onError(result.message)
         }
     }

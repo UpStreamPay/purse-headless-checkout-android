@@ -1,5 +1,6 @@
 package eu.purse.checkout
 
+import eu.purse.checkout.payment.item.DisabledState
 import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.checkout.state.SessionState
 import eu.purse.core.api.PaymentApiException
@@ -7,10 +8,12 @@ import eu.purse.core.datetime.ServerDatetimeChecker
 import eu.purse.core.payment.IntegrationMode
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
+import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.PluginRegistry
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -237,6 +240,61 @@ class PurseHeadlessCheckoutTest {
 
         assertFalse(checkout.isPaymentFulfilled.value)
         assertEquals(1, checkout.appliedSecondaries.size)
+    }
+
+    @Test
+    fun `a fatal plugin event deactivates the method and clears it from the split`() {
+        val checkout = checkout()
+        val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
+        checkout.setPrimary(paypal)
+        assertTrue(checkout.isPaymentFulfilled.value)
+
+        checkout.pluginContext(paypal).dispatchEvent(PluginEvent.ClientError("sdk died"))
+
+        val item = checkout.paymentMethods.value.single { it.id == paypal.id }
+        assertTrue(item.disabled is DisabledState.PartnerUiFatalError)
+        assertFalse("the split was cleared alongside the deactivation", checkout.isPaymentFulfilled.value)
+        assertEquals(0, BigDecimal("4.80").compareTo(checkout.remainingAmountToPay.value))
+    }
+
+    @Test
+    fun `a recoverable partner error dims the method and Ready brings it back`() {
+        val checkout = checkout()
+        val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
+        val context = checkout.pluginContext(paypal)
+
+        context.dispatchEvent(PluginEvent.PartnerError("blip", recoverable = true))
+        assertTrue(
+            checkout.paymentMethods.value.single { it.id == paypal.id }.disabled
+                is DisabledState.PartnerUiRecoverableError,
+        )
+
+        context.dispatchEvent(PluginEvent.Ready)
+        assertNull(checkout.paymentMethods.value.single { it.id == paypal.id }.disabled)
+    }
+
+    @Test
+    fun `an EndOfSession plugin event terminates the session`() {
+        val checkout = checkout()
+        val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
+
+        checkout.pluginContext(paypal).dispatchEvent(PluginEvent.EndOfSession)
+
+        assertEquals(SessionState.TERMINATED, checkout.sessionState.value)
+    }
+
+    @Test
+    fun `a Fulfilled plugin event gates isPaymentFulfilled like setFulfilled`() {
+        val checkout = checkout()
+        val card = checkout.primaryMethods.single { it.method == Method.CreditCard }
+        val context = checkout.pluginContext(card)
+
+        context.dispatchEvent(PluginEvent.Fulfilled(false))
+        checkout.setPrimary(card)
+        assertFalse(checkout.isPaymentFulfilled.value)
+
+        context.dispatchEvent(PluginEvent.Fulfilled(true))
+        assertTrue(checkout.isPaymentFulfilled.value)
     }
 
     @Test

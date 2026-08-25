@@ -9,6 +9,7 @@ import com.klarna.mobile.sdk.api.payments.KlarnaPaymentView
 import com.klarna.mobile.sdk.api.payments.KlarnaPaymentViewCallback
 import com.klarna.mobile.sdk.api.payments.KlarnaPaymentsSDKError
 import eu.purse.core.payload.ValidationResult
+import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.partnerui.redirect.RedirectionCheckoutResult
 import eu.purse.partnerui.redirect.RedirectionResolver
@@ -104,6 +105,11 @@ class KlarnaCoordinator(
     /** Same re-entrancy guard as `GooglePayCoordinator.submitting` — see its doc. */
     private var submitting = false
 
+    /** Report a lifecycle event to the headless host (which deactivates/reacts, web-parity). */
+    private fun dispatch(event: PluginEvent) {
+        runCatching { host?.buildContext()?.dispatchEvent(event) }
+    }
+
     private val callback = object : KlarnaPaymentViewCallback {
         override fun onInitialized(view: KlarnaPaymentView) {
             view.load(null)
@@ -148,8 +154,9 @@ class KlarnaCoordinator(
                 pending.resumeWithException(IllegalStateException(error.describe()))
             } else {
                 // Not mid-authorize (e.g. a load-time failure) — nothing suspended to resume;
-                // report directly instead.
+                // report directly instead. Recoverable per Klarna unless the SDK says fatal.
                 submitting = false
+                dispatch(PluginEvent.PartnerError(error.describe(), recoverable = !error.isFatal))
                 listener.onError(error.describe())
             }
         }
@@ -209,6 +216,7 @@ class KlarnaCoordinator(
 
                 paymentView.initialize(request.clientToken)
             } catch (e: Exception) {
+                dispatch(PluginEvent.InitFailed(e.message))
                 listener.onError(e.message)
             }
         }
@@ -242,6 +250,7 @@ class KlarnaCoordinator(
                 resolveOutcome(result, host)
             } catch (e: KlarnaAuthorizationDeclined) {
                 submitting = false
+                dispatch(PluginEvent.Cancelled)
                 listener.onCanceled()
             } catch (e: Exception) {
                 // `/validate` never landed, errored, or Klarna's own authorize() failed outright —
@@ -267,6 +276,7 @@ class KlarnaCoordinator(
             sessionReturnUrl = host.returnUrl,
         )?.withReturnUrlPrefix(host.returnUrl)
         if (action != null) {
+            dispatch(PluginEvent.Redirect)
             listener.onRequiresAction()
             redirectLauncher.launch(action)
         } else {
@@ -299,7 +309,10 @@ class KlarnaCoordinator(
             // Same caveat as GooglePayCoordinator.onRedirectReturn — Approved means the shopper came
             // back, not that the payment succeeded; re-check status independently.
             RedirectionCheckoutResult.Approved -> listener.onResult("returned from Klarna redirect — check the session status independently to confirm the outcome")
-            RedirectionCheckoutResult.Canceled -> listener.onCanceled()
+            RedirectionCheckoutResult.Canceled -> {
+                dispatch(PluginEvent.Cancelled)
+                listener.onCanceled()
+            }
             is RedirectionCheckoutResult.Failed -> listener.onError(result.message)
         }
     }

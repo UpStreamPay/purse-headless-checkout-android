@@ -1,5 +1,6 @@
 package eu.purse.checkout
 
+import eu.purse.checkout.payment.item.DisabledState
 import eu.purse.checkout.payment.item.MethodAvailability
 import eu.purse.checkout.payment.item.PaymentItem
 import eu.purse.checkout.payment.item.PrimaryMethod
@@ -20,6 +21,9 @@ import eu.purse.core.payload.ValidationResult
 import eu.purse.core.session.PurseSessionParams
 import eu.purse.core.session.SessionCodec
 import eu.purse.partnerui.PartnerUiContext
+import eu.purse.partnerui.PartnerUiPlugin
+import eu.purse.partnerui.PluginEvent
+import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayHost
 import eu.purse.partnerui.plugins.generics.redirection.RedirectionHost
 import eu.purse.partnerui.plugins.partners.klarna.KlarnaHost
@@ -33,8 +37,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -115,6 +122,24 @@ class PurseHeadlessCheckout private constructor(
     private val _amountSplit = MutableStateFlow(splitter.splits)
     val amountSplit: StateFlow<List<PaymentSplit>> = _amountSplit.asStateFlow()
 
+    /**
+     * Every [PluginEvent] any plugin dispatched, tagged with its item id — the analog of web's
+     * `element.on(...)` streams, flattened. The checkout itself already reacts to the load-bearing
+     * ones (see [onPluginEvent]); collect this for rendering concerns (spinners, dim states, …).
+     */
+    private val _pluginEvents = MutableSharedFlow<CheckoutPluginEvent>(extraBufferCapacity = 64)
+    val pluginEvents: SharedFlow<CheckoutPluginEvent> = _pluginEvents.asSharedFlow()
+
+    /**
+     * Plugins with a live host, keyed by item id — the checkout drives their web-parity lifecycle
+     * (`onSessionSet` at host creation, `onAmountUpdate` when the split moves, `destroyClient` at
+     * [teardown]).
+     */
+    private val activePlugins = mutableMapOf<String, Pair<PaymentItem, PartnerUiPlugin>>()
+
+    /** The last remaining amount plugins were told about — gates [notifyAmountUpdate]. */
+    private var lastNotifiedRemaining: BigDecimal = splitter.remaining
+
     init {
         // Expiry watchdog — web's `onExpires` (5s poll against the server-offset-corrected clock,
         // `server-datetime-checker.ts`). The one-shot clock sync happens on the watchdog's thread
@@ -129,6 +154,20 @@ class PurseHeadlessCheckout private constructor(
                         break
                     }
                     delay(watchdogIntervalMs)
+                }
+            }
+        }
+
+        // Eligibility pre-check — web's `getEligibilityCheck` at session build
+        // (`item-factory/primaries.ts:118`): a plugin that rejects the current client/session gets
+        // its method deactivated with the filtered PLUGIN_INCOMPATIBLE code before it is rendered.
+        meansOfPayment.forEach { item ->
+            val plugin = PluginRegistry.getPlugin(item.partner, item.method, session.source) ?: return@forEach
+            scope.launch {
+                try {
+                    plugin.ensureClientCompatibility(pluginContext(item))
+                } catch (_: Exception) {
+                    deactivate(item, DisabledState.PluginIncompatible)
                 }
             }
         }
@@ -159,7 +198,12 @@ class PurseHeadlessCheckout private constructor(
      * dismissed for good (not on configuration changes).
      */
     fun teardown() {
-        scope.cancel()
+        // Give every tracked plugin its destroyClient (web parity), then cancel everything.
+        val plugins = activePlugins.values.toList()
+        activePlugins.clear()
+        scope.launch {
+            plugins.forEach { (item, plugin) -> runCatching { plugin.destroyClient(pluginContext(item)) } }
+        }.invokeOnCompletion { scope.cancel() }
     }
 
     /** The per-partner config for a secondary method (PAN/CVV rules, take policy) — `null` if none. */
@@ -238,7 +282,80 @@ class PurseHeadlessCheckout private constructor(
         amount = splitter.remaining,
         api = apiClient(),
         collected = collectedByMethod[item.id] ?: emptyMap(),
+        dispatchEvent = { event -> onPluginEvent(item, event) },
     )
+
+    /**
+     * The host-side reaction to a plugin's lifecycle events — the Kotlin analog of web's
+     * `item-factory/utils.ts:109-123` wiring plus `payment-element.ts`'s `endOfSession`. Every
+     * event is then re-exposed on [pluginEvents].
+     */
+    private fun onPluginEvent(item: PaymentItem, event: PluginEvent) {
+        when (event) {
+            // Web clears a recoverable disabled state when the partner comes back up.
+            PluginEvent.Ready -> clearRecoverableDisabled(item)
+            is PluginEvent.Fulfilled -> setFulfilled(item, event.isFulfilled)
+            // Web's `validationRequested` — an xpay-style sheet approved; submit everything.
+            is PluginEvent.RequestValidate -> scope.launch {
+                runCatching { submitPayment(event.skipOnBeforeValidate) }
+            }
+            // Stays in the list but technically disabled (web dims it), not filtered away —
+            // an /init failure is partner trouble the shopper should still see the method for.
+            is PluginEvent.InitFailed ->
+                deactivate(item, DisabledState.PartnerUiFatalError(event.message))
+            is PluginEvent.ClientError ->
+                deactivate(item, DisabledState.PartnerUiFatalError(event.message))
+            is PluginEvent.PartnerError -> deactivate(
+                item,
+                if (event.recoverable) DisabledState.PartnerUiRecoverableError(event.message)
+                else DisabledState.PartnerUiFatalError(event.message),
+            )
+            PluginEvent.EndOfSession -> _sessionState.value = SessionState.TERMINATED
+            // Informational — merchants observe these on [pluginEvents].
+            PluginEvent.Redirect, PluginEvent.Cancelled -> Unit
+        }
+        _pluginEvents.tryEmit(CheckoutPluginEvent(item.id, event))
+    }
+
+    /**
+     * Disable [item] with [reason], clearing it from the split first when the reason requires the
+     * UI cleared — web's `fatalError → clearSplit + deactivateMop`. A filtered reason removes the
+     * item from [paymentMethods] entirely.
+     */
+    private fun deactivate(item: PaymentItem, reason: DisabledState) {
+        meansOfPayment = meansOfPayment.map { if (it.id == item.id) it.withDisabled(reason) else it }
+        if (reason.requiresUiClear || reason.isFiltered) {
+            val primaryInSplit = splitter.splits.map { it.source }.filterIsInstance<PrimaryMethod>().firstOrNull()
+            if (primaryInSplit?.id == item.id) {
+                // The amount really changed, so a full recompute is web-accurate here; the fresh
+                // state survives it (fatal/filtered codes are not recomputable).
+                splitter.setPrimary(null)
+                refresh()
+                return
+            }
+        }
+        // No amount change — publish without recompute, mirroring web where recompute only runs on
+        // a `primaryReach` change (a recoverable state must not be wiped by its own deactivation).
+        _paymentMethods.value = visibleMethods()
+    }
+
+    private fun clearRecoverableDisabled(item: PaymentItem) {
+        meansOfPayment = meansOfPayment.map {
+            if (it.id == item.id && it.disabled?.isRecoverable == true) it.withDisabled(null) else it
+        }
+        _paymentMethods.value = visibleMethods()
+    }
+
+    /**
+     * Track the plugin behind [item] once its host exists, and give it web's `onSessionSet` — the
+     * lifecycle point plugins use to create their vendor client.
+     */
+    private fun trackPlugin(item: PaymentItem) {
+        if (activePlugins.containsKey(item.id)) return
+        val plugin = PluginRegistry.getPlugin(item.partner, item.method, session.source) ?: return
+        activePlugins[item.id] = item to plugin
+        scope.launch { runCatching { plugin.onSessionSet(pluginContext(item)) } }
+    }
 
     /**
      * Re-query the session's transactions (`GET /{entityId}/sessions/{sessionId}`) — the source of
@@ -251,12 +368,15 @@ class PurseHeadlessCheckout private constructor(
      * The [GooglePayHost] for [item] — everything `:partner-ui`'s `GooglePayCoordinator` needs from
      * this checkout, without that module depending on `:headless-checkout` directly.
      */
-    fun googlePayHost(item: PaymentItem): GooglePayHost = object : GooglePayHost {
-        override val environment get() = params.environment
-        override val redirectionReturnUrl get() = session.source.redirection
-        override fun buildContext() = pluginContext(item)
-        override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
-        override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+    fun googlePayHost(item: PaymentItem): GooglePayHost {
+        trackPlugin(item)
+        return object : GooglePayHost {
+            override val environment get() = params.environment
+            override val redirectionReturnUrl get() = session.source.redirection
+            override fun buildContext() = pluginContext(item)
+            override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
+            override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+        }
     }
 
     /**
@@ -265,11 +385,14 @@ class PurseHeadlessCheckout private constructor(
      * to the session's own configured return URL (like Google Pay's redirect return) since Klarna's
      * `KlarnaPaymentView` needs one regardless of whether the session declared its own.
      */
-    fun klarnaHost(item: PaymentItem, klarnaReturnUrl: String): KlarnaHost = object : KlarnaHost {
-        override val returnUrl get() = klarnaReturnUrl
-        override fun buildContext() = pluginContext(item)
-        override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
-        override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+    fun klarnaHost(item: PaymentItem, klarnaReturnUrl: String): KlarnaHost {
+        trackPlugin(item)
+        return object : KlarnaHost {
+            override val returnUrl get() = klarnaReturnUrl
+            override fun buildContext() = pluginContext(item)
+            override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
+            override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+        }
     }
 
     /**
@@ -280,12 +403,15 @@ class PurseHeadlessCheckout private constructor(
      * supplies that itself, client-side. It only covers a chained 3-D Secure step after `/validate`,
      * exactly as it does for Google Pay.
      */
-    fun paypalHost(item: PaymentItem): PaypalHost = object : PaypalHost {
-        override val environment get() = params.environment
-        override val redirectionReturnUrl get() = session.source.redirection
-        override fun buildContext() = pluginContext(item)
-        override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
-        override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+    fun paypalHost(item: PaymentItem): PaypalHost {
+        trackPlugin(item)
+        return object : PaypalHost {
+            override val environment get() = params.environment
+            override val redirectionReturnUrl get() = session.source.redirection
+            override fun buildContext() = pluginContext(item)
+            override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
+            override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+        }
     }
 
     /**
@@ -296,11 +422,14 @@ class PurseHeadlessCheckout private constructor(
      * item whose configuration resolves to the generic `redirection` template (see
      * `PluginRegistry.getPlugin`). Ask for one per item — the coordinator rebinds on each `prepare`.
      */
-    fun redirectionHost(item: PaymentItem): RedirectionHost = object : RedirectionHost {
-        override val redirectionReturnUrl get() = session.source.redirection
-        override fun buildContext() = pluginContext(item)
-        override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
-        override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+    fun redirectionHost(item: PaymentItem): RedirectionHost {
+        trackPlugin(item)
+        return object : RedirectionHost {
+            override val redirectionReturnUrl get() = session.source.redirection
+            override fun buildContext() = pluginContext(item)
+            override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
+            override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+        }
     }
 
     /**
@@ -308,15 +437,18 @@ class PurseHeadlessCheckout private constructor(
      * checkout, without that module depending on `:headless-checkout` directly. [item] (not the
      * generic [PaymentItem]) because [CardHost.supportedBrands] needs [PrimaryMethod.supportedBrands].
      */
-    fun cardHost(item: PrimaryMethod): CardHost = object : CardHost {
-        override val environment get() = params.environment
-        override val vaultTenantId get() = session.vaultsConfiguration?.purse?.tenantId
-        override val supportedBrands get() = item.supportedBrands
-        override val redirectionReturnUrl get() = session.source.redirection
-        override fun buildContext() = pluginContext(item)
-        override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
-        override fun setFulfilled(fulfilled: Boolean) = setFulfilled(item, fulfilled)
-        override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+    fun cardHost(item: PrimaryMethod): CardHost {
+        trackPlugin(item)
+        return object : CardHost {
+            override val environment get() = params.environment
+            override val vaultTenantId get() = session.vaultsConfiguration?.purse?.tenantId
+            override val supportedBrands get() = item.supportedBrands
+            override val redirectionReturnUrl get() = session.source.redirection
+            override fun buildContext() = pluginContext(item)
+            override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
+            override fun setFulfilled(fulfilled: Boolean) = setFulfilled(item, fulfilled)
+            override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+        }
     }
 
     /**
@@ -375,6 +507,21 @@ class PurseHeadlessCheckout private constructor(
             splitter.splits.map { it.source },
         )
         _paymentMethods.value = visibleMethods()
+        notifyAmountUpdate()
+    }
+
+    /**
+     * Tell every tracked plugin the amount it must cover moved — web's `onAmountUpdate`, driven by
+     * the splitter's `primaryReach` store. Gated on an actual change so form-validity refreshes
+     * (which also [refresh]) don't spam plugins.
+     */
+    private fun notifyAmountUpdate() {
+        val remaining = splitter.remaining
+        if (remaining.compareTo(lastNotifiedRemaining) == 0) return
+        lastNotifiedRemaining = remaining
+        activePlugins.values.forEach { (item, plugin) ->
+            scope.launch { runCatching { plugin.onAmountUpdate(pluginContext(item)) } }
+        }
     }
 
     /** [meansOfPayment] minus filtered disabled states — what the merchant may render. */

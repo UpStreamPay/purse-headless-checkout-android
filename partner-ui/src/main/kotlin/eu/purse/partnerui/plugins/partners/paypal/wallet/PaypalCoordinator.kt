@@ -5,6 +5,7 @@ import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
 import eu.purse.core.environment.PurseEnvironment
 import eu.purse.core.payload.ValidationResult
+import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.redirect.RedirectAction
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.partnerui.redirect.RedirectionCheckoutResult
@@ -101,6 +102,11 @@ class PaypalCoordinator(
         listener.onReady(true)
     }
 
+    /** Report a lifecycle event to the headless host (which deactivates/reacts, web-parity). */
+    private fun dispatch(event: PluginEvent) {
+        runCatching { host?.buildContext()?.dispatchEvent(event) }
+    }
+
     /**
      * `POST /init`, then launch PayPal's approval. Call when the branded button is tapped. A no-op
      * while a previous tap's flow is still in progress — see [submitting].
@@ -131,6 +137,7 @@ class PaypalCoordinator(
                 )
             } catch (e: Exception) {
                 submitting = false
+                dispatch(PluginEvent.InitFailed(e.message))
                 listener.onError(e.message)
             }
         }
@@ -152,11 +159,13 @@ class PaypalCoordinator(
 
             PaypalCheckoutResult.Canceled -> {
                 submitting = false
+                dispatch(PluginEvent.Cancelled)
                 listener.onCanceled()
             }
 
             is PaypalCheckoutResult.Failed -> {
                 submitting = false
+                dispatch(PluginEvent.ClientError(result.message))
                 listener.onError(result.message)
             }
         }
@@ -205,6 +214,7 @@ class PaypalCoordinator(
             ?.takeUnless { it.targetUrl()?.isPaypalApprovalUrl() == true }
 
         if (action != null) {
+            dispatch(PluginEvent.Redirect)
             listener.onRequiresAction()
             redirectLauncher.launch(action)
         } else {
@@ -223,7 +233,10 @@ class PaypalCoordinator(
             // here.
             RedirectionCheckoutResult.Approved -> listener.onResult("returned from 3-D Secure — check the session status independently to confirm the outcome")
 
-            RedirectionCheckoutResult.Canceled -> listener.onCanceled()
+            RedirectionCheckoutResult.Canceled -> {
+                dispatch(PluginEvent.Cancelled)
+                listener.onCanceled()
+            }
             is RedirectionCheckoutResult.Failed -> listener.onError(result.message)
         }
     }

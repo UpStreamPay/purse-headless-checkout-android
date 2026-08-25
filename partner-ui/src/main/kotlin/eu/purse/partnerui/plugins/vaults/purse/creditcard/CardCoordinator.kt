@@ -11,6 +11,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import eu.purse.core.environment.PurseEnvironment
+import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.redirect.RedirectAction
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.partnerui.redirect.RedirectionCheckoutResult
@@ -191,6 +192,11 @@ class CardCoordinator internal constructor(
     /** Re-entrancy guard — same rationale as `GooglePayCoordinator.submitting`/`KlarnaCoordinator.submitting`. */
     private var submitting = false
 
+    /** Report a lifecycle event to the headless host (which deactivates/reacts, web-parity). */
+    private fun dispatch(event: PluginEvent) {
+        runCatching { host.buildContext().dispatchEvent(event) }
+    }
+
     /** Tokenize via SecureFields, then run `/init`+`/validate` through [host]. Call once [formValid]
      * is `true` and the shopper tapped "Pay". No-op while a previous tap's flow is still in progress,
      * and no-op (never an error) while the form isn't complete and valid. */
@@ -217,6 +223,7 @@ class CardCoordinator internal constructor(
                     is SubmitResult.Success -> capture(tokenized, gatewayScheme)
                     is SubmitResult.Error -> {
                         submitting = false
+                        dispatch(PluginEvent.ClientError(tokenized.message))
                         listener.onError(tokenized.message)
                     }
                 }
@@ -254,6 +261,7 @@ class CardCoordinator internal constructor(
                 sessionReturnUrl = host.redirectionReturnUrl,
             )?.withReturnUrlPrefix(host.redirectionReturnUrl)
             if (action != null) {
+                dispatch(PluginEvent.Redirect)
                 listener.onRequiresAction()
                 redirectLauncher.launch(action)
             } else {
