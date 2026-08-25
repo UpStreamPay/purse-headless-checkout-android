@@ -28,8 +28,13 @@ class PaymentApiClient(
 ) {
     private val root: String = apiRoot.trimEnd('/')
 
-    /** `POST /init` — see docs/architecture/headless-checkout.md#init-and-validate. */
-    fun init(payload: JSONObject): JSONObject = post("/init", payload.toString())
+    /**
+     * `POST /init` — see docs/architecture/headless-checkout.md#init-and-validate. Runs under
+     * [InitGuard]: concurrent duplicates coalesce, transient failures retry with backoff, and a
+     * terminal failure fast-rejects immediate repeats of the same call.
+     */
+    fun init(payload: JSONObject): JSONObject =
+        InitGuard.run(InitGuard.keyFor(sessionId, payload)) { post("/init", payload.toString()) }
 
     /**
      * `POST /validate` — the validate call takes a JSON *array* of items (one per method being
@@ -61,8 +66,19 @@ class PaymentApiClient(
         return try {
             JSONArray(responseBody)
         } catch (e: JSONException) {
-            throw PaymentApiException("Payment API GET session returned non-JSON: ${e.message}", e)
+            throw PaymentApiException("Payment API GET session returned non-JSON: ${e.message}", e, path = "")
         }
+    }
+
+    /**
+     * The `error` code from an API JSON error body, or `null` when the body isn't that shape —
+     * web's `#init` parses the same field to classify `SESSION_ALREADY_SUBMITTED_ERROR` /
+     * `SESSION_EXPIRED` / `NOT_FOUND`.
+     */
+    private fun parseErrorCode(responseBody: String): String? = try {
+        JSONObject(responseBody).optString("error").ifBlank { null }
+    } catch (_: JSONException) {
+        null
     }
 
     private fun post(path: String, body: String): JSONObject {
@@ -70,7 +86,7 @@ class PaymentApiClient(
         return try {
             JSONObject(responseBody)
         } catch (e: JSONException) {
-            throw PaymentApiException("Payment API $path returned non-JSON: ${e.message}", e)
+            throw PaymentApiException("Payment API $path returned non-JSON: ${e.message}", e, path = path)
         }
     }
 
@@ -93,11 +109,16 @@ class PaymentApiClient(
             val stream = if (code < 400) connection.inputStream else connection.errorStream
             val responseBody = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (code >= 400) {
-                throw PaymentApiException("Payment API $method $path failed: HTTP $code $responseBody")
+                throw PaymentApiException(
+                    "Payment API $method $path failed: HTTP $code $responseBody",
+                    status = code,
+                    errorCode = parseErrorCode(responseBody),
+                    path = path,
+                )
             }
             responseBody
         } catch (e: IOException) {
-            throw PaymentApiException("Payment API $method $path failed: ${e.message}", e)
+            throw PaymentApiException("Payment API $method $path failed: ${e.message}", e, path = path)
         } finally {
             connection.disconnect()
         }
