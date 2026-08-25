@@ -31,6 +31,14 @@ interface GooglePayHost {
     /** Stash the sheet's token + selected network for the next [submitPayment]. */
     fun setCollected(data: Map<String, Any?>)
 
+    /**
+     * Commit this Google Pay item as the split's primary. The coordinator calls it once the sheet
+     * is **approved** — web's `validationRequested` wiring (`setPrimary(mop)` then submit): tapping
+     * the button is the shopper choosing the method, so the merchant never pre-selects it, and a
+     * cancelled sheet leaves the split untouched.
+     */
+    fun setAsPrimary() {}
+
     /** Run the plugin-driven `/validate` pipeline over the current split. */
     suspend fun submitPayment(): ValidationResult
 }

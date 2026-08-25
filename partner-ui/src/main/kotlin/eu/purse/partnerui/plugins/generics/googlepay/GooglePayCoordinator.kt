@@ -151,6 +151,10 @@ class GooglePayCoordinator(
                         GooglePayPlugin.COLLECTED_NETWORK to network,
                     ),
                 )
+                // The approved sheet both selects the method and pays with it — web's
+                // `validationRequested` → setPrimary + submit. A cancel never reaches this line,
+                // so the split is only touched once the shopper has actually committed.
+                host.setAsPrimary()
                 submit(host)
             }
 

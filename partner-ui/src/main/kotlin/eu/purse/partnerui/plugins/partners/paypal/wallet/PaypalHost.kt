@@ -34,6 +34,14 @@ interface PaypalHost {
     /** Stash the `/init` step id and the approved order for the next [submitPayment]. */
     fun setCollected(data: Map<String, Any?>)
 
+    /**
+     * Commit this PayPal item as the split's primary. The coordinator calls it once the buyer has
+     * **approved** the order — web's `validationRequested` wiring: the button tap is the shopper
+     * choosing the method, so the merchant never pre-selects it, and a cancelled approval leaves
+     * the split untouched.
+     */
+    fun setAsPrimary() {}
+
     /** Run the plugin-driven `/validate` pipeline over the current split. */
     suspend fun submitPayment(): ValidationResult
 }

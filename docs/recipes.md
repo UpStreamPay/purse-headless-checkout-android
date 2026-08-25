@@ -180,7 +180,14 @@ call `coordinator.sdk.setBrandSelection(...)`.
 
 ## 5. Google Pay
 
-Imperative coordinator — **construct it in `onCreate`** (it registers ActivityResult launchers):
+Google Pay is **self-submitting**, exactly like web: you never call `setPrimary` or
+`submitPayment` for it. You render a Google Pay button (per Google's brand guidelines), and the
+button tap is the whole merchant contribution — the SDK opens the sheet, and the **approval**
+selects the method as primary and runs `/validate` itself (web's `validationRequested`). A
+cancelled sheet leaves the split untouched. Everything lands on the listener.
+
+The coordinator is imperative — **construct it in `onCreate`** (it registers ActivityResult
+launchers, which must happen before the Activity is started):
 
 ```kotlin
 class CheckoutActivity : ComponentActivity() {
@@ -188,20 +195,19 @@ class CheckoutActivity : ComponentActivity() {
     private val googlePay = GooglePayCoordinator(this, object : GooglePayCoordinator.Listener {
         override fun onReady(ready: Boolean) { showGooglePayButton(ready) } // isReadyToPay result
         override fun onResult(summary: String, globalStatus: String?) { /* recipe 11 if null */ }
-        override fun onRequiresAction() { }
-        override fun onCanceled() { }
+        override fun onRequiresAction() { /* a 3-D Secure step is opening */ }
+        override fun onCanceled() { /* sheet dismissed — split untouched, nothing submitted */ }
         override fun onError(message: String?) { }
     })
 
     fun onSessionReady(checkout: PurseHeadlessCheckout) {
         val item = checkout.primaryMethods.first { it.method == Method.GooglePay }
-        checkout.setPrimary(item)
-        googlePay.prepare(checkout.googlePayHost(item))   // /init + isReadyToPay
+        googlePay.prepare(checkout.googlePayHost(item))   // /init + isReadyToPay → onReady
     }
 
-    fun onGooglePayButtonTapped() {
-        googlePay.launchSheet()   // sheet → token → /validate → 3DS if any — all reported on the listener
-    }
+    // The one thing your button does. From here the SDK owns the flow:
+    // sheet → approval selects Google Pay as primary → /validate → 3DS if any → listener.
+    fun onGooglePayButtonTapped() = googlePay.launchSheet()
 }
 ```
 
@@ -209,19 +215,21 @@ class CheckoutActivity : ComponentActivity() {
 
 ## 6. PayPal (wallet, pay-now)
 
-Same shape; `prepare` is cheap (no `/init` — PayPal's order is only created on the button tap, so
-an abandoned selection never leaves an orphan order):
+Self-submitting like Google Pay — no `setPrimary`, no `submitPayment`. `prepare` is cheap (no
+`/init`: PayPal's order is only created on the button tap, so an abandoned selection never leaves
+an orphan order), and the buyer's **approval** selects the method and triggers `/validate`:
 
 ```kotlin
 private val paypal = PaypalCoordinator(this, paypalListener)
 
 fun onSessionReady(checkout: PurseHeadlessCheckout) {
     val item = checkout.primaryMethods.first { it.partner == Partner.Paypal }
-    checkout.setPrimary(item)
     paypal.prepare(checkout.paypalHost(item))
 }
 
-fun onPaypalButtonTapped() = paypal.submit()  // /init → PayPal app/browser approval → /validate
+// Button tap → /init → PayPal app/browser approval → (approval selects PayPal as primary)
+// → /validate — all SDK-driven, reported on the listener.
+fun onPaypalButtonTapped() = paypal.submit()
 ```
 
 ---

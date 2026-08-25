@@ -12,6 +12,7 @@ import eu.purse.checkout.payment.secondary.SecondaryConfigs
 import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.checkout.payment.secondary.SecondaryTokenizer
 import eu.purse.checkout.payment.split.PaymentSplit
+import eu.purse.checkout.payment.split.PrimarySource
 import eu.purse.checkout.payment.split.PursePaymentSplitter
 import eu.purse.checkout.session.PaymentSession
 import eu.purse.checkout.session.PaymentSessionBuilder
@@ -622,9 +623,11 @@ class PurseHeadlessCheckout private constructor(
             // Web clears a recoverable disabled state when the partner comes back up.
             PluginEvent.Ready -> clearRecoverableDisabled(item)
             is PluginEvent.Fulfilled -> setFulfilled(item, event.isFulfilled)
-            // Web's `validationRequested` — an xpay-style sheet approved; submit everything.
-            is PluginEvent.RequestValidate -> scope.launch {
-                runCatching { submitPayment(event.skipOnBeforeValidate) }
+            // Web's `validationRequested` — an xpay-style sheet approved: the approval both
+            // selects the method and pays with it (`setPrimary(mop)` then submit).
+            is PluginEvent.RequestValidate -> {
+                makePrimary(item)
+                scope.launch { runCatching { submitPayment(event.skipOnBeforeValidate) } }
             }
             // Stays in the list but technically disabled (web dims it), not filtered away —
             // an /init failure is partner trouble the shopper should still see the method for.
@@ -678,6 +681,21 @@ class PurseHeadlessCheckout private constructor(
             if (it.id == item.id && it.disabled?.isRecoverable == true) it.withDisabled(null) else it
         }
         _paymentMethods.value = visibleMethods()
+    }
+
+    /**
+     * Commit [item] as the split's primary when it can be one — the SDK-side half of web's
+     * `validationRequested` wiring, used by self-submitting flows (an approved wallet sheet /
+     * PayPal order chooses its own method; the merchant never pre-selects it).
+     */
+    private fun makePrimary(item: PaymentItem) {
+        val source = item as? PrimarySource ?: return
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_SET_PRIMARY,
+            payload = monitoringPayload("partner" to item.partner.wireValue, "method" to item.method.wireValue),
+        )
+        splitter.setPrimary(source)
+        refresh()
     }
 
     /**
@@ -735,6 +753,7 @@ class PurseHeadlessCheckout private constructor(
             override val redirectionReturnUrl get() = session.source.redirection
             override fun buildContext() = pluginContext(item)
             override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
+            override fun setAsPrimary() = makePrimary(item)
             override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
         }
     }
@@ -770,6 +789,7 @@ class PurseHeadlessCheckout private constructor(
             override val redirectionReturnUrl get() = session.source.redirection
             override fun buildContext() = pluginContext(item)
             override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
+            override fun setAsPrimary() = makePrimary(item)
             override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
         }
     }

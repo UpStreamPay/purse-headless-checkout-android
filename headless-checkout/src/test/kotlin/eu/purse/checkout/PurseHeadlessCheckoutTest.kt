@@ -291,6 +291,34 @@ class PurseHeadlessCheckoutTest {
     }
 
     @Test
+    fun `a RequestValidate event selects its method as primary before submitting - web's validationRequested`() {
+        val checkout = checkout()
+        val googlePay = checkout.primaryMethods.single { it.method == Method.GooglePay }
+        assertFalse(checkout.isPaymentFulfilled.value)
+
+        // What an approved wallet sheet dispatches: the merchant never called setPrimary.
+        checkout.pluginContext(googlePay).dispatchEvent(PluginEvent.RequestValidate())
+
+        assertTrue("the approval itself committed the method", checkout.isPaymentFulfilled.value)
+        assertEquals(googlePay.id, checkout.amountSplit.value.single().source.id)
+        // Stop the async submit the event also launched before it can touch the network.
+        checkout.teardown()
+    }
+
+    @Test
+    fun `the wallet hosts commit their item on approval, not before`() {
+        val checkout = checkout()
+        val googlePay = checkout.primaryMethods.single { it.method == Method.GooglePay }
+        val host = checkout.googlePayHost(googlePay)
+        assertFalse("prepare/tap must not touch the split", checkout.isPaymentFulfilled.value)
+
+        host.setAsPrimary() // what the coordinator calls once the sheet is approved
+
+        assertTrue(checkout.isPaymentFulfilled.value)
+        assertEquals(googlePay.id, checkout.amountSplit.value.single().source.id)
+    }
+
+    @Test
     fun `a Fulfilled plugin event gates isPaymentFulfilled like setFulfilled`() {
         val checkout = checkout()
         val card = checkout.primaryMethods.single { it.method == Method.CreditCard }

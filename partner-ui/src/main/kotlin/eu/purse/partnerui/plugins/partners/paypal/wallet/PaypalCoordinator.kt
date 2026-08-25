@@ -154,6 +154,9 @@ class PaypalCoordinator(
                         PaypalPlugin.COLLECTED_PAYER_ID to result.payerId,
                     ),
                 )
+                // The approved order both selects the method and pays with it — web's
+                // `validationRequested` → setPrimary + submit. A cancel never reaches this line.
+                host.setAsPrimary()
                 capture(host)
             }
 

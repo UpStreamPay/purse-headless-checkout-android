@@ -98,9 +98,10 @@ class DemoController(private val activity: ComponentActivity) {
     /**
      * `true` from the tap on the Google Pay button until its flow ends. Two jobs: it disables that
      * button so a double tap can't fire two sheets (a second `/validate` for the same session comes
-     * back `409`), and it keeps the shared "Pay" button switched off — Google Pay's own `setPrimary`
-     * fulfills the split the instant it's tapped, which would otherwise be indistinguishable from
-     * "secondaries alone cover it, no primary needed" and light that button up mid-sheet.
+     * back `409`), and it keeps the shared "Pay" button switched off — once the sheet is approved
+     * the SDK commits Google Pay as the primary itself (web's `validationRequested`), which
+     * fulfills the split and would otherwise be indistinguishable from "secondaries alone cover
+     * it, no primary needed" and light that button up mid-flow.
      */
     var googlePayBusy by mutableStateOf(false)
         private set
@@ -458,23 +459,21 @@ class DemoController(private val activity: ComponentActivity) {
     }
 
     fun onGooglePayClicked() {
-        val co = checkout ?: return
+        if (checkout == null) return
         // Collapse any open Klarna/card row — Google Pay is taking over as the primary, and leaving a
-        // row visually selected would misrepresent what's about to be submitted.
+        // row visually selected would misrepresent what's about to be submitted. Committing Google
+        // Pay as the primary is the SDK's job now: the coordinator does it on sheet **approval**
+        // (web's `validationRequested`), so a cancelled sheet leaves the split untouched.
         if (selectedPrimary != null) selectPrimary(null)
-        // Committing Google Pay as the primary happens on the tap, not on prepare — the shopper has
-        // only now actually chosen it.
-        co.setPrimary(googlePayItem)
         googlePayBusy = true
         googlePay.launchSheet()
     }
 
     fun onPaypalClicked() {
-        val co = checkout ?: return
-        // Same shape as [onGooglePayClicked]: collapse any open row, commit PayPal as the primary on
-        // the tap rather than on prepare, then hand off. `submit` runs the /init itself.
+        if (checkout == null) return
+        // Same shape as [onGooglePayClicked]: collapse any open row, then hand off. `submit` runs
+        // the /init itself, and the SDK commits PayPal as the primary on the buyer's approval.
         if (selectedPrimary != null) selectPrimary(null)
-        co.setPrimary(paypalItem)
         paypalBusy = true
         paypal.submit()
     }
