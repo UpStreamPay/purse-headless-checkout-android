@@ -33,6 +33,7 @@ import eu.purse.partnerui.plugins.generics.redirection.RedirectionHost
 import eu.purse.partnerui.plugins.partners.klarna.KlarnaHost
 import eu.purse.partnerui.plugins.partners.paypal.wallet.PaypalHost
 import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardHost
+import eu.purse.checkout.confirmation.PaymentSessionStatus
 import eu.purse.checkout.monitoring.CheckoutEventBus
 import eu.purse.checkout.monitoring.CheckoutEventCode
 import eu.purse.checkout.monitoring.EventLevel
@@ -57,6 +58,7 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 import java.math.BigDecimal
@@ -692,9 +694,35 @@ class PurseHeadlessCheckout private constructor(
     /**
      * Re-query the session's transactions (`GET /{entityId}/sessions/{sessionId}`) — the source of
      * truth to check after a redirect/3-D Secure return rather than trusting a locally-held result.
-     * Blocking; call off the main thread.
+     * Blocking; call off the main thread. For a typed answer use [paymentStatus] /
+     * [awaitPaymentOutcome].
      */
     fun sessionTransactions(): JSONArray = apiClient().getSession()
+
+    /**
+     * One typed status check against the session's own transactions. Blocking network; call off
+     * the main thread (or use [awaitPaymentOutcome]).
+     */
+    fun paymentStatus(): PaymentSessionStatus = PaymentSessionStatus.from(sessionTransactions())
+
+    /**
+     * Poll [paymentStatus] until the payment settles — the mobile-specific confirmation step web
+     * doesn't need (its redirect lands on the merchant's own success/failure page, while an app
+     * returns to the very screen that launched the redirect). Returns the last status on timeout
+     * (typically [PaymentSessionStatus.Pending]); cancellable like any suspend function.
+     */
+    suspend fun awaitPaymentOutcome(
+        timeoutMs: Long = 60_000,
+        pollIntervalMs: Long = 3_000,
+    ): PaymentSessionStatus = withContext(Dispatchers.IO) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        var status = paymentStatus()
+        while (status is PaymentSessionStatus.Pending && System.currentTimeMillis() < deadline) {
+            delay(pollIntervalMs)
+            status = paymentStatus()
+        }
+        status
+    }
 
     /**
      * The [GooglePayHost] for [item] — everything `:partner-ui`'s `GooglePayCoordinator` needs from

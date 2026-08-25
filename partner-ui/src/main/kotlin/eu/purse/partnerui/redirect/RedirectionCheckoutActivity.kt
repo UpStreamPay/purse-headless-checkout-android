@@ -39,7 +39,14 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
         launched = savedInstanceState?.getBoolean(STATE_LAUNCHED) ?: false
         leftForBrowser = savedInstanceState?.getBoolean(STATE_LEFT) ?: false
 
-        if (savedInstanceState == null) startRedirect()
+        if (savedInstanceState == null) {
+            startRedirect()
+        } else {
+            // Recreated after process death mid-challenge: the WebView (and any in-progress ACS
+            // state) is gone, and re-POSTing the form would risk a double submit. Resolve to a
+            // clean cancel so the caller returns to a defined state and the shopper can retry.
+            finishWith(STATUS_CANCELED, message = "redirect interrupted by process death")
+        }
     }
 
     private fun startRedirect() {
@@ -90,6 +97,40 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
     private fun renderWebView(): WebView {
         val view = WebView(this)
         view.settings.javaScriptEnabled = true
+
+        // Loading affordance: an indeterminate bar over the (initially blank) page, gone once the
+        // first page renders — a 3DS chain can spend seconds on blank interstitials.
+        val progress = android.widget.ProgressBar(this).apply {
+            isIndeterminate = true
+        }
+        val container = android.widget.FrameLayout(this).apply {
+            addView(
+                view,
+                android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                    android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                ),
+            )
+            addView(
+                progress,
+                android.widget.FrameLayout.LayoutParams(
+                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                    android.widget.FrameLayout.LayoutParams.WRAP_CONTENT,
+                    android.view.Gravity.CENTER,
+                ),
+            )
+        }
+
+        // Watchdog for a challenge page that never arrives at all (dead PSP host, blackholed
+        // request): fail once nothing has rendered within the timeout. Disarmed by the first
+        // finished page — after that, however long the shopper takes on the challenge is theirs.
+        val timeoutHandler = android.os.Handler(mainLooper)
+        val timeout = Runnable {
+            Log.w(TAG, "no page rendered within ${FIRST_PAGE_TIMEOUT_MS}ms — failing the redirect")
+            finishWith(STATUS_FAILED, message = "the payment page did not load")
+        }
+        timeoutHandler.postDelayed(timeout, FIRST_PAGE_TIMEOUT_MS)
+
         view.webViewClient = object : WebViewClient() {
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
                 val url = request.url
@@ -110,8 +151,15 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
                 if (url != null && isReturnUrl(url)) finishWith(STATUS_APPROVED)
             }
 
+            override fun onPageFinished(view: WebView, url: String?) {
+                super.onPageFinished(view, url)
+                timeoutHandler.removeCallbacks(timeout)
+                progress.visibility = android.view.View.GONE
+            }
+
             override fun onReceivedHttpError(view: WebView, request: WebResourceRequest, errorResponse: WebResourceResponse) {
                 super.onReceivedHttpError(view, request, errorResponse)
+                // Log-only: ACS chains legitimately serve 4xx interstitials that still render.
                 if (request.isForMainFrame) {
                     Log.w(TAG, "onReceivedHttpError: HTTP ${errorResponse.statusCode} on ${request.url}")
                 }
@@ -120,11 +168,14 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
             override fun onReceivedError(view: WebView, request: WebResourceRequest, error: WebResourceError) {
                 super.onReceivedError(view, request, error)
                 if (request.isForMainFrame) {
+                    // A main-frame *network* failure means nothing rendered — surface it instead of
+                    // stranding the shopper on a blank page.
                     Log.w(TAG, "onReceivedError: ${error.description} on ${request.url}")
+                    finishWith(STATUS_FAILED, message = "payment page failed to load: ${error.description}")
                 }
             }
         }
-        setContentView(view)
+        setContentView(container)
         return view
     }
 
@@ -183,5 +234,8 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
         private const val STATE_LAUNCHED = "launched"
         private const val STATE_LEFT = "left_for_browser"
         private const val TAG = "RedirectionCheckout"
+
+        /** How long a first page may take before the redirect is declared dead. */
+        private const val FIRST_PAGE_TIMEOUT_MS = 60_000L
     }
 }
