@@ -46,6 +46,10 @@ dependencies {
     // Svelte stores. The Payment API client itself stays blocking (called off the main thread).
     api(libs.kotlinx.coroutines.core)
 
+    // ProcessLifecycleOwner — the Android analog of web's `beforeunload`: the analytics batch
+    // queue flushes when the app goes to background (see CheckoutEventBus wiring).
+    implementation(libs.androidx.lifecycle.process)
+
     // org.json is provided by the Android platform at compile/runtime (part of android.jar) —
     // no production dependency needed. The Android platform stub throws on the unit test
     // classpath, so tests pull in the real implementation.

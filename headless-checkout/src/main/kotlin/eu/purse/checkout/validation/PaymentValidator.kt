@@ -3,6 +3,10 @@ package eu.purse.checkout.validation
 import android.util.Log
 import eu.purse.checkout.PurseCheckoutException
 import eu.purse.checkout.PurseCheckoutHooks
+import eu.purse.checkout.PurseHeadlessCheckout
+import eu.purse.checkout.monitoring.CheckoutEventBus
+import eu.purse.checkout.monitoring.CheckoutEventCode
+import eu.purse.checkout.monitoring.EventLevel
 import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.checkout.payment.secondary.SecondaryConfigs
 import eu.purse.checkout.payment.secondary.SecondaryToken
@@ -85,7 +89,16 @@ class PaymentValidator(private val api: PaymentApiClient) {
         // Merchant hook between payload preparation and the POST — throwing aborts the submit
         // (web wraps this as ON_BEFORE_VALIDATE_HOOK_FAILED). Skipped when a plugin auto-submits.
         if (!skipOnBeforeValidate) {
-            hooks?.onBeforeValidate?.invoke(splits)
+            try {
+                hooks?.onBeforeValidate?.invoke(splits)
+            } catch (e: Exception) {
+                CheckoutEventBus.getInstance().post(
+                    CheckoutEventCode.HEADLESS_CHECKOUT_ON_BEFORE_VALIDATE_HOOK_FAILED,
+                    EventLevel.ERROR,
+                    PurseHeadlessCheckout.monitoringPayload("message" to e.message),
+                )
+                throw e
+            }
         }
 
         // The one ground-truth point for "what did we actually send to /validate" — one item per
@@ -107,11 +120,17 @@ class PaymentValidator(private val api: PaymentApiClient) {
             throw PurseCheckoutException.ValidateFailed("validate call failed: ${e.message}", e)
         }
 
-        // Runs before postValidation (and so before any redirection); errors swallowed, like web.
+        // Runs before postValidation (and so before any redirection); errors swallowed, like web
+        // (which reports them as HEADLESS_CHECKOUT_CLIENT_HOOK_ERROR).
         try {
             hooks?.onAfterValidate?.invoke()
         } catch (e: Exception) {
             Log.w(TAG, "onAfterValidate hook failed (ignored): ${e.message}")
+            CheckoutEventBus.getInstance().post(
+                CheckoutEventCode.HEADLESS_CHECKOUT_CLIENT_HOOK_ERROR,
+                EventLevel.ERROR,
+                PurseHeadlessCheckout.monitoringPayload("message" to e.message),
+            )
         }
 
         prepared.forEach { it.plugin.postValidation(result, it.context) }

@@ -29,9 +29,15 @@ import eu.purse.partnerui.plugins.generics.redirection.RedirectionHost
 import eu.purse.partnerui.plugins.partners.klarna.KlarnaHost
 import eu.purse.partnerui.plugins.partners.paypal.wallet.PaypalHost
 import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardHost
+import eu.purse.checkout.monitoring.CheckoutEventBus
+import eu.purse.checkout.monitoring.CheckoutEventCode
+import eu.purse.checkout.monitoring.EventLevel
 import eu.purse.core.api.PaymentApiException
 import eu.purse.core.datetime.DatetimeApiClient
 import eu.purse.core.datetime.ServerDatetimeChecker
+import eu.purse.core.monitoring.ApiCallMonitor
+import eu.purse.core.monitoring.MonitoringApiClient
+import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -46,6 +52,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import org.json.JSONArray
+import org.json.JSONObject
 import java.math.BigDecimal
 import java.time.Instant
 
@@ -74,8 +81,21 @@ class PurseHeadlessCheckout private constructor(
     private val datetimeChecker: ServerDatetimeChecker,
     private val watchdogIntervalMs: Long,
 ) {
+    private val bus = CheckoutEventBus.getInstance()
+
     /** Owns the expiry watchdog (and later background work); cancelled by [teardown]. */
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val scope = CoroutineScope(
+        SupervisorJob() + Dispatchers.Default +
+            CoroutineExceptionHandler { _, e ->
+                // Web's WindowErrorWatcher analog, scoped to the SDK's own coroutines — an SDK
+                // must never install a process-global uncaught-exception handler.
+                bus.post(
+                    CheckoutEventCode.HEADLESS_CHECKOUT_UNCAUGHT_ERROR,
+                    EventLevel.ERROR,
+                    monitoringPayload("stack" to e.stackTraceToString().take(4_000)),
+                )
+            },
+    )
     private val splitter = PursePaymentSplitter(session.amount)
 
     /**
@@ -141,6 +161,22 @@ class PurseHeadlessCheckout private constructor(
     private var lastNotifiedRemaining: BigDecimal = splitter.remaining
 
     init {
+        // Web emits CREATE + SET_SESSION + READY across init/setSession; one construction here.
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_CREATE,
+            payload = monitoringPayload("sessionType" to "v2", "user_agent" to "android"),
+        )
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_SET_SESSION,
+            payload = monitoringPayload(
+                "paymentSessionId" to session.id,
+                "sessionType" to "v2",
+                "amount" to session.amount.toPlainString(),
+                "nb_methods" to session.meansOfPayment.size,
+            ),
+        )
+        bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_READY)
+
         // Expiry watchdog — web's `onExpires` (5s poll against the server-offset-corrected clock,
         // `server-datetime-checker.ts`). The one-shot clock sync happens on the watchdog's thread
         // so init stays synchronous and network-free.
@@ -151,11 +187,22 @@ class PurseHeadlessCheckout private constructor(
                 while (isActive) {
                     if (datetimeChecker.isExpiredForServer(session.expirationDate)) {
                         _sessionState.value = SessionState.EXPIRED
+                        bus.post(
+                            CheckoutEventCode.HEADLESS_CHECKOUT_EXPIRED_SESSION,
+                            EventLevel.WARNING,
+                            monitoringPayload("paymentSessionId" to session.id),
+                        )
                         break
                     }
                     delay(watchdogIntervalMs)
                 }
             }
+        } else if (_sessionState.value == SessionState.EXPIRED) {
+            bus.post(
+                CheckoutEventCode.HEADLESS_CHECKOUT_EXPIRED_SESSION,
+                EventLevel.WARNING,
+                monitoringPayload("paymentSessionId" to session.id),
+            )
         }
 
         // Eligibility pre-check — web's `getEligibilityCheck` at session build
@@ -185,6 +232,14 @@ class PurseHeadlessCheckout private constructor(
 
     /** Choose (or clear, with `null`) the primary method that covers the remaining amount. */
     fun setPrimary(method: PrimaryMethod?) {
+        if (method != null) {
+            bus.post(
+                CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_SET_PRIMARY,
+                payload = monitoringPayload("partner" to method.partner.wireValue, "method" to method.method.wireValue),
+            )
+        } else {
+            bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_CLEAR_PRIMARY_SPLIT)
+        }
         splitter.setPrimary(method)
         refresh()
     }
@@ -204,6 +259,7 @@ class PurseHeadlessCheckout private constructor(
         scope.launch {
             plugins.forEach { (item, plugin) -> runCatching { plugin.destroyClient(pluginContext(item)) } }
         }.invokeOnCompletion { scope.cancel() }
+        bus.flush()
     }
 
     /** The per-partner config for a secondary method (PAN/CVV rules, take policy) — `null` if none. */
@@ -220,6 +276,7 @@ class PurseHeadlessCheckout private constructor(
      */
     suspend fun getSecondaryToken(method: SecondaryMethod, pan: String, cvv: String? = null): SecondaryToken =
         try {
+            bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_GET_SECONDARY_TOKEN)
             SecondaryTokenizer(apiClient()).tokenize(method, pan, cvv, splitter.remaining)
         } catch (e: Exception) {
             // A terminal API answer (already submitted / expired / gone) ends the whole session,
@@ -235,11 +292,27 @@ class PurseHeadlessCheckout private constructor(
      */
     fun applySecondary(token: SecondaryToken, amount: BigDecimal? = null) {
         splitter.takeSplit(token, amount)
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_SECONDARY_TOKEN_TAKE,
+            payload = monitoringPayload(
+                "partner" to token.partner.wireValue,
+                "method" to token.method.wireValue,
+                "amount" to (amount ?: token.balance).toPlainString(),
+            ),
+        )
         refresh()
     }
 
     fun removeSecondary(token: SecondaryToken) {
         splitter.clearSplit(token)
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_SECONDARY_TOKEN_REMOVE_FROM_SPLIT,
+            payload = monitoringPayload(
+                "partner" to token.partner.wireValue,
+                "method" to token.method.wireValue,
+                "id" to token.id,
+            ),
+        )
         refresh()
     }
 
@@ -314,6 +387,14 @@ class PurseHeadlessCheckout private constructor(
             // Informational — merchants observe these on [pluginEvents].
             PluginEvent.Redirect, PluginEvent.Cancelled -> Unit
         }
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_PARTNER_UI_EVENT,
+            payload = monitoringPayload(
+                "code" to event::class.simpleName,
+                "partner" to item.partner.wireValue,
+                "method" to item.method.wireValue,
+            ),
+        )
         _pluginEvents.tryEmit(CheckoutPluginEvent(item.id, event))
     }
 
@@ -462,9 +543,20 @@ class PurseHeadlessCheckout private constructor(
      * @throws PurseCheckoutException.NoPluginRegistered while no `:partner-ui` plugins exist yet.
      */
     suspend fun submitPayment(skipOnBeforeValidate: Boolean = false): ValidationResult {
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_SUBMIT_PAYMENT,
+            payload = monitoringPayload(
+                "trigger" to if (skipOnBeforeValidate) "xpay" else "api",
+                "nb_splits" to splitter.splits.size,
+            ),
+        )
         if (!splitter.fulfilled) throw PurseCheckoutException.PaymentNotFulfilled()
         unfulfilledItemId()?.let { throw PurseCheckoutException.ItemNotFulfilled(it) }
         _sessionState.value = SessionState.SUBMITTING
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_STARTED,
+            payload = monitoringPayload("session_id" to session.id, "nb_items" to splitter.splits.size),
+        )
         return try {
             val result = PaymentValidator(apiClient()).execute(
                 splitter.splits,
@@ -474,10 +566,21 @@ class PurseHeadlessCheckout private constructor(
                 skipOnBeforeValidate = skipOnBeforeValidate,
             )
             _sessionState.value = if (result.isSuccess) SessionState.SUBMITTED else SessionState.ERROR
+            bus.post(
+                if (result.isSuccess) CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_SUCCESS
+                else CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_FAILED,
+                if (result.isSuccess) EventLevel.SUCCESS else EventLevel.ERROR,
+                monitoringPayload("global_status" to result.globalStatus),
+            )
             result
         } catch (e: Throwable) {
             _sessionState.value =
                 if (e.sessionTerminal()) SessionState.TERMINATED else SessionState.ERROR
+            bus.post(
+                CheckoutEventCode.HEADLESS_CHECKOUT_PAYMENT_ERROR,
+                EventLevel.ERROR,
+                monitoringPayload("message" to e.message),
+            )
             throw e
         }
     }
@@ -498,7 +601,14 @@ class PurseHeadlessCheckout private constructor(
 
     private fun refresh() {
         _remainingAmountToPay.value = splitter.remaining
-        _isPaymentFulfilled.value = splitter.fulfilled && unfulfilledItemId() == null
+        val fulfilled = splitter.fulfilled && unfulfilledItemId() == null
+        if (fulfilled != _isPaymentFulfilled.value) {
+            bus.post(
+                CheckoutEventCode.HEADLESS_CHECKOUT_PAYMENT_FULFILLED,
+                payload = monitoringPayload("isFulfilled" to fulfilled),
+            )
+        }
+        _isPaymentFulfilled.value = fulfilled
         _amountSplit.value = splitter.splits
         meansOfPayment = MethodAvailability.recompute(
             meansOfPayment,
@@ -577,10 +687,96 @@ class PurseHeadlessCheckout private constructor(
                     DatetimeApiClient(params.apiKey, params.environment.datetimeApiRoot).datetime()
                 },
             )
+            // Monitoring — only against a real checker (i.e. never from unit tests): route the
+            // event bus's batches to the monitoring API with this session's context attached.
+            if (datetimeChecker == null) {
+                installMonitoring(params, sessionId = params.paymentSession.id)
+            }
             return PurseHeadlessCheckout(params, session, apiRoot, hooks, checker, watchdogIntervalMs)
         }
 
         /** Web's `ServerDatetimeChecker.WATCHDOG_DURATION`. */
         const val WATCHDOG_INTERVAL_MS = 5_000L
+
+        /** SDK version stamped onto every monitoring message — web's `version` extra. */
+        const val VERSION = "0.1.0"
+
+        @Volatile
+        private var backgroundFlushInstalled = false
+
+        /**
+         * Point the singleton [CheckoutEventBus] at the monitoring API for this session — web's
+         * `init` building the `ApiLogger`, patching extras and handing `sendLogs` to the bus —
+         * plus the Android analog of `beforeunload`: flush when the app goes to background.
+         */
+        private fun installMonitoring(params: PurseSessionParams, sessionId: String) {
+            val logger = MonitoringApiClient(
+                apiKey = params.apiKey,
+                monitoringApiRoot = params.environment.monitoringApiRoot,
+                envWireValue = params.environment.wireValue,
+            )
+            logger.patchExtras(
+                entityId = params.entityId,
+                paymentSessionId = sessionId,
+                version = VERSION,
+                wrapper = "android",
+            )
+            val bus = CheckoutEventBus.getInstance()
+            bus.setLogProcessor { batch -> logger.sendLogs(batch.map { it.toJson() }) }
+
+            ApiCallMonitor.listener = object : ApiCallMonitor.Listener {
+                override fun onCallStart(method: String, path: String) {
+                    bus.post(
+                        CheckoutEventCode.HEADLESS_CHECKOUT_PARTNER_API_CALL_START,
+                        EventLevel.NETWORK,
+                        monitoringPayload("call" to method, "path" to path),
+                    )
+                }
+
+                override fun onCallEnd(method: String, path: String, durationMs: Long, success: Boolean) {
+                    bus.post(
+                        CheckoutEventCode.HEADLESS_CHECKOUT_PARTNER_API_CALL_END,
+                        EventLevel.PERFORMANCE,
+                        monitoringPayload(
+                            "call" to method,
+                            "path" to path,
+                            "durationMs" to durationMs,
+                            "success" to success,
+                        ),
+                    )
+                }
+            }
+
+            installBackgroundFlush(bus)
+        }
+
+        /**
+         * Flush the analytics queue when the whole app goes to background — the Android analog of
+         * web's `beforeunload` + `sendBeacon`. Guarded: `ProcessLifecycleOwner` needs a real
+         * Android process (androidx startup), so on the JVM test classpath this quietly no-ops.
+         */
+        private fun installBackgroundFlush(bus: CheckoutEventBus) {
+            if (backgroundFlushInstalled) return
+            runCatching {
+                val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
+                mainHandler.post {
+                    runCatching {
+                        androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.addObserver(
+                            androidx.lifecycle.LifecycleEventObserver { _, event ->
+                                if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
+                                    bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_PAGE_UNLOAD)
+                                    bus.flush()
+                                }
+                            },
+                        )
+                    }
+                }
+                backgroundFlushInstalled = true
+            }
+        }
+
+        /** A monitoring payload from non-null pairs. */
+        internal fun monitoringPayload(vararg pairs: Pair<String, Any?>): JSONObject =
+            JSONObject().apply { pairs.forEach { (key, value) -> if (value != null) put(key, value) } }
     }
 }

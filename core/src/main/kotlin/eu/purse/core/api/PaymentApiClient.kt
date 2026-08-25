@@ -90,7 +90,10 @@ class PaymentApiClient(
         }
     }
 
-    private fun execute(method: String, path: String, body: String?): String {
+    private fun execute(method: String, path: String, body: String?): String =
+        eu.purse.core.monitoring.ApiCallMonitor.time(method, path) { executeUnmonitored(method, path, body) }
+
+    private fun executeUnmonitored(method: String, path: String, body: String?): String {
         val url = "$root/$entityId/sessions/$sessionId$path"
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = method
