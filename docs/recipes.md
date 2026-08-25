@@ -215,31 +215,25 @@ non-Compose screens, where `prepare(host)` is the visible name of the "create" s
 
 ## 5. Card payment (Compose + SecureFields)
 
-The card form is Compose-first. `rememberCardCoordinator` owns the SecureFields instance;
-`VaultForm` renders it. PAN/expiry/CVC validation and brand detection happen **inside**
-SecureFields — you only observe validity:
+The element renders the SecureFields card form. PAN/expiry/CVC validation and brand detection
+happen **inside** SecureFields — you only observe `element.ready` (the form's validity):
 
 ```kotlin
 @Composable
 fun CardPayment(checkout: PurseHeadlessCheckout, method: PrimaryMethod) {
-    // remember(method.id) is load-bearing: a fresh host each recomposition would rebuild
-    // the form and lose whatever the shopper typed.
-    val host = remember(method.id) { checkout.cardHost(method) }
-    val coordinator = rememberCardCoordinator(host, listener = object : CardCoordinator.Listener {
-        override fun onReady(ready: Boolean) { /* form validity — gate your Pay button */ }
+    val element = rememberPaymentElement(checkout, method, listener = object : PaymentElementListener {
         override fun onResult(summary: String, globalStatus: String?) {
             // globalStatus == null after a 3-D Secure return → confirm via recipe 12.
         }
-        override fun onRequiresAction() { /* 3-D Secure launching (informational) */ }
-        override fun onCanceled() { }
         override fun onError(message: String?) { }
     })
+    LaunchedEffect(method.id) { checkout.setPrimary(method) }   // form-like: selection is your call
 
     Column {
-        VaultForm(coordinator.sdk, Modifier.fillMaxWidth().height(220.dp))
+        PaymentElementUi(element, Modifier.fillMaxWidth().height(220.dp))   // ← the render: the form
         Button(
-            onClick = { coordinator.submit() },   // tokenize → /init → /validate → follow 3DS
-            enabled = coordinator.formValid,
+            onClick = { element.submit() },   // tokenize → /init → /validate → follow 3DS
+            enabled = element.ready,
         ) { Text("Pay") }
     }
 }
@@ -248,77 +242,71 @@ fun CardPayment(checkout: PurseHeadlessCheckout, method: PrimaryMethod) {
 Mounting the form arms the fulfillment gate: an **empty card form never reads as payable**
 (`isPaymentFulfilled` stays `false` until every field validates).
 
-Co-badged cards (e.g. CB + Visa) default to SecureFields' detected brand; a custom brand picker can
-call `coordinator.sdk.setBrandSelection(...)`.
+**Under the hood** the element wraps `rememberCardCoordinator(checkout.cardHost(method), listener)`
++ SecureFields' `VaultForm(coordinator.sdk)` — use those directly when you need the lower-level
+surface, e.g. a custom brand picker for co-badged cards (CB + Visa) calling
+`coordinator.sdk.setBrandSelection(...)`; by default the detected brand is used.
 
 ---
 
 ## 6. Google Pay
 
-Google Pay is **rendered, not driven**, exactly like web — where `getPaymentElement("googlepay")`
-hands you an element that *is* the official button with the whole flow wired inside. The Android
-analog is the `GooglePayButton` composable: it renders Google's own brand-guideline `PayButton`
-(showing the shopper's card art), shows itself only once `isReadyToPay` said yes, and from the tap
-on the SDK owns everything — sheet → the **approval** selects the method as primary → `/validate`
+Google Pay is **rendered, not driven**, exactly like web — its element *is* the official button
+with the whole flow wired inside: Google's own brand-guideline `PayButton` (showing the shopper's
+card art), appearing only once `isReadyToPay` said yes, and from the tap on the SDK owns
+everything — sheet → the **approval** selects the method as primary → `/validate`
 → 3-D Secure if any (web's `validationRequested`). A cancelled sheet leaves the split untouched.
 You never call `setPrimary` or `submitPayment`; outcomes land on the listener.
 
 ```kotlin
-class CheckoutActivity : ComponentActivity() {
-
-    // In onCreate scope — the coordinator registers ActivityResult launchers, which must
-    // happen before the Activity is started.
-    private val googlePay = GooglePayCoordinator(this, object : GooglePayCoordinator.Listener {
+@Composable
+fun GooglePayRow(checkout: PurseHeadlessCheckout, method: PrimaryMethod) {
+    val element = rememberPaymentElement(checkout, method, listener = object : PaymentElementListener {
         override fun onResult(summary: String, globalStatus: String?) { /* recipe 12 if null */ }
-        override fun onRequiresAction() { /* a 3-D Secure step is opening */ }
         override fun onCanceled() { /* sheet dismissed — split untouched, nothing submitted */ }
         override fun onError(message: String?) { }
     })
 
-    fun onSessionReady(checkout: PurseHeadlessCheckout) {
-        val item = checkout.primaryMethods.first { it.method == Method.GooglePay }
-        googlePay.prepare(checkout.googlePayHost(item))   // /init + isReadyToPay
-    }
+    // ← the render: the official button. Place it unconditionally — it shows itself once ready,
+    // and it IS the submit (element.selfSubmitting == true; no Pay button of yours).
+    PaymentElementUi(element, Modifier.fillMaxWidth())
 }
 ```
 
-```kotlin
-// In your checkout screen — place it unconditionally; it renders nothing until ready:
-GooglePayButton(googlePay, Modifier.fillMaxWidth())
-// Optional looks: theme = ButtonTheme.LIGHT, type = ButtonType.BUY, cornerRadius = 8.dp
-```
-
-Driving the sheet from your own custom button is still possible (`googlePay.launchSheet()`, with
-readiness on `Listener.onReady`) — but Google's brand guidelines require the official button
-asset, so prefer `GooglePayButton`.
+**Under the hood** the element wraps `rememberGooglePayCoordinator(listener)` + `prepare(
+checkout.googlePayHost(method))` (`/init` + `isReadyToPay`) + `GooglePayButton(coordinator)` —
+use those directly to pass button looks (`theme = ButtonTheme.LIGHT`, `type = ButtonType.BUY`,
+`cornerRadius = 8.dp`), from a View-system screen (construct `GooglePayCoordinator(activity,
+listener)` in `onCreate`), or to drive the sheet from a custom control via
+`coordinator.launchSheet()` — though Google's brand guidelines require the official button asset.
 
 ---
 
 ## 7. PayPal (wallet, pay-now)
 
-Self-submitting like Google Pay — no `setPrimary`, no `submitPayment`. `prepare` is cheap (no
+Self-submitting like Google Pay — no `setPrimary`, no `submitPayment`. Creation is cheap (no
 `/init`: PayPal's order is only created on the button tap, so an abandoned selection never leaves
 an orphan order), and the buyer's **approval** selects the method and triggers `/validate`:
 
 ```kotlin
-private val paypal = PaypalCoordinator(this, paypalListener)
+@Composable
+fun PaypalRow(checkout: PurseHeadlessCheckout, method: PrimaryMethod) {
+    val element = rememberPaymentElement(checkout, method, listener = object : PaymentElementListener {
+        override fun onResult(summary: String, globalStatus: String?) { /* recipe 12 if null */ }
+        override fun onCanceled() { }
+        override fun onError(message: String?) { }
+    })
 
-fun onSessionReady(checkout: PurseHeadlessCheckout) {
-    val item = checkout.primaryMethods.first { it.partner == Partner.Paypal }
-    paypal.prepare(checkout.paypalHost(item))
+    // ← the render: PayPal's own branded button (payment-buttons artifact). It IS the submit:
+    // tap → /init → PayPal app/browser approval → (approval selects PayPal as primary) → /validate.
+    PaymentElementUi(element, Modifier.fillMaxWidth())
 }
 ```
 
-The render is PayPal's own branded button (from the `payment-buttons` artifact), which shows
-itself once prepared and drives everything from its tap — `/init` → PayPal app/browser approval →
-(approval selects PayPal as primary) → `/validate`, all reported on the listener:
-
-```kotlin
-PaypalButton(paypal, Modifier.fillMaxWidth())
-```
-
-(Or, through the unified element of recipe 4, `PaymentElementUi` renders this same button. For a
-fully custom button, `paypal.submit()` on its click is the escape hatch.)
+**Under the hood** the element wraps `rememberPaypalCoordinator(listener)` +
+`prepare(checkout.paypalHost(method))` + `PaypalButton(coordinator)` — use those directly from a
+View-system screen (construct `PaypalCoordinator(activity, listener)` in `onCreate`), or drive a
+fully custom button via `paypal.submit()` as the escape hatch.
 
 ---
 
@@ -338,9 +326,8 @@ intent-filter in **your** manifest:
 </activity>
 ```
 
-**Compose (the element path)** — the render step is explicit: `PaymentElementUi` places the
-container, and only then does the element run `prepare` (`/init` → `client_token` → widget load)
-into it:
+The render step is explicit: `PaymentElementUi` places the container, and only then does the
+element run its prepare (`/init` → `client_token` → widget load) into it:
 
 ```kotlin
 @Composable
@@ -356,7 +343,7 @@ fun KlarnaPayment(checkout: PurseHeadlessCheckout, method: PrimaryMethod) {
 }
 ```
 
-**Imperative (View system)** — there is no separate render call: the `ViewGroup` you hand the
+**Under the hood** (View system) — there is no separate render call: the `ViewGroup` you hand the
 constructor *is* the render surface, and `prepare` inflates the widget into it. "Render" and
 "prepare" collapse into one step here, which is exactly what the element path un-collapses:
 
@@ -376,20 +363,28 @@ fun onPayTapped() = klarna.submit()  // /validate first, then Klarna authorize()
 
 ## 9. Redirection methods (generic template)
 
-One coordinator serves **every** method the session labels `template: "redirection"` (or
-`integration_mode: "redirection"`) — Fintecture, Bizum, Oney, Sequra… — without naming any of them:
+One element serves **every** method the session labels `template: "redirection"` (or
+`integration_mode: "redirection"`) — Fintecture, Bizum, Oney, Sequra… — without naming any of
+them. It's the one element with `hasUi == false`: there is nothing to render, because the PSP's
+hosted page *is* the payment step:
 
 ```kotlin
-private val redirection = RedirectionCoordinator(this, redirectionListener)
+@Composable
+fun RedirectionMethodRow(checkout: PurseHeadlessCheckout, method: PrimaryMethod) {
+    // Create ONLY once the shopper selects this method — creation runs the /init
+    // (a network round-trip and a session step).
+    val element = rememberPaymentElement(checkout, method, listener)
+    LaunchedEffect(method.id) { checkout.setPrimary(method) }
 
-fun onRedirectionMethodSelected(checkout: PurseHeadlessCheckout, item: PrimaryMethod) {
-    checkout.setPrimary(item)
-    // Only on selection — /init costs a network round-trip and a session step.
-    redirection.prepare(checkout.redirectionHost(item))
+    // element.hasUi == false — PaymentElementUi renders nothing; your Pay button is the whole UI.
+    Button(onClick = { element.submit() }, enabled = element.ready) { Text("Pay") }
+    // submit: /validate → PSP page in the hardened in-app WebView
 }
-
-fun onPayTapped() = redirection.submit()  // /validate → PSP page in the hardened in-app WebView
 ```
+
+**Under the hood** the element wraps `rememberRedirectionCoordinator(listener)` +
+`prepare(checkout.redirectionHost(method))` + `submit()` — construct
+`RedirectionCoordinator(activity, listener)` in `onCreate` for a View-system screen.
 
 The shopper returning from the PSP page reports `onResult(..., globalStatus = null)`: that means
 "they came back", **not** "it worked" — settle it with recipe 12.
