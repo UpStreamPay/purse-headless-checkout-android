@@ -220,6 +220,41 @@ Registered partners today: `illicado-giftcard`, `buybox-giftcard`, `maxxing-loya
 `ogloba-giftcard`, `mybeezbox-giftcard`, `easy2play-giftcard`, `easy2play-voucher`.
 `ancv-connect` is not yet registered (needs a two-phase holder→poll `/init` flow).
 
+### Loan simulation (BNPL)
+
+Some instalment methods quote their schedule before the shopper commits — web's
+`method.simulateLoan(product)`. A method advertises it through the `simulable` configuration
+label; everything else fails fast with a dedicated code rather than a partner error.
+
+| Member | Signature | Notes |
+|---|---|---|
+| `PrimaryMethod.simulable` | `val simulable: Boolean` | `configuration.labels` contains `"simulable"`. Check it before showing a "see instalments" affordance. |
+| `simulateLoan` | `suspend fun simulateLoan(method: PrimaryMethod, product: LoanProduct): LoanSimulation` | `POST /simulation/{entityId}/{partner}/{method}` (entity-scoped, not under the session). Runs on `Dispatchers.IO`. |
+| `simulateLoans` | `suspend fun simulateLoans(method: PrimaryMethod, product: LoanProduct): List<LoanSimulation>` | The `/multi` variant — every schedule the partner offers. Candidates without schedule data are skipped, so the list may be empty. |
+
+```kotlin
+data class LoanProduct(val amount: BigDecimal, val currencyCode: String)
+
+data class LoanSimulation(
+    val initialInstallmentAmount: BigDecimal, val finalInstallmentAmount: BigDecimal,
+    val installmentAmount: BigDecimal, val installmentCount: Int,
+    val totalCost: BigDecimal, val totalAmount: BigDecimal,
+    val legalText: String?, val aprc: BigDecimal?,
+)
+```
+
+`totalCost` is the price of the credit (excluding the financed amount); `totalAmount` is what the
+shopper pays in all — `(count - 1) × installmentAmount + initial + final`, rounded to two decimals,
+exactly web's arithmetic. Like web, the schedule carries **counts and amounts only**: the API
+returns no per-instalment dates.
+
+**Throws:**
+- `PurseCheckoutException.MethodNotSimulable` (`METHOD_IS_NOT_SIMULABLE`) — the method has no
+  `simulable` label. No API call is made.
+- `PurseCheckoutException.LoanSimulationFailed` (`INVALID_LOAN_SIMULATION`) — the API answered
+  without a `plugin_result`.
+- `PaymentApiException` — network/transport failure.
+
 ---
 
 ## 6. Interactive plugins (Google Pay, PayPal, Klarna, Card, Redirection)
@@ -661,6 +696,8 @@ interactive plugin.
 | `PurseCheckoutException.NoSecondaryConfig` | `getSecondaryToken` | No `SecondaryConfig` registered for this secondary method. |
 | `PurseCheckoutException.InvalidSecondaryCard` | `getSecondaryToken` | Client-side PAN/CVV validation failed. |
 | `PurseCheckoutException.SecondaryTokenizationFailed` | `getSecondaryToken` | `/init` unsuccessful, or the card carries no balance. |
+| `PurseCheckoutException.MethodNotSimulable` | `simulateLoan` / `simulateLoans` | The method has no `simulable` label (`METHOD_IS_NOT_SIMULABLE`). |
+| `PurseCheckoutException.LoanSimulationFailed` | `simulateLoan` | The simulation API answered without schedule data (`INVALID_LOAN_SIMULATION`). |
 | `PurseSessionException.SessionMalformed` | `PurseHeadlessCheckout.init` | `widget.data` couldn't be decoded, or is missing required fields. |
 | `PaymentApiException` | Any Payment API call | Network/transport failure, non-2xx/3xx status, or an unusable response body. |
 
@@ -677,6 +714,7 @@ your app's error UI.
 | `PurseEnvironment` | `DEVELOPMENT, TEST, SANDBOX, PRODUCTION` | Each carries its own `paymentApiRoot`. |
 | `PurseSessionParams` | `apiKey, apiUrl, environment, entityId, paymentSession` | The decoded `widget.data`. |
 | `MethodConfiguration` | `stable, template, labels, position, vault, settings` | Raw `configurations` block; `isSecondary` derives from `labels`. |
+| `LoanProduct` / `LoanSimulation` | see [Loan simulation](#loan-simulation-bnpl) | Input and result of `simulateLoan`. |
 | `MethodSettings` | `registrationMode, saveToken, directDebit, paymentMinAmount, paymentMaxAmount, integrationMode, merchantClientId, …` | Per-method settings a UI may want to branch on. |
 
 ---

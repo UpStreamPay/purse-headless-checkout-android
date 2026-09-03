@@ -245,7 +245,10 @@ overridable card-form texts + a
 `PurseTheme` mapped onto SecureFields' `VaultStyles`; CDN method icons (`PurseAssets`); typed
 payment confirmation (`paymentStatus()` / `awaitPaymentOutcome()` over `sessionTransactions()`);
 and a hardened redirect WebView (progress, first-page watchdog, network-failure surfacing,
-process-death safety).
+process-death safety); BNPL loan simulation (`PrimaryMethod.simulable` off the `simulable` label,
+`simulateLoan` / `simulateLoans` over the entity-scoped `POST /simulation/…` endpoints, `LoanProduct` /
+`LoanSimulation` mapped as web's `mapPluginResultToSimulation` — counts and amounts, no per-instalment
+dates — and the `METHOD_IS_NOT_SIMULABLE` / `INVALID_LOAN_SIMULATION` codes).
 
 ## Deferred (intentionally not built yet)
 

@@ -683,6 +683,48 @@ for the next payment (sessions are single-shot anyway).
 
 ---
 
+## 18. BNPL instalment simulation
+
+Instalment partners flagged `simulable` quote their schedule up front. Gate the affordance on the
+flag, then ask for the schedule for the amount you want financed — usually the remaining amount:
+
+```kotlin
+val bnpl = checkout.primaryMethods.firstOrNull { it.simulable } ?: return
+
+lifecycleScope.launch {
+    try {
+        val schedule = checkout.simulateLoan(
+            bnpl,
+            LoanProduct(amount = checkout.remainingAmountToPay.value, currencyCode = checkout.currency),
+        )
+        instalmentsView.render(
+            count = schedule.installmentCount,          // e.g. 3
+            first = schedule.initialInstallmentAmount,  // first instalment
+            each = schedule.installmentAmount,          // the recurring ones
+            last = schedule.finalInstallmentAmount,
+            cost = schedule.totalCost,                  // price of the credit
+            total = schedule.totalAmount,               // everything the shopper pays
+            legal = schedule.legalText,                 // display when present
+        )
+    } catch (e: PurseCheckoutException) {
+        when (e.code) {
+            PurseErrorCode.METHOD_IS_NOT_SIMULABLE -> hideInstalments()   // shouldn't happen behind the flag
+            PurseErrorCode.INVALID_LOAN_SIMULATION -> showUnavailable()   // partner answered without a schedule
+            else -> throw e
+        }
+    }
+}
+```
+
+`simulateLoans(...)` returns every schedule the partner offers (the `/multi` endpoint) when you want
+to let the shopper pick between 3×, 4×, 10×… The list skips unusable candidates and may be empty.
+
+Like web, a schedule carries counts and amounts but **no per-instalment dates** — the API doesn't
+return them. Simulation is a quote only: paying still goes through the normal `setPrimary` +
+`submitPayment` path.
+
+---
+
 ## Where to go deeper
 
 - [`docs/architecture/headless-checkout.md`](architecture/headless-checkout.md) — module map, the
