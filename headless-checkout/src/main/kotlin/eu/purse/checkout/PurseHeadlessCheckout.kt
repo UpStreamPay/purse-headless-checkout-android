@@ -5,6 +5,7 @@ import eu.purse.checkout.payment.item.MethodAvailability
 import eu.purse.checkout.payment.item.PaymentItem
 import eu.purse.checkout.payment.item.PaymentToken
 import eu.purse.checkout.payment.item.PrimaryMethod
+import eu.purse.checkout.payment.item.SavedSecondaryToken
 import eu.purse.checkout.payment.item.SecondaryMethod
 import eu.purse.checkout.payment.registration.RegistrationState
 import eu.purse.checkout.payment.secondary.SecondaryConfig
@@ -20,6 +21,7 @@ import eu.purse.checkout.state.SessionState
 import eu.purse.checkout.validation.PaymentValidator
 import eu.purse.core.api.PaymentApiClient
 import eu.purse.core.environment.PurseEnvironment
+import eu.purse.core.payload.ItemPayload
 import eu.purse.core.payload.ValidationResult
 import eu.purse.core.payment.LoanProduct
 import eu.purse.core.payment.LoanSimulation
@@ -148,6 +150,18 @@ class PurseHeadlessCheckout private constructor(
      */
     private val _paymentTokens = MutableStateFlow(visibleTokens())
     val paymentTokens: StateFlow<List<PaymentToken>> = _paymentTokens.asStateFlow()
+
+    /**
+     * The saved gift cards / vouchers (secondary card-on-file) this session offers — web keeps them
+     * in `mops` as `type: 'token'` secondaries; here they get their own flow, like [paymentTokens],
+     * and never appear on [paymentMethods]. Balances are unknown at build time and resolved in the
+     * background right after construction (one `/init` per token, with its stored number + pin);
+     * watch [SavedSecondaryToken.balanceResolved]. A token whose `/init` fails stays listed but
+     * disabled with [DisabledState.TokenInitFailed], as on web. Apply one with
+     * [applySecondary]; rename / delete need a `wallet_session` — see [editToken] / [deleteToken].
+     */
+    private val _savedSecondaryTokens = MutableStateFlow(visibleSavedSecondaryTokens())
+    val savedSecondaryTokens: StateFlow<List<SavedSecondaryToken>> = _savedSecondaryTokens.asStateFlow()
 
     /** Wallet API access, when the widget data carried a `wallet_session`. */
     private val walletClient: WalletApiClient? = params.walletSession?.let { wallet ->
@@ -282,6 +296,10 @@ class PurseHeadlessCheckout private constructor(
                 }
             }
         }
+
+        // Saved gift cards carry no balance in the session — re-`/init` each one now (web's
+        // `buildSecondaryPaymentToken` fires the same call as the token is built).
+        resolveSavedSecondaryBalances()
     }
 
     val currency: String get() = session.currency
@@ -444,7 +462,9 @@ class PurseHeadlessCheckout private constructor(
         client.deleteAllTokens()
         val tokenIds = visibleTokens().map { it.id }.toSet()
         if (splitter.primaryMethod?.id in tokenIds) splitter.setPrimary(null)
-        meansOfPayment = meansOfPayment.filterNot { it is PaymentToken }
+        // Saved gift cards are wallet tokens too — gone with the rest, and out of the split.
+        meansOfPayment.filterIsInstance<SavedSecondaryToken>().forEach { splitter.clearSplit(it.asSecondaryToken()) }
+        meansOfPayment = meansOfPayment.filterNot { it is PaymentToken || it is SavedSecondaryToken }
         walletTokens = emptyList()
         bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_DELETE_ALL_TOKENS)
         refresh()
@@ -473,7 +493,8 @@ class PurseHeadlessCheckout private constructor(
                 PurseErrorCode.INVALID_TOKEN_NAME,
             )
         }
-        val existsInSession = visibleTokens().any { it.id != excludingTokenId && it.name == name }
+        val existsInSession = visibleTokens().any { it.id != excludingTokenId && it.name == name } ||
+            visibleSavedSecondaryTokens().any { it.id != excludingTokenId && it.name == name }
         val existsInWallet = walletTokens.any { it.id != excludingTokenId && it.name == name }
         if (existsInSession || existsInWallet) {
             throw PurseCheckoutException.WalletOperationFailed(
@@ -487,17 +508,26 @@ class PurseHeadlessCheckout private constructor(
     private fun syncWalletTokens(tokens: List<WalletApiClient.WalletToken>) {
         val byId = tokens.associateBy { it.id }
         meansOfPayment = meansOfPayment.map { item ->
-            if (item is PaymentToken) {
-                val walletToken = byId[item.id] ?: return@map item
-                item.copy(
-                    favorite = walletToken.favorite ?: item.favorite,
-                    name = walletToken.name ?: item.name,
-                )
-            } else {
-                item
+            when (item) {
+                is PaymentToken -> {
+                    val walletToken = byId[item.id] ?: return@map item
+                    item.copy(
+                        favorite = walletToken.favorite ?: item.favorite,
+                        name = walletToken.name ?: item.name,
+                    )
+                }
+                is SavedSecondaryToken -> {
+                    val walletToken = byId[item.id] ?: return@map item
+                    item.copy(
+                        favorite = walletToken.favorite ?: item.favorite,
+                        name = walletToken.name ?: item.name,
+                    )
+                }
+                else -> item
             }
         }
         _paymentTokens.value = visibleTokens()
+        _savedSecondaryTokens.value = visibleSavedSecondaryTokens()
     }
 
     private fun updateTokenItem(tokenId: String, transform: (PaymentToken) -> PaymentToken) {
@@ -575,6 +605,169 @@ class PurseHeadlessCheckout private constructor(
         )
         refresh()
     }
+
+    // --- saved secondary tokens (gift cards on file) -----------------------------------------------
+
+    /**
+     * Draw a **saved** gift card into the split — the saved-token counterpart of
+     * [applySecondary] for a [SecondaryToken]. The latest known state of the token is used, so a
+     * stale instance from an earlier [savedSecondaryTokens] emission is fine.
+     *
+     * @throws PurseCheckoutException.SecondaryTokenizationFailed with
+     * [PurseErrorCode.SECONDARY_TOKEN_EMPTY_BALANCE] while the balance isn't resolved yet or is
+     * zero, or with [PurseErrorCode.FAILED_TO_INIT_SECONDARY_TOKEN] when the token's own `/init`
+     * failed (it is [DisabledState.TokenInitFailed]).
+     */
+    fun applySecondary(token: SavedSecondaryToken, amount: BigDecimal? = null) {
+        val current = savedSecondary(token.id) ?: token
+        if (current.disabled != null) {
+            throw PurseCheckoutException.SecondaryTokenizationFailed(
+                "saved token ${token.id} is disabled (${current.disabled.code})",
+                PurseErrorCode.FAILED_TO_INIT_SECONDARY_TOKEN,
+            )
+        }
+        if (!current.balanceResolved || current.balance.signum() <= 0) {
+            throw PurseCheckoutException.SecondaryTokenizationFailed(
+                if (current.balanceResolved) "saved token ${token.id} has no balance"
+                else "saved token ${token.id} balance is not resolved yet",
+                PurseErrorCode.SECONDARY_TOKEN_EMPTY_BALANCE,
+            )
+        }
+        applySecondary(current.asSecondaryToken(), amount)
+    }
+
+    /** Put a saved gift card's amount back — see [removeSecondary]. */
+    fun removeSecondary(token: SavedSecondaryToken) {
+        removeSecondary((savedSecondary(token.id) ?: token).asSecondaryToken())
+    }
+
+    /**
+     * Rename a saved gift card (`PATCH …/tokens/{id}/name`) — same rules as the card overload of
+     * [editToken]: wallet session required, token present in the wallet, label valid and unique.
+     */
+    suspend fun editToken(token: SavedSecondaryToken, name: String) {
+        val client = requireWallet()
+        requireWalletToken(token.id)
+        validateTokenLabel(name, excludingTokenId = token.id)
+        client.editTokenName(token.id, name)
+        updateSavedSecondary(token.id) { it.copy(name = name) }
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_TOKEN_EDIT,
+            payload = monitoringPayload(
+                "partner" to token.partner.wireValue,
+                "method" to token.method.wireValue,
+                "tokenId" to token.id,
+            ),
+        )
+    }
+
+    /**
+     * Delete a saved gift card (`DELETE …/tokens/{id}`) — web's secondary `token.delete()`: also
+     * clears it from the split and removes it from [savedSecondaryTokens].
+     */
+    suspend fun deleteToken(token: SavedSecondaryToken) {
+        val client = requireWallet()
+        requireWalletToken(token.id)
+        client.deleteToken(token.id)
+        splitter.clearSplit(token.asSecondaryToken())
+        meansOfPayment = meansOfPayment.filterNot { it.id == token.id }
+        walletTokens = walletTokens.filterNot { it.id == token.id }
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_TOKEN_DELETE,
+            payload = monitoringPayload(
+                "partner" to token.partner.wireValue,
+                "method" to token.method.wireValue,
+                "tokenId" to token.id,
+            ),
+        )
+        refresh()
+    }
+
+    /**
+     * Re-`/init` every saved gift card to learn its balance — sequentially on one IO coroutine,
+     * because `InitGuard` coalesces concurrent `/init`s of the same `(partner, method, amount)`
+     * and two saved cards of one issuer would otherwise share a single answer.
+     */
+    private fun resolveSavedSecondaryBalances() {
+        val saved = meansOfPayment.filterIsInstance<SavedSecondaryToken>()
+        if (saved.isEmpty()) return
+        scope.launch(Dispatchers.IO) {
+            saved.forEach { token -> resolveSavedSecondaryBalance(token) }
+        }
+    }
+
+    private fun resolveSavedSecondaryBalance(token: SavedSecondaryToken) {
+        try {
+            val config = SecondaryConfigs.forMethod(token.partner, token.method)
+                ?: throw PurseCheckoutException.NoSecondaryConfig("no secondary config for saved token ${token.id}")
+            val method = SecondaryMethod(
+                "${token.partner.wireValue}-${token.method.wireValue}",
+                token.partner, token.method, token.configuration, disabled = null,
+            )
+            val payload = ItemPayload(
+                partner = token.partner,
+                method = token.method,
+                amount = splitter.remaining,
+                paymentData = config.buildInitPaymentData(token.pan, token.cvv),
+            ).toJson()
+            val parsed = config.parseToken(method, apiClient().init(payload), token.pan, token.cvv)
+            updateSavedSecondary(token.id) {
+                it.copy(
+                    balance = parsed.balance,
+                    totalBalance = parsed.totalBalance,
+                    balanceResolved = true,
+                    name = it.name.ifBlank { parsed.name },
+                    expirationDate = it.expirationDate ?: parsed.expirationDate.ifBlank { null },
+                )
+            }
+            bus.post(
+                CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_GET_SECONDARY_TOKEN,
+                payload = monitoringPayload(
+                    "partner" to token.partner.wireValue,
+                    "method" to token.method.wireValue,
+                    "tokenId" to token.id,
+                    "saved" to true,
+                ),
+            )
+        } catch (e: Exception) {
+            // A terminal API answer ends the whole session (web's `onSessionTerminated`); anything
+            // else dims just this token — it stays listed, technically disabled.
+            if (e.sessionTerminal()) {
+                _sessionState.value = SessionState.TERMINATED
+                return
+            }
+            deactivate(token, DisabledState.TokenInitFailed)
+            _savedSecondaryTokens.value = visibleSavedSecondaryTokens()
+            bus.post(
+                CheckoutEventCode.HEADLESS_CHECKOUT_PAYMENT_ERROR,
+                EventLevel.WARNING,
+                monitoringPayload("message" to "saved secondary token init failed: ${e.message}", "tokenId" to token.id),
+            )
+        }
+    }
+
+    private fun savedSecondary(tokenId: String): SavedSecondaryToken? =
+        meansOfPayment.firstOrNull { it is SavedSecondaryToken && it.id == tokenId } as SavedSecondaryToken?
+
+    private fun updateSavedSecondary(tokenId: String, transform: (SavedSecondaryToken) -> SavedSecondaryToken) {
+        meansOfPayment = meansOfPayment.map {
+            if (it is SavedSecondaryToken && it.id == tokenId) transform(it) else it
+        }
+        _savedSecondaryTokens.value = visibleSavedSecondaryTokens()
+    }
+
+    private fun requireWalletToken(tokenId: String) {
+        if (walletTokens.none { it.id == tokenId }) {
+            throw PurseCheckoutException.WalletOperationFailed(
+                "token $tokenId is not present in the wallet",
+                PurseErrorCode.MISSING_TOKEN,
+            )
+        }
+    }
+
+    /** The saved gift cards, minus filtered states — what [savedSecondaryTokens] renders. */
+    private fun visibleSavedSecondaryTokens(): List<SavedSecondaryToken> =
+        meansOfPayment.filterIsInstance<SavedSecondaryToken>().filterNot { it.disabled?.isFiltered == true }
 
     // --- interactive plugins (e.g. Google Pay) ---------------------------------------------------
 
@@ -986,6 +1179,7 @@ class PurseHeadlessCheckout private constructor(
         )
         _paymentMethods.value = visibleMethods()
         _paymentTokens.value = visibleTokens()
+        _savedSecondaryTokens.value = visibleSavedSecondaryTokens()
         notifyAmountUpdate()
     }
 
@@ -1003,9 +1197,9 @@ class PurseHeadlessCheckout private constructor(
         }
     }
 
-    /** [meansOfPayment] minus filtered states and saved tokens — what [paymentMethods] renders. */
+    /** [meansOfPayment] minus filtered states and saved instruments — what [paymentMethods] renders. */
     private fun visibleMethods(): List<PaymentItem> =
-        meansOfPayment.filterNot { it.disabled?.isFiltered == true || it is PaymentToken }
+        meansOfPayment.filterNot { it.disabled?.isFiltered == true || it is PaymentToken || it is SavedSecondaryToken }
 
     /** The saved tokens, minus filtered states — what [paymentTokens] renders. */
     private fun visibleTokens(): List<PaymentToken> =

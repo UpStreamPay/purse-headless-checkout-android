@@ -85,10 +85,37 @@ internal object CheckoutTestSessions {
         }
     """.trimIndent()
 
-    fun widgetData(paymentSessionJson: String = samplePaymentSessionJson): String {
+    /** A saved Illicado gift card (`integrated_tokens[]` on the secondary), as the wallet returns it. */
+    private val savedGiftCardJson = """
+        {
+          "id": "gc-1", "value": "gc-value-1",
+          "uniqueness_token": "9250004781234567890", "pin_code": "123",
+          "expiration_date": "2027-12-31T00:00:00Z", "favorite": false, "name": "birthday card",
+          "source": "MERCHANT", "created_at": "2026-02-01T00:00:00Z",
+          "description": {}
+        }
+    """.trimIndent()
+
+    /** The sample session plus [savedGiftCardJson] under `illicado.giftcard`. */
+    fun sessionWithSavedGiftCard(): String {
+        val session = JSONObject(samplePaymentSessionJson)
+        session.getJSONObject("protocols").getJSONObject("illicado").getJSONObject("giftcard")
+            .put("integrated_tokens", org.json.JSONArray().put(JSONObject(savedGiftCardJson)))
+        return session.toString()
+    }
+
+    /**
+     * @param apiUrl where the checkout's Payment API calls go — point it at a `FakePaymentApi` for
+     * tests that exercise `/init` / `/validate`; the default host is never actually reached by the
+     * network-free tests.
+     */
+    fun widgetData(
+        paymentSessionJson: String = samplePaymentSessionJson,
+        apiUrl: String = "https://api.purse-sandbox.com/payment/v1",
+    ): String {
         val root = JSONObject()
             .put("api_key", "key-123")
-            .put("api_url", "https://api.purse-sandbox.com/payment/v1")
+            .put("api_url", apiUrl)
             .put("environment", "sandbox")
             .put("entity_id", "entity-1")
             .put("payment_session", JSONObject(paymentSessionJson))

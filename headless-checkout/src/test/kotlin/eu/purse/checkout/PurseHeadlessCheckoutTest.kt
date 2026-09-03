@@ -5,6 +5,7 @@ import eu.purse.checkout.monitoring.CheckoutEventCode
 import eu.purse.checkout.payment.item.DisabledState
 import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.checkout.state.SessionState
+import eu.purse.core.api.InitGuard
 import eu.purse.core.api.PaymentApiException
 import eu.purse.core.datetime.ServerDatetimeChecker
 import eu.purse.core.error.PurseErrorCode
@@ -20,6 +21,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 import java.math.BigDecimal
 
@@ -604,5 +606,153 @@ class PurseHeadlessCheckoutTest {
             // PluginRegistry is a singleton — leaving this set would leak into every later test.
             PluginRegistry.enable(Partner.Paypal, Method.Wallet)
         }
+    }
+
+    // --- saved gift cards (secondary tokens) --------------------------------------------------------
+
+    /**
+     * `InitGuard` is process-wide and keys `/init` calls on `(session, partner, method, amount)` —
+     * every test here re-inits the same fixture card, so a failure scripted in one test would
+     * otherwise fast-reject the next test's call with the stale error.
+     */
+    @Before
+    fun resetInitGuard() = InitGuard.reset()
+
+    /** Poll [condition] on the checkout's flows — its saved-token `/init` runs on a background IO coroutine. */
+    private fun awaitUntil(timeoutMs: Long = 5_000, condition: () -> Boolean) {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (!condition()) {
+            if (System.currentTimeMillis() > deadline) throw AssertionError("condition not met within ${timeoutMs}ms")
+            Thread.sleep(20)
+        }
+    }
+
+    @Test
+    fun `a saved gift card surfaces on savedSecondaryTokens with a background-resolved balance, and applies to the split`() {
+        FakePaymentApi().use { api ->
+            api.respond("init", FakePaymentApi.successfulCardInit("12.50"))
+            val checkout = checkout(
+                widgetData = CheckoutTestSessions.widgetData(CheckoutTestSessions.sessionWithSavedGiftCard(), api.apiRoot),
+            )
+
+            val listed = checkout.savedSecondaryTokens.value.single()
+            assertEquals("gc-1", listed.id)
+            assertEquals("birthday card", listed.name)
+            assertEquals("9250004781234567890", listed.pan)
+            assertEquals("123", listed.cvv)
+            // Never a method, never a primary token.
+            assertTrue(checkout.paymentMethods.value.none { it.id == "gc-1" })
+            assertTrue(checkout.paymentTokens.value.none { it.id == "gc-1" })
+            assertEquals(1, checkout.secondaryMethods.size)
+
+            awaitUntil { checkout.savedSecondaryTokens.value.single().balanceResolved }
+            val resolved = checkout.savedSecondaryTokens.value.single()
+            assertEquals(0, BigDecimal("12.50").compareTo(resolved.balance))
+            assertNull(resolved.disabled)
+            // The re-init sent the stored number and pin, as web's buildSecondaryPaymentToken does.
+            val sent = api.initRequests().single().json
+            assertEquals("illicado", sent.getString("partner"))
+            assertEquals("9250004781234567890", sent.getJSONObject("payment_data").getJSONObject("card").getString("number"))
+            assertEquals("123", sent.getJSONObject("payment_data").getJSONObject("card").getString("csc"))
+
+            // Applying it draws the whole 4.80 order down — no primary needed.
+            checkout.applySecondary(resolved)
+            assertEquals(0, BigDecimal.ZERO.compareTo(checkout.remainingAmountToPay.value))
+            assertTrue(checkout.isPaymentFulfilled.value)
+            val split = checkout.amountSplit.value.single()
+            assertEquals("gc-1", split.source.id)
+            assertTrue((split.source as SecondaryToken).isSaved)
+
+            checkout.removeSecondary(resolved)
+            assertEquals(0, BigDecimal("4.80").compareTo(checkout.remainingAmountToPay.value))
+        }
+    }
+
+    @Test
+    fun `a saved gift card cannot be applied before its balance is resolved`() {
+        FakePaymentApi().use { api ->
+            api.on("init") {
+                Thread.sleep(400)
+                200 to FakePaymentApi.successfulCardInit("12.50")
+            }
+            val checkout = checkout(
+                widgetData = CheckoutTestSessions.widgetData(CheckoutTestSessions.sessionWithSavedGiftCard(), api.apiRoot),
+            )
+
+            val pending = checkout.savedSecondaryTokens.value.single()
+            assertFalse(pending.balanceResolved)
+            val thrown = assertThrows(PurseCheckoutException.SecondaryTokenizationFailed::class.java) {
+                checkout.applySecondary(pending)
+            }
+            assertEquals(PurseErrorCode.SECONDARY_TOKEN_EMPTY_BALANCE, thrown.code)
+            assertTrue(checkout.amountSplit.value.isEmpty())
+
+            // The stale instance is fine once the balance lands — the latest state is what's applied.
+            awaitUntil { checkout.savedSecondaryTokens.value.single().balanceResolved }
+            checkout.applySecondary(pending)
+            assertEquals("gc-1", checkout.amountSplit.value.single().source.id)
+        }
+    }
+
+    @Test
+    fun `a saved gift card whose init fails stays listed but disabled with TOKEN_INIT_FAILED`() {
+        FakePaymentApi().use { api ->
+            // A 4xx is a definitive answer (no InitGuard retry), so the failure lands immediately.
+            api.on("init") { 400 to FakePaymentApi.failedInit("card blocked", errorCode = "CARD_BLOCKED") }
+            val checkout = checkout(
+                widgetData = CheckoutTestSessions.widgetData(CheckoutTestSessions.sessionWithSavedGiftCard(), api.apiRoot),
+            )
+
+            awaitUntil { checkout.savedSecondaryTokens.value.single().disabled != null }
+            val failed = checkout.savedSecondaryTokens.value.single()
+            assertEquals(DisabledState.TokenInitFailed, failed.disabled)
+            assertFalse(failed.balanceResolved)
+            // Not a session-terminal answer: the checkout itself is still usable.
+            assertEquals(SessionState.READY, checkout.sessionState.value)
+
+            val thrown = assertThrows(PurseCheckoutException.SecondaryTokenizationFailed::class.java) {
+                checkout.applySecondary(failed)
+            }
+            assertEquals(PurseErrorCode.FAILED_TO_INIT_SECONDARY_TOKEN, thrown.code)
+        }
+    }
+
+    @Test
+    fun `a session-terminal answer on a saved gift card's init terminates the checkout`() {
+        FakePaymentApi().use { api ->
+            api.on("init") { 400 to FakePaymentApi.failedInit("expired", errorCode = "SESSION_EXPIRED") }
+            val checkout = checkout(
+                widgetData = CheckoutTestSessions.widgetData(CheckoutTestSessions.sessionWithSavedGiftCard(), api.apiRoot),
+            )
+
+            awaitUntil { checkout.sessionState.value == SessionState.TERMINATED }
+        }
+    }
+
+    @Test
+    fun `managing a saved gift card requires a wallet session`() {
+        val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(CheckoutTestSessions.sessionWithSavedGiftCard()))
+        val saved = checkout.savedSecondaryTokens.value.single()
+
+        val rename = assertThrows(PurseCheckoutException.WalletOperationFailed::class.java) {
+            runBlocking { checkout.editToken(saved, "new name") }
+        }
+        assertEquals(PurseErrorCode.MISSING_WALLET_SESSION, rename.code)
+        val delete = assertThrows(PurseCheckoutException.WalletOperationFailed::class.java) {
+            runBlocking { checkout.deleteToken(saved) }
+        }
+        assertEquals(PurseErrorCode.MISSING_WALLET_SESSION, delete.code)
+    }
+
+    @Test
+    fun `a saved gift card's name counts towards label uniqueness`() {
+        val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(CheckoutTestSessions.sessionWithSavedGiftCard()))
+        val card = checkout.primaryMethods.single { it.method == Method.CreditCard }
+
+        // "birthday card" is the saved gift card's name (the fixture carries no display_token).
+        val duplicate = assertThrows(PurseCheckoutException.WalletOperationFailed::class.java) {
+            checkout.register(card, name = "birthday card")
+        }
+        assertEquals(PurseErrorCode.TOKEN_NAME_EXISTS, duplicate.code)
     }
 }
