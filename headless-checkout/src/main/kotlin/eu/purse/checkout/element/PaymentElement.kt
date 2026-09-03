@@ -28,7 +28,7 @@ import eu.purse.partnerui.rememberGooglePayCoordinator
 import eu.purse.partnerui.rememberKlarnaCoordinator
 import eu.purse.partnerui.rememberPaypalCoordinator
 import eu.purse.partnerui.rememberRedirectionCoordinator
-import eu.purse.securefields.VaultForm
+import eu.purse.partnerui.plugins.vaults.purse.creditcard.PurseCardForm
 
 /**
  * One rendered payment method — the Kotlin analog of web's `getPaymentElement`: whatever a method
@@ -256,7 +256,7 @@ private fun rememberCardElement(
         PaymentElement(
             item, hasUi = coordinator.mode.rendersForm, selfSubmitting = false, readyState,
             onSubmit = { coordinator.submit() },
-            ui = { modifier -> if (coordinator.mode.rendersForm) VaultForm(coordinator.sdk, modifier) },
+            ui = { modifier -> if (coordinator.mode.rendersForm) PurseCardForm(coordinator, modifier) },
         )
     }
 }

@@ -3,7 +3,6 @@ package eu.purse.checkout.demo
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -16,7 +15,7 @@ import androidx.compose.ui.unit.dp
 import eu.purse.checkout.payment.item.PaymentToken
 import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.partnerui.plugins.vaults.purse.creditcard.rememberCardCoordinator
-import eu.purse.securefields.VaultForm
+import eu.purse.partnerui.plugins.vaults.purse.creditcard.PurseCardForm
 
 /**
  * The card (Purse vault / SecureFields) primary. Compose-first in the SDK too, so there's almost
@@ -40,13 +39,10 @@ fun CardPaymentForm(controller: DemoController, method: PrimaryMethod) {
 
     LaunchedEffect(coordinator) { controller.onCardSubmitReady { coordinator.submit() } }
 
+    // The SDK's own form: labels, help texts and error messages around the secure fields, styled
+    // from PluginOptions.theme — what PaymentElementUi renders too.
     Column(Modifier.fillMaxWidth()) {
-        VaultForm(
-            coordinator.sdk,
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(220.dp),
-        )
+        PurseCardForm(coordinator, Modifier.fillMaxWidth())
     }
 }
 
@@ -78,12 +74,7 @@ fun SavedCardForm(controller: DemoController, token: PaymentToken) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
         if (coordinator.mode.rendersForm) {
-            VaultForm(
-                coordinator.sdk,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(56.dp),
-            )
+            PurseCardForm(coordinator, Modifier.fillMaxWidth())
         }
     }
 }
