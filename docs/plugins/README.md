@@ -103,6 +103,15 @@ mirroring web, where the same logic lives in `sdk` and `common` rather than unde
 | 3 | global `redirection.form` | `PostHtml` (raw HTML to inject and auto-submit) |
 | — | none of the above | `null` — the common case; resolve the payment result instead |
 
+Once resolved, every coordinator runs the action through the same **`RedirectDispatcher`** step
+before touching its launcher: the host's `RedirectionDelegate.delegateRedirection(action)` — which
+`PurseHeadlessCheckout` wires to the merchant's `PurseCheckoutHooks.onRedirection`, web's
+`redirectionHandler` — gets first refusal. `true` means the merchant took the redirect over and the
+SDK opens nothing; `false` (the default, no hook) opens the shared in-app WebView; a hook that
+throws opens nothing either, and the coordinator reports `"onRedirection hook failed: …"` on the
+element listener and releases its re-entrancy guard so the shopper can submit again. Only the
+delegated and launched paths dispatch `PluginEvent.Redirect` / `onRequiresAction`.
+
 Two shapes are deliberately **dropped**, because neither is a genuine PSP/bank redirect:
 
 - web's `should_submit_widget` fallback — "resubmit the widget's own page", meaningless headless

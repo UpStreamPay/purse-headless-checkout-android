@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Default (English) copy for partner-rendered fields — the card subset of web's `hostedForm`
+     translations (dropin/src/i18n/translations/en-US.json). Merchants override per checkout via
+     PluginOptions.cardFormTexts, or per locale by resource qualification. -->
+<resources>
+    <string name="purse_card_number_label">Card number</string>
+    <string name="purse_card_number_placeholder">1234 5678 9012 3456</string>
+    <string name="purse_card_number_helper">We only store a secure token, not your full card number.</string>
+    <string name="purse_card_number_required">Card number required.</string>
+    <string name="purse_card_number_invalid">Invalid card number.</string>
+
+    <string name="purse_card_exp_date_label">Expiration date</string>
+    <string name="purse_card_exp_date_placeholder">MM/YY</string>
+    <string name="purse_card_exp_date_helper">Card expiration month and year (MM/YY).</string>
+    <string name="purse_card_exp_date_required">Expiration date required.</string>
+    <string name="purse_card_exp_date_invalid">Invalid expiration date.</string>
+
+    <string name="purse_card_cvv_label">Security code</string>
+    <string name="purse_card_cvv_placeholder">123</string>
+    <string name="purse_card_cvv_helper">3–4 digit code on the back (or front for Amex).</string>
+    <string name="purse_card_cvv_required">Security code required.</string>
+    <string name="purse_card_cvv_invalid">Invalid security code.</string>
+
+    <string name="purse_card_holder_name_label">Cardholder name</string>
+    <string name="purse_card_holder_name_placeholder">J. Smith</string>
+    <string name="purse_card_holder_name_helper"></string>
+    <string name="purse_card_holder_name_required">Enter the cardholder name as it appears on the card.</string>
+    <string name="purse_card_holder_name_invalid">Invalid cardholder.</string>
+</resources>

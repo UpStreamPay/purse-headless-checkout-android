@@ -4,6 +4,7 @@ import eu.purse.core.environment.PurseEnvironment
 import eu.purse.core.payload.ValidationResult
 import eu.purse.core.vault.CardBrand
 import eu.purse.partnerui.PartnerUiContext
+import eu.purse.partnerui.redirect.RedirectionDelegate
 
 /**
  * What [CardCoordinator] needs from the surrounding checkout session — kept as an interface so
@@ -12,7 +13,7 @@ import eu.purse.partnerui.PartnerUiContext
  * `PurseHeadlessCheckout.cardHost` is the concrete implementation — the same seam shape as
  * `GooglePayHost`/`KlarnaHost`.
  */
-interface CardHost {
+interface CardHost : RedirectionDelegate {
 
     val environment: PurseEnvironment
 

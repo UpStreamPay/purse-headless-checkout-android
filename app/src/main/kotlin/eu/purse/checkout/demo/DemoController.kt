@@ -10,7 +10,9 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
 import eu.purse.checkout.PurseHeadlessCheckout
 import eu.purse.checkout.payment.item.PaymentItem
+import eu.purse.checkout.payment.item.PaymentToken
 import eu.purse.checkout.payment.item.PrimaryMethod
+import eu.purse.checkout.payment.item.SavedSecondaryToken
 import eu.purse.checkout.payment.item.SecondaryMethod
 import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.core.payment.Method
@@ -98,9 +100,10 @@ class DemoController(private val activity: ComponentActivity) {
     /**
      * `true` from the tap on the Google Pay button until its flow ends. Two jobs: it disables that
      * button so a double tap can't fire two sheets (a second `/validate` for the same session comes
-     * back `409`), and it keeps the shared "Pay" button switched off — Google Pay's own `setPrimary`
-     * fulfills the split the instant it's tapped, which would otherwise be indistinguishable from
-     * "secondaries alone cover it, no primary needed" and light that button up mid-sheet.
+     * back `409`), and it keeps the shared "Pay" button switched off — once the sheet is approved
+     * the SDK commits Google Pay as the primary itself (web's `validationRequested`), which
+     * fulfills the split and would otherwise be indistinguishable from "secondaries alone cover
+     * it, no primary needed" and light that button up mid-flow.
      */
     var googlePayBusy by mutableStateOf(false)
         private set
@@ -123,6 +126,14 @@ class DemoController(private val activity: ComponentActivity) {
 
     /** The selected row from [payableMethods] (`null` = none, or secondaries alone). */
     var selectedPrimary by mutableStateOf<PrimaryMethod?>(null)
+        private set
+
+    /**
+     * The selected saved card (`paymentTokens`), mutually exclusive with [selectedPrimary] — both
+     * occupy the split's single primary slot. Its row mounts [SavedCardForm]: a CVV field when the
+     * PSP still wants one (`token.requiresCvv`), nothing otherwise.
+     */
+    var selectedToken by mutableStateOf<PaymentToken?>(null)
         private set
 
     /** Whether the selected primary can actually be submitted (Klarna's widget loaded, the card form
@@ -367,6 +378,40 @@ class DemoController(private val activity: ComponentActivity) {
         if (checkout != null) step = DemoStep.Pay
     }
 
+    var refreshingSession by mutableStateOf(false)
+        private set
+
+    /**
+     * Mint a **new** session through alfred and hand it to the live checkout — `setSession`, the
+     * "cart changed / session expired" path. The screen stays; whatever survives the refresh (an
+     * unchanged card method keeps its form and selection) is the SDK's doing, not this demo's.
+     * The xpay coordinators are re-prepared against the new session's items.
+     */
+    fun refreshSession() {
+        val co = checkout ?: return
+        refreshingSession = true
+        scope.launch {
+            try {
+                val session = alfred.createSession()
+                co.setSession(session.widgetData)
+                widgetData = session.widgetData
+                lastOrchestrationSessionId = session.orchestrationSessionId
+                alfredSessionId = resolveAlfredSessionId(session.widgetData)
+                sessionDetails = summarize(co)
+                captureAmount = co.session.amount.toPlainString()
+                googlePayItem = co.primaryMethods.firstOrNull { it.method == Method.GooglePay }
+                googlePayItem?.let { googlePay.prepare(co.googlePayHost(it)) }
+                paypalItem = co.primaryMethods.firstOrNull { it.method == Method.Wallet && !isRedirection(it) }
+                paypalItem?.let { paypal.prepare(co.paypalHost(it)) }
+                log("session refreshed → ${co.currentSessionId} (${co.session.amount} ${co.currency})")
+            } catch (e: Exception) {
+                log("session refresh failed: ${e.message}")
+            } finally {
+                refreshingSession = false
+            }
+        }
+    }
+
     // --- 2 · pay ----------------------------------------------------------------------------------
 
     /**
@@ -415,6 +460,7 @@ class DemoController(private val activity: ComponentActivity) {
     fun selectPrimary(method: PrimaryMethod?) {
         val co = checkout ?: return
         selectedPrimary = method
+        selectedToken = null
         primaryReady = false
         redirectionPrepared = false
         googlePayBusy = false
@@ -422,6 +468,26 @@ class DemoController(private val activity: ComponentActivity) {
         cardSubmit = null
         co.setPrimary(method)
     }
+
+    /**
+     * Select a saved card (or `null` to collapse it) — `setPrimaryToken` is the token analog of
+     * `setPrimary`, and the SDK arms the CVV gate itself when the PSP wants one: the shared "Pay"
+     * button stays off until the row's CVV field validates, exactly like the full card form.
+     */
+    fun selectToken(token: PaymentToken?) {
+        val co = checkout ?: return
+        selectedPrimary = null
+        selectedToken = token
+        primaryReady = false
+        redirectionPrepared = false
+        googlePayBusy = false
+        paypalBusy = false
+        cardSubmit = null
+        if (token != null) co.setPrimaryToken(token) else co.clearPrimarySplit()
+    }
+
+    /** What a saved-card row shows: the shopper's label, or the SDK's display token. */
+    fun label(token: PaymentToken): String = token.name.ifBlank { token.label }
 
     /** Redirection is checked first, matching [PluginRegistry]'s own priority — a method configured to
      * redirect is driven by the template even when its `method` has a dedicated plugin. */
@@ -458,23 +524,21 @@ class DemoController(private val activity: ComponentActivity) {
     }
 
     fun onGooglePayClicked() {
-        val co = checkout ?: return
+        if (checkout == null) return
         // Collapse any open Klarna/card row — Google Pay is taking over as the primary, and leaving a
-        // row visually selected would misrepresent what's about to be submitted.
+        // row visually selected would misrepresent what's about to be submitted. Committing Google
+        // Pay as the primary is the SDK's job now: the coordinator does it on sheet **approval**
+        // (web's `validationRequested`), so a cancelled sheet leaves the split untouched.
         if (selectedPrimary != null) selectPrimary(null)
-        // Committing Google Pay as the primary happens on the tap, not on prepare — the shopper has
-        // only now actually chosen it.
-        co.setPrimary(googlePayItem)
         googlePayBusy = true
         googlePay.launchSheet()
     }
 
     fun onPaypalClicked() {
-        val co = checkout ?: return
-        // Same shape as [onGooglePayClicked]: collapse any open row, commit PayPal as the primary on
-        // the tap rather than on prepare, then hand off. `submit` runs the /init itself.
+        if (checkout == null) return
+        // Same shape as [onGooglePayClicked]: collapse any open row, then hand off. `submit` runs
+        // the /init itself, and the SDK commits PayPal as the primary on the buyer's approval.
         if (selectedPrimary != null) selectPrimary(null)
-        co.setPrimary(paypalItem)
         paypalBusy = true
         paypal.submit()
     }
@@ -485,7 +549,8 @@ class DemoController(private val activity: ComponentActivity) {
      * excluded outright while its own flow runs, see [googlePayBusy].
      */
     fun submitEnabled(fulfilled: Boolean): Boolean =
-        fulfilled && (selectedPrimary == null || primaryReady) && !googlePayBusy && !paypalBusy && !submitting
+        fulfilled && ((selectedPrimary == null && selectedToken == null) || primaryReady) &&
+            !googlePayBusy && !paypalBusy && !submitting
 
     /** Dispatches to whichever coordinator matches the selection; `null` (secondaries alone) submits
      * through the SDK directly, since no plugin coordinator is involved. */
@@ -495,6 +560,9 @@ class DemoController(private val activity: ComponentActivity) {
         val selected = selectedPrimary
         submitting = true
         when {
+            // A saved card goes through the card coordinator too (CVV-only or no form) — it owns
+            // the /validate call and the 3-D Secure follow-up either way.
+            selectedToken != null -> cardSubmit?.let { it() } ?: run { submitting = false }
             selected == null -> submitSecondariesOnly(co)
             // Same priority as [label] and [PluginRegistry] — before any `method` check.
             isRedirection(selected) -> redirection.submit()
@@ -540,6 +608,8 @@ class DemoController(private val activity: ComponentActivity) {
                 .onSuccess { token ->
                     state.token = token
                     state.balanceLabel = balanceLabel(token)
+                    // The "keep this card" box starts where the method's save_token_mode puts it.
+                    state.register = co.registrationOf(token).registered
                 }
                 .onFailure { e ->
                     state.token = null
@@ -574,9 +644,54 @@ class DemoController(private val activity: ComponentActivity) {
             }
         }
         state.error = null
+        // The save decision rides the token's own /validate item (registration + token_label) —
+        // recorded before applying, and only when the method lets the shopper choose.
+        if (token.canBeRegistered) {
+            try {
+                co.registerSecondary(token, state.register, state.label.trim().ifEmpty { null })
+            } catch (e: Exception) {
+                state.error = e.message
+                return
+            }
+        }
         co.applySecondary(token, requested)
         val applied = co.amountSplit.value.firstOrNull { it.source.id == token.id }?.amount ?: BigDecimal.ZERO
         state.appliedLabel = activity.getString(R.string.giftcard_applied, applied.toString())
+        sessionDetails = summarize(co)
+    }
+
+    // --- saved gift cards ---------------------------------------------------------------------------
+
+    /** One line per saved gift card: its name plus balance, "checking…", or why it's unavailable. */
+    fun savedGiftCardLabel(token: SavedSecondaryToken): String {
+        val name = token.name.ifBlank { "•••• ${token.pan.takeLast(4)}" }
+        return when {
+            token.disabled != null -> activity.getString(R.string.giftcard_unavailable, name, token.disabled!!.code.name)
+            !token.balanceResolved -> activity.getString(R.string.giftcard_balance_pending, name)
+            token.totalBalance.compareTo(token.balance) != 0 ->
+                activity.getString(R.string.giftcard_balance_partial, name, token.balance.toString(), token.totalBalance.toString())
+            else -> activity.getString(R.string.giftcard_balance, name, token.balance.toString())
+        }
+    }
+
+    /** Whether [token] is currently drawn into the split. */
+    fun isSavedGiftCardApplied(token: SavedSecondaryToken): Boolean =
+        checkout?.amountSplit?.value?.any { it.source.id == token.id } == true
+
+    /** Draw a saved gift card in for as much as the order still needs (no amount control — kept small). */
+    fun applySavedGiftCard(token: SavedSecondaryToken) {
+        val co = checkout ?: return
+        try {
+            co.applySecondary(token)
+            sessionDetails = summarize(co)
+        } catch (e: Exception) {
+            snackbar = activity.getString(R.string.giftcard_error, e.message)
+        }
+    }
+
+    fun removeSavedGiftCard(token: SavedSecondaryToken) {
+        val co = checkout ?: return
+        co.removeSecondary(token)
         sessionDetails = summarize(co)
     }
 
@@ -749,6 +864,7 @@ class DemoController(private val activity: ComponentActivity) {
 
     private fun resetPayment() {
         selectedPrimary = null
+        selectedToken = null
         primaryReady = false
         redirectionPrepared = false
         submitting = false
@@ -802,6 +918,12 @@ class DemoController(private val activity: ComponentActivity) {
         appendLine("payment methods (${co.paymentMethods.value.size}):")
         co.paymentMethods.value.forEach { appendLine("  ${describe(it)}") }
         appendLine()
+        appendLine("saved cards (${co.paymentTokens.value.size}):")
+        co.paymentTokens.value.forEach { token ->
+            val cvv = if (token.requiresCvv) "cvv required" else "no cvv"
+            appendLine("  ${token.id}  ${label(token)} ${token.maskedPan} ($cvv)${if (token.favorite) " ★" else ""}")
+        }
+        appendLine()
         appendLine("applied secondaries (${co.appliedSecondaries.size}):")
         co.appliedSecondaries.forEach { token ->
             val applied = co.amountSplit.value.firstOrNull { it.source.id == token.id }?.amount ?: BigDecimal.ZERO
@@ -851,6 +973,9 @@ class GiftCardFormState {
     var pan by mutableStateOf("")
     var cvv by mutableStateOf("")
     var amount by mutableStateOf("")
+    /** "Keep this card for next time" — only shown when the tokenized card `canBeRegistered`. */
+    var register by mutableStateOf(false)
+    var label by mutableStateOf("")
     var token by mutableStateOf<SecondaryToken?>(null)
     var balanceLabel by mutableStateOf<String?>(null)
     var appliedLabel by mutableStateOf<String?>(null)

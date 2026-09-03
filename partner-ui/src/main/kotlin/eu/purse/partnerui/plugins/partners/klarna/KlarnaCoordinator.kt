@@ -9,8 +9,11 @@ import com.klarna.mobile.sdk.api.payments.KlarnaPaymentView
 import com.klarna.mobile.sdk.api.payments.KlarnaPaymentViewCallback
 import com.klarna.mobile.sdk.api.payments.KlarnaPaymentsSDKError
 import eu.purse.core.payload.ValidationResult
+import eu.purse.partnerui.PaymentElementListener
+import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.partnerui.redirect.RedirectionCheckoutResult
+import eu.purse.partnerui.redirect.RedirectDispatcher
 import eu.purse.partnerui.redirect.RedirectionResolver
 import eu.purse.partnerui.redirect.withReturnUrlPrefix
 import kotlinx.coroutines.CancellableContinuation
@@ -58,40 +61,40 @@ import kotlin.coroutines.resumeWithException
  * decide). [KlarnaPaymentViewCallback.onLoadPaymentReview] is intentionally unused — see [prepare]'s
  * doc on why `loadPaymentReview()` is never called.
  */
-class KlarnaCoordinator(
+class KlarnaCoordinator private constructor(
     private val activity: ComponentActivity,
-    private val container: ViewGroup,
-    private val listener: Listener,
+    container: ViewGroup?,
+    private val listener: PaymentElementListener,
+    registerLaunchers: Boolean,
 ) {
-    interface Listener {
-        /** The widget has been asked to render — show a "Pay with Klarna" trigger once this fires. */
-        fun onReady(ready: Boolean) {}
+    /**
+     * Same contract as [PaymentElementListener] — kept as a nested name for source compatibility.
+     * `onReady` fires when the widget rendered its content; `onRequiresAction` when a redirect step
+     * (e.g. an external banking/identity-verification app) is being launched.
+     */
+    interface Listener : PaymentElementListener
 
-        /**
-         * Terminal success — [summary] is a human-readable status to display, [globalStatus] the
-         * `/validate` response's own `global_status` when this outcome came from one. `null` after a
-         * redirect return, where the real outcome is deliberately not chased (see [onRedirectReturn]).
-         */
-        fun onResult(summary: String, globalStatus: String? = null) {}
+    /** Imperative construction — must run in the Activity's `onCreate`, before it is STARTED. */
+    constructor(activity: ComponentActivity, container: ViewGroup, listener: PaymentElementListener) :
+        this(activity, container, listener, registerLaunchers = true)
 
-        /** A redirect step (e.g. an external banking/identity-verification app) is being launched. */
-        fun onRequiresAction() {}
+    /**
+     * Where the native `KlarnaPaymentView` inflates. Settable so the Compose payment element can
+     * hand over the `AndroidView`-provided container after construction; must be set before
+     * [prepare].
+     */
+    var container: ViewGroup? = container
 
-        /**
-         * The `payment_id` behind this payment, when [submit]'s `/validate` response carries one —
-         * same source and caveats as
-         * [eu.purse.partnerui.plugins.generics.googlepay.GooglePayCoordinator.Listener.onPaymentId]:
-         * purely informational (e.g. prefilling a "Capture" tool), never required for the payment
-         * itself to resolve.
-         */
-        fun onPaymentId(paymentId: String) {}
+    /** Launch seam — see [GooglePayCoordinator]'s twin fields for the rationale. */
+    internal var launchRedirect: ((eu.purse.partnerui.redirect.RedirectAction) -> Unit)? = null
 
-        fun onCanceled() {}
-        fun onError(message: String?) {}
+    init {
+        if (registerLaunchers) {
+            val redirectLauncher =
+                activity.registerForActivityResult(RedirectionCheckoutContract()) { onRedirectReturn(it) }
+            launchRedirect = { action -> redirectLauncher.launch(action) }
+        }
     }
-
-    private val redirectLauncher =
-        activity.registerForActivityResult(RedirectionCheckoutContract()) { onRedirectReturn(it) }
 
     private var host: KlarnaHost? = null
     private var view: KlarnaPaymentView? = null
@@ -103,6 +106,11 @@ class KlarnaCoordinator(
 
     /** Same re-entrancy guard as `GooglePayCoordinator.submitting` — see its doc. */
     private var submitting = false
+
+    /** Report a lifecycle event to the headless host (which deactivates/reacts, web-parity). */
+    private fun dispatch(event: PluginEvent) {
+        runCatching { host?.buildContext()?.dispatchEvent(event) }
+    }
 
     private val callback = object : KlarnaPaymentViewCallback {
         override fun onInitialized(view: KlarnaPaymentView) {
@@ -148,8 +156,9 @@ class KlarnaCoordinator(
                 pending.resumeWithException(IllegalStateException(error.describe()))
             } else {
                 // Not mid-authorize (e.g. a load-time failure) — nothing suspended to resume;
-                // report directly instead.
+                // report directly instead. Recoverable per Klarna unless the SDK says fatal.
                 submitting = false
+                dispatch(PluginEvent.PartnerError(error.describe(), recoverable = !error.isFatal))
                 listener.onError(error.describe())
             }
         }
@@ -187,6 +196,7 @@ class KlarnaCoordinator(
                 val request = withContext(Dispatchers.IO) { plugin.buildRequest(context) }
                 logClientTokenPayload(request.clientToken)
 
+                val container = checkNotNull(container) { "KlarnaCoordinator needs a container before prepare()" }
                 val paymentView = KlarnaPaymentView(activity, KlarnaMapper.PAYMENT_METHOD_CATEGORY, callback)
                 paymentView.returnURL = host.returnUrl
                 container.removeAllViews()
@@ -209,6 +219,7 @@ class KlarnaCoordinator(
 
                 paymentView.initialize(request.clientToken)
             } catch (e: Exception) {
+                dispatch(PluginEvent.InitFailed(e.message))
                 listener.onError(e.message)
             }
         }
@@ -242,6 +253,7 @@ class KlarnaCoordinator(
                 resolveOutcome(result, host)
             } catch (e: KlarnaAuthorizationDeclined) {
                 submitting = false
+                dispatch(PluginEvent.Cancelled)
                 listener.onCanceled()
             } catch (e: Exception) {
                 // `/validate` never landed, errored, or Klarna's own authorize() failed outright —
@@ -252,7 +264,7 @@ class KlarnaCoordinator(
         }
     }
 
-    private fun resolveOutcome(result: ValidationResult, host: KlarnaHost) {
+    private suspend fun resolveOutcome(result: ValidationResult, host: KlarnaHost) {
         submitting = false
         Log.d(TAG, "validate response: global_status=${result.globalStatus} redirection=${result.raw.optJSONObject("redirection")}")
         RedirectionResolver.extractWidgetConfirmationPaymentId(
@@ -267,8 +279,16 @@ class KlarnaCoordinator(
             sessionReturnUrl = host.returnUrl,
         )?.withReturnUrlPrefix(host.returnUrl)
         if (action != null) {
-            listener.onRequiresAction()
-            redirectLauncher.launch(action)
+            // The merchant's onRedirection hook goes first (web's redirectionHandler); the SDK's
+            // WebView only opens when it declines.
+            when (val outcome = RedirectDispatcher.dispatch(action, host, launchRedirect)) {
+                is RedirectDispatcher.Outcome.HookFailed ->
+                    listener.onError("onRedirection hook failed: ${outcome.error.message}")
+                else -> {
+                    dispatch(PluginEvent.Redirect)
+                    listener.onRequiresAction()
+                }
+            }
         } else {
             listener.onResult("global_status=${result.globalStatus}", result.globalStatus)
         }
@@ -294,17 +314,27 @@ class KlarnaCoordinator(
         }
     }
 
-    private fun onRedirectReturn(result: RedirectionCheckoutResult) {
+    internal fun onRedirectReturn(result: RedirectionCheckoutResult) {
         when (result) {
             // Same caveat as GooglePayCoordinator.onRedirectReturn — Approved means the shopper came
             // back, not that the payment succeeded; re-check status independently.
             RedirectionCheckoutResult.Approved -> listener.onResult("returned from Klarna redirect — check the session status independently to confirm the outcome")
-            RedirectionCheckoutResult.Canceled -> listener.onCanceled()
+            RedirectionCheckoutResult.Canceled -> {
+                dispatch(PluginEvent.Cancelled)
+                listener.onCanceled()
+            }
             is RedirectionCheckoutResult.Failed -> listener.onError(result.message)
         }
     }
 
-    private companion object {
+    internal companion object {
         const val TAG = "KlarnaCoordinator"
+
+        /**
+         * Compose factory seam — [rememberKlarnaCoordinator] injects a managed launcher and the
+         * `AndroidView`-provided container.
+         */
+        fun forCompose(activity: ComponentActivity, listener: PaymentElementListener) =
+            KlarnaCoordinator(activity, container = null, listener = listener, registerLaunchers = false)
     }
 }

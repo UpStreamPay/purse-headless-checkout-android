@@ -3,7 +3,9 @@ package eu.purse.checkout.payment.secondary
 import eu.purse.checkout.PurseCheckoutException
 import eu.purse.checkout.payment.item.SecondaryMethod
 import eu.purse.core.api.PaymentApiClient
+import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.payload.ItemPayload
+import eu.purse.core.payment.resolvedSaveTokenMode
 import java.math.BigDecimal
 
 /**
@@ -32,8 +34,17 @@ class SecondaryTokenizer(private val api: PaymentApiClient) {
         if (!config.validatePan(pan)) {
             throw PurseCheckoutException.InvalidSecondaryCard("invalid card number for ${method.id}")
         }
-        if (config.requiresCvv(pan) && (cvv.isNullOrBlank() || !config.validateCvv(cvv))) {
-            throw PurseCheckoutException.InvalidSecondaryCard("invalid security code for ${method.id}")
+        if (config.requiresCvv(pan) && cvv.isNullOrBlank()) {
+            throw PurseCheckoutException.InvalidSecondaryCard(
+                "a security code is required for ${method.id}",
+                PurseErrorCode.SECONDARY_METHOD_REQUIRED_CVV,
+            )
+        }
+        if (config.requiresCvv(pan) && !config.validateCvv(cvv!!)) {
+            throw PurseCheckoutException.InvalidSecondaryCard(
+                "invalid security code for ${method.id}",
+                PurseErrorCode.SECONDARY_METHOD_WRONG_CVV_FORMAT,
+            )
         }
 
         val payload = ItemPayload(
@@ -41,7 +52,24 @@ class SecondaryTokenizer(private val api: PaymentApiClient) {
             method = method.method,
             amount = amount,
             paymentData = config.buildInitPaymentData(pan, cvv),
-        )
-        return config.parseToken(method, api.init(payload.toJson()), pan, cvv)
+        ).toJson()
+        val initResponse = api.init(payload)
+        // Two-phase partners (web's `pollForToken`): a SUCCESS that only says PROCESSING is polled
+        // through the config until the real token lands.
+        val finalResponse = if (config.shouldPoll(initResponse)) config.pollForToken(api, initResponse, payload) else initResponse
+        if (!isSuccessfulInit(finalResponse)) {
+            throw config.classifyInitError(finalResponse) ?: PurseCheckoutException.SecondaryTokenizationFailed(
+                "secondary init not successful (state=${initState(finalResponse)})",
+            )
+        }
+        // Temporary tokens carry their method's save-token policy so the shopper can ask to keep the
+        // card (web's `buildTemporarySecondaryPaymentToken`: `saveTokenMode` / `canBeRegistered`).
+        return config.parseToken(method, finalResponse, pan, cvv)
+            .copy(saveTokenMode = method.configuration.settings.resolvedSaveTokenMode())
     }
+
+    private fun initState(response: org.json.JSONObject): String =
+        response.optJSONObject("status")?.optString("state").orEmpty()
+
+    private fun isSuccessfulInit(response: org.json.JSONObject): Boolean = initState(response) == "SUCCESS"
 }

@@ -7,8 +7,13 @@ import com.google.android.gms.common.api.CommonStatusCodes
 import com.google.android.gms.wallet.PaymentData
 import com.google.android.gms.wallet.contract.ApiTaskResult
 import com.google.android.gms.wallet.contract.TaskResultContracts
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
+import eu.purse.partnerui.PaymentElementListener
+import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.partnerui.redirect.RedirectionCheckoutResult
+import eu.purse.partnerui.redirect.RedirectDispatcher
 import eu.purse.partnerui.redirect.RedirectionResolver
 import eu.purse.partnerui.redirect.withReturnUrlPrefix
 import kotlinx.coroutines.Dispatchers
@@ -36,46 +41,63 @@ import kotlin.coroutines.resumeWithException
  * which must happen before the Activity is STARTED. The host is supplied later, per payment, via
  * [prepare]. Outcomes are reported on [listener].
  */
-class GooglePayCoordinator(
+class GooglePayCoordinator private constructor(
     private val activity: ComponentActivity,
-    private val listener: Listener,
+    private val listener: PaymentElementListener,
+    registerLaunchers: Boolean,
 ) {
-    interface Listener {
-        /** Result of the `isReadyToPay` check after [prepare] — show the button only when `true`. */
-        fun onReady(ready: Boolean) {}
+    /**
+     * Same contract as [PaymentElementListener] — kept as a nested name for source compatibility
+     * and per-method docs. `onReady` is the `isReadyToPay` answer after [prepare]; `onResult` with
+     * a `null` globalStatus is a redirect return whose real outcome must be re-checked against the
+     * session (see [onRedirectReturn]).
+     */
+    interface Listener : PaymentElementListener
 
-        /**
-         * Terminal success — [summary] is a human-readable status to display, [globalStatus] the
-         * `/validate` response's own `global_status` when this outcome came from one. `null` after a
-         * redirect return, where the real outcome is deliberately not chased (see [onRedirectReturn])
-         * — don't render that as either success or failure without re-checking the session.
-         */
-        fun onResult(summary: String, globalStatus: String? = null) {}
+    /** Imperative construction — must run in the Activity's `onCreate`, before it is STARTED. */
+    constructor(activity: ComponentActivity, listener: PaymentElementListener) :
+        this(activity, listener, registerLaunchers = true)
 
-        /** A 3-D Secure step is being launched (informational). */
-        fun onRequiresAction() {}
+    /**
+     * Launch seams — filled by the constructor's own launchers, or injected by
+     * [rememberGooglePayCoordinator] with Compose-managed ones (which may be created after the
+     * Activity is STARTED, where `registerForActivityResult` would throw).
+     */
+    internal var launchPaymentData: ((com.google.android.gms.tasks.Task<PaymentData>) -> Unit)? = null
+    internal var launchRedirect: ((eu.purse.partnerui.redirect.RedirectAction) -> Unit)? = null
 
-        /**
-         * The `payment_id` behind this payment, when [submit] can read one off the widget's own
-         * confirmation-page redirect (see [eu.purse.partnerui.redirect.RedirectionResolver.extractWidgetConfirmationPaymentId])
-         * — the id the orchestration API's `POST /v2/payments/{id}/captures` needs. Purely
-         * informational (e.g. to prefill a "Capture" debug tool); never required for the payment
-         * itself to resolve.
-         */
-        fun onPaymentId(paymentId: String) {}
-
-        fun onCanceled() {}
-        fun onError(message: String?) {}
+    init {
+        if (registerLaunchers) {
+            val paymentDataLauncher =
+                activity.registerForActivityResult(TaskResultContracts.GetPaymentDataResult()) { onPaymentData(it) }
+            val redirectLauncher =
+                activity.registerForActivityResult(RedirectionCheckoutContract()) { onRedirectReturn(it) }
+            launchPaymentData = { task -> paymentDataLauncher.launch(task) }
+            launchRedirect = { action -> redirectLauncher.launch(action) }
+        }
     }
-
-    private val paymentDataLauncher =
-        activity.registerForActivityResult(TaskResultContracts.GetPaymentDataResult()) { onPaymentData(it) }
-
-    private val redirectLauncher =
-        activity.registerForActivityResult(RedirectionCheckoutContract()) { onRedirectReturn(it) }
 
     private var host: GooglePayHost? = null
     private var client: GooglePayClient? = null
+
+    /**
+     * `isReadyToPay`'s answer, as Compose state — what [GooglePayButton] shows itself on. Mirrors
+     * [Listener.onReady] for non-Compose hosts.
+     */
+    var isReady: Boolean by androidx.compose.runtime.mutableStateOf(false)
+        private set
+
+    /**
+     * The prepared request's `allowedPaymentMethods` — [GooglePayButton] hands it to Google's own
+     * `PayButton` so the button renders the shopper's actual card art per Google's guidelines.
+     */
+    var allowedPaymentMethodsJson: String? by androidx.compose.runtime.mutableStateOf(null)
+        private set
+
+    /** Report a lifecycle event to the headless host (which deactivates/reacts, web-parity). */
+    private fun dispatch(event: PluginEvent) {
+        runCatching { host?.buildContext()?.dispatchEvent(event) }
+    }
     private var partnerWireValue: String? = null
     private var request: GooglePayRequest? = null
 
@@ -97,6 +119,8 @@ class GooglePayCoordinator(
     fun prepare(host: GooglePayHost) {
         this.host = host
         submitting = false
+        isReady = false
+        allowedPaymentMethodsJson = null
         val client = GooglePayClient.create(activity, host.environment).also { this.client = it }
         activity.lifecycleScope.launch {
             try {
@@ -105,8 +129,12 @@ class GooglePayCoordinator(
                 val plugin = GooglePayPlugin(context.partner)
                 val req = withContext(Dispatchers.IO) { plugin.buildRequest(context) }
                 request = req
-                listener.onReady(client.isReadyToPay(req.isReadyToPayJson).awaitBoolean())
+                allowedPaymentMethodsJson = req.isReadyToPayJson.optJSONArray("allowedPaymentMethods")?.toString()
+                val ready = client.isReadyToPay(req.isReadyToPayJson).awaitBoolean()
+                isReady = ready
+                listener.onReady(ready)
             } catch (e: Exception) {
+                dispatch(PluginEvent.InitFailed(e.message))
                 listener.onError(e.message)
             }
         }
@@ -126,10 +154,10 @@ class GooglePayCoordinator(
         // Task straight from loadPaymentData() throws "The task has to be executed before using this
         // API to resolve its result." So wait for completion first, on this same (main) thread.
         client.loadPaymentDataTask(req.paymentDataRequestJson)
-            .addOnCompleteListener { completedTask -> paymentDataLauncher.launch(completedTask) }
+            .addOnCompleteListener { completedTask -> launchPaymentData?.invoke(completedTask) }
     }
 
-    private fun onPaymentData(taskResult: ApiTaskResult<PaymentData>) {
+    internal fun onPaymentData(taskResult: ApiTaskResult<PaymentData>) {
         val host = host ?: run { submitting = false; return listener.onError("not prepared") }
         when (taskResult.status.statusCode) {
             CommonStatusCodes.SUCCESS -> {
@@ -144,16 +172,22 @@ class GooglePayCoordinator(
                         GooglePayPlugin.COLLECTED_NETWORK to network,
                     ),
                 )
+                // The approved sheet both selects the method and pays with it — web's
+                // `validationRequested` → setPrimary + submit. A cancel never reaches this line,
+                // so the split is only touched once the shopper has actually committed.
+                host.setAsPrimary()
                 submit(host)
             }
 
             CommonStatusCodes.CANCELED -> {
                 submitting = false
+                dispatch(PluginEvent.Cancelled)
                 listener.onCanceled()
             }
 
             else -> {
                 submitting = false
+                dispatch(PluginEvent.ClientError("Google Pay failed: ${taskResult.status.statusMessage}"))
                 listener.onError("Google Pay failed: ${taskResult.status.statusMessage}")
             }
         }
@@ -182,8 +216,19 @@ class GooglePayCoordinator(
                     sessionReturnUrl = host.redirectionReturnUrl,
                 )?.withReturnUrlPrefix(host.redirectionReturnUrl)
                 if (action != null) {
-                    listener.onRequiresAction()
-                    redirectLauncher.launch(action)
+                    // The merchant's onRedirection hook goes first (web's redirectionHandler);
+                    // the SDK's WebView only opens when it declines.
+                    when (val outcome = RedirectDispatcher.dispatch(action, host, launchRedirect)) {
+                        is RedirectDispatcher.Outcome.HookFailed -> {
+                            // Nothing was opened — the shopper can retry once the merchant fixes it.
+                            submitting = false
+                            listener.onError("onRedirection hook failed: ${outcome.error.message}")
+                        }
+                        else -> {
+                            dispatch(PluginEvent.Redirect)
+                            listener.onRequiresAction()
+                        }
+                    }
                 } else {
                     listener.onResult("global_status=${result.globalStatus}", result.globalStatus)
                 }
@@ -195,7 +240,7 @@ class GooglePayCoordinator(
         }
     }
 
-    private fun onRedirectReturn(result: RedirectionCheckoutResult) {
+    internal fun onRedirectReturn(result: RedirectionCheckoutResult) {
         when (result) {
             // Approved only means the shopper came back — NOT the payment outcome. It deliberately
             // does not chase that outcome itself: a real 3-D Secure challenge's own final redirect is
@@ -206,7 +251,10 @@ class GooglePayCoordinator(
             // here.
             RedirectionCheckoutResult.Approved -> listener.onResult("returned from 3-D Secure — check the session status independently to confirm the outcome")
 
-            RedirectionCheckoutResult.Canceled -> listener.onCanceled()
+            RedirectionCheckoutResult.Canceled -> {
+                dispatch(PluginEvent.Cancelled)
+                listener.onCanceled()
+            }
             is RedirectionCheckoutResult.Failed -> listener.onError(result.message)
         }
     }
@@ -219,7 +267,11 @@ class GooglePayCoordinator(
             }
         }
 
-    private companion object {
+    internal companion object {
         const val TAG = "GooglePayCoordinator"
+
+        /** Compose factory seam — [rememberGooglePayCoordinator] injects managed launchers. */
+        fun forCompose(activity: ComponentActivity, listener: PaymentElementListener) =
+            GooglePayCoordinator(activity, listener, registerLaunchers = false)
     }
 }

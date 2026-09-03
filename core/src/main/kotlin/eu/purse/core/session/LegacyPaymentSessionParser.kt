@@ -1,7 +1,9 @@
 package eu.purse.core.session
 
 import eu.purse.core.vault.CardBrand
+import eu.purse.core.payment.IntegratedToken
 import eu.purse.core.payment.IntegrationMode
+import eu.purse.core.payment.TokenSource
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.MethodConfiguration
 import eu.purse.core.payment.MethodSettings
@@ -62,7 +64,10 @@ internal object LegacyPaymentSessionParser {
             for (methodKey in methodsJson.keys()) {
                 val entryJson = methodsJson.optJSONObject(methodKey) ?: continue
                 val configJson = entryJson.optJSONObject("configurations") ?: continue
-                methods[Method.fromWire(methodKey)] = MethodEntry(parseMethodConfiguration(configJson))
+                methods[Method.fromWire(methodKey)] = MethodEntry(
+                    configurations = parseMethodConfiguration(configJson),
+                    integratedTokens = parseIntegratedTokens(entryJson.optJSONArray("integrated_tokens")),
+                )
             }
             result[Partner.fromWire(partnerKey)] = methods
         }
@@ -84,7 +89,9 @@ internal object LegacyPaymentSessionParser {
         val merchantSpecificsJson = settingsJson?.optJSONObject("merchant_specifics")
         val settings = MethodSettings(
             registrationMode = RegistrationMode.fromWire(settingsJson?.optStringOrNull("registration_mode")),
-            saveToken = settingsJson?.optBoolean("save_token", false) ?: false,
+            // Nullable on purpose — web's resolveSaveTokenMode treats an explicit `false`
+            // differently from an absent value.
+            saveToken = settingsJson?.takeIf { it.has("save_token") }?.optBoolean("save_token"),
             saveTokenMode = settingsJson?.optStringOrNull("save_token_mode"),
             directDebit = settingsJson?.optBoolean("direct_debit", false) ?: false,
             paymentMinAmount = settingsJson?.optBigDecimalOrNull("payment_min_amount"),
@@ -92,6 +99,8 @@ internal object LegacyPaymentSessionParser {
             usagePerSessionLimit = settingsJson?.optIntOrNull("usage_per_session_limit"),
             integrationMode = IntegrationMode.fromWire(merchantSpecificsJson?.optStringOrNull("integration_mode")),
             merchantClientId = merchantSpecificsJson?.optStringOrNull("client_id"),
+            payTokenNoCvv = merchantSpecificsJson?.optBoolean("pay_token_no_cvv", false) ?: false,
+            networkToken = settingsJson?.optBoolean("network_token", false) ?: false,
         )
 
         return MethodConfiguration(
@@ -102,6 +111,34 @@ internal object LegacyPaymentSessionParser {
             vault = vault,
             settings = settings,
         )
+    }
+
+    private fun parseIntegratedTokens(json: org.json.JSONArray?): List<IntegratedToken> {
+        if (json == null) return emptyList()
+        val tokens = mutableListOf<IntegratedToken>()
+        for (i in 0 until json.length()) {
+            val tokenJson = json.optJSONObject(i) ?: continue
+            val id = tokenJson.optStringOrNull("id") ?: continue
+            val description = tokenJson.optJSONObject("description")
+            tokens += IntegratedToken(
+                id = id,
+                value = tokenJson.optStringOrNull("value") ?: continue,
+                uniquenessToken = tokenJson.optStringOrNull("uniqueness_token"),
+                pinCode = tokenJson.optStringOrNull("pin_code"),
+                expirationDate = tokenJson.optStringOrNull("expiration_date"),
+                favorite = tokenJson.optBoolean("favorite", false),
+                name = tokenJson.optStringOrNull("name"),
+                source = TokenSource.fromWire(tokenJson.optStringOrNull("source")),
+                createdAt = tokenJson.optStringOrNull("created_at"),
+                brandName = description?.optStringOrNull("brand_name"),
+                displayToken = description?.optStringOrNull("display_token"),
+                holderName = description?.optStringOrNull("holder_name"),
+                maskedPan = description?.optStringOrNull("masked_pan"),
+                networkTokenAvailable = tokenJson.optJSONObject("network_token")
+                    ?.optBoolean("available", false) ?: false,
+            )
+        }
+        return tokens
     }
 
     private fun parseSessionVault(json: JSONObject): SessionVault {

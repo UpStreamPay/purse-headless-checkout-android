@@ -30,6 +30,11 @@
     <string name="label_remaining">Left to pay</string>
     <string name="label_covered">Fully covered</string>
     <string name="section_express">Express checkout</string>
+    <string name="section_saved_cards">Saved cards</string>
+    <string name="saved_card_cvv_badge">CVC required</string>
+    <string name="saved_card_no_cvv_badge">no CVC</string>
+    <string name="helper_saved_card_cvv">Enter this card\'s security code to pay with it.</string>
+    <string name="helper_saved_card_no_cvv">No security code needed — tap Pay.</string>
     <string name="section_primary">Choose how to pay</string>
     <string name="section_secondary">Gift card</string>
     <string name="helper_giftcard">Test card 9250004781234567890, CVC 123.</string>
@@ -43,6 +48,13 @@
     <string name="giftcard_balance_partial">%1$s — balance %2$s of %3$s</string>
     <string name="giftcard_applied">Applied %1$s</string>
     <string name="giftcard_error">Couldn\'t read that card: %1$s</string>
+    <string name="giftcard_save">Keep this card for next time</string>
+    <string name="hint_giftcard_label">Name (optional)</string>
+    <string name="section_saved_giftcards">Your saved gift cards</string>
+    <string name="giftcard_balance_pending">%1$s — checking balance…</string>
+    <string name="giftcard_unavailable">%1$s — unavailable (%2$s)</string>
+    <string name="btn_apply_saved_giftcard">Use</string>
+    <string name="btn_remove_giftcard">Remove</string>
     <string name="method_klarna">Klarna</string>
     <string name="method_card">Card</string>
     <string name="method_redirection">Redirect to the payment page</string>
@@ -78,4 +90,5 @@
     <string name="capture_capturing">Capturing…</string>
     <string name="alfred_error">alfred error: %1$s</string>
     <string name="btn_start_over">Start a new payment</string>
+    <string name="btn_refresh_session">Refresh session (new cart)</string>
 </resources>

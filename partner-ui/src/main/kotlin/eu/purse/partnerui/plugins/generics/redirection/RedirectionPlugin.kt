@@ -82,19 +82,20 @@ class RedirectionPlugin(
 
     /**
      * The `/validate` item — the envelope, the `/init` `step_id`, and the browser block, exactly as
-     * web's `preValidation` builds it.
-     *
-     * Web then runs the payload through `patchItemPayloadWithToken(context.token, …)`, which copies a
-     * *registered card token*'s value, holder, expiry and network into `payment_data`. Only the token
-     * value is ported: [PartnerUiContext.token] is a bare `String`, not web's full `Token` object, so
-     * the other three fields have no source here. That gap only matters for a redirection method
-     * replaying a saved card — which needs the vault work that
-     * [CardPlugin][eu.purse.partnerui.plugins.vaults.purse.creditcard.CardPlugin] owns anyway.
+     * web's `preValidation` builds it, then patched with a saved token's value, holder, expiry and
+     * network (web's `patchItemPayloadWithToken`) when the item replays a card-on-file.
      */
     override suspend fun preValidation(context: PartnerUiContext): ValidateItemPayload {
         val browser = context.collected[COLLECTED_BROWSER] as? JSONObject
         val paymentData = JSONObject()
-        context.token?.takeIf { it.isNotBlank() }?.let { paymentData.put("token", it) }
+        context.token?.let { token ->
+            paymentData.put("token", token.value)
+            token.holderName?.let { paymentData.put("holder", it) }
+            val card = JSONObject()
+            token.wireExpiryDate()?.let { card.put("expiry_date", it) }
+            token.selectedNetwork?.let { card.put("selected_network", it) }
+            if (card.length() > 0) paymentData.put("card", card)
+        }
 
         return ItemPayload(
             partner = partner,

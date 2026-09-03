@@ -2,11 +2,19 @@ package eu.purse.checkout.validation
 
 import android.util.Log
 import eu.purse.checkout.PurseCheckoutException
+import eu.purse.checkout.PurseCheckoutHooks
+import eu.purse.checkout.PurseHeadlessCheckout
+import eu.purse.checkout.monitoring.CheckoutEventBus
+import eu.purse.checkout.monitoring.CheckoutEventCode
+import eu.purse.checkout.monitoring.EventLevel
+import eu.purse.checkout.payment.item.PaymentToken
 import eu.purse.checkout.payment.item.PrimaryMethod
+import eu.purse.checkout.payment.registration.RegistrationState
 import eu.purse.checkout.payment.secondary.SecondaryConfigs
 import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.checkout.payment.split.PaymentSplit
 import eu.purse.core.api.PaymentApiClient
+import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.payload.ItemPayload
 import eu.purse.core.payload.ValidateItemPayload
 import eu.purse.core.payload.ValidationResult
@@ -36,6 +44,9 @@ class PaymentValidator(private val api: PaymentApiClient) {
         splits: List<PaymentSplit>,
         session: LegacyPaymentSession,
         collectedByMethod: Map<String, Map<String, Any?>> = emptyMap(),
+        hooks: PurseCheckoutHooks? = null,
+        skipOnBeforeValidate: Boolean = false,
+        registrationByMethod: Map<String, RegistrationState> = emptyMap(),
     ): ValidationResult {
         requireDistinctSources(splits)
 
@@ -47,12 +58,17 @@ class PaymentValidator(private val api: PaymentApiClient) {
                 is SecondaryToken -> {
                     val config = SecondaryConfigs.forMethod(source.partner, source.method)
                         ?: throw PurseCheckoutException.NoSecondaryConfig("no secondary config for ${source.id}")
-                    payloads += ItemPayload(
+                    val payload = ItemPayload(
                         partner = source.partner,
                         method = source.method,
                         amount = split.amount,
                         paymentData = config.buildValidatePaymentData(source),
                     )
+                    // A gift card the shopper asked to keep — web's `buildSecondaryValidateItemPayload`:
+                    // `payment_preferences.registration` + `card.token_label` only when registered,
+                    // and never for an instrument that is already saved.
+                    val registration = registrationByMethod[source.id]?.takeIf { it.registered && !source.isSaved }
+                    payloads += if (registration != null) enhanceWithRegistration(payload, registration) else payload
                 }
 
                 is PrimaryMethod -> {
@@ -67,6 +83,30 @@ class PaymentValidator(private val api: PaymentApiClient) {
                         amount = split.amount,
                         api = api,
                         collected = collectedByMethod[source.id] ?: emptyMap(),
+                        register = registrationByMethod[source.id]?.registered == true,
+                    )
+                    if (!plugin.validateUi(context)) {
+                        throw PurseCheckoutException.ValidateFailed("client-side validation failed for ${source.id}")
+                    }
+                    payloads += enhanceWithRegistration(plugin.preValidation(context), registrationByMethod[source.id])
+                    prepared += Prepared(plugin, context)
+                }
+
+                // A saved card: same plugin pipeline, but the context carries the token instead of
+                // fresh form data — web renders the element with a `token` attribute.
+                is PaymentToken -> {
+                    val plugin = PluginRegistry.getPlugin(source.partner, source.method, session)
+                        ?: throw PurseCheckoutException.NoPluginRegistered(
+                            "no :partner-ui plugin registered for ${source.partner.wireValue}-${source.method.wireValue}",
+                        )
+                    val context = PartnerUiContext(
+                        partner = source.partner,
+                        method = source.method,
+                        session = session,
+                        amount = split.amount,
+                        api = api,
+                        collected = collectedByMethod[source.id] ?: emptyMap(),
+                        token = source.toPayToken(),
                     )
                     if (!plugin.validateUi(context)) {
                         throw PurseCheckoutException.ValidateFailed("client-side validation failed for ${source.id}")
@@ -76,6 +116,26 @@ class PaymentValidator(private val api: PaymentApiClient) {
                 }
 
                 else -> throw PurseCheckoutException.ValidateFailed("unsupported split source ${source.id}")
+            }
+        }
+
+        // Merchant hook between payload preparation and the POST — throwing aborts the submit,
+        // wrapped as ON_BEFORE_VALIDATE_HOOK_FAILED like web (`executePayment`'s catch) so the
+        // merchant's own exception is the cause, not the surface. Nothing has been sent at this
+        // point, so the caller can restore the checkout to a submittable state. Skipped when a
+        // plugin auto-submits.
+        if (!skipOnBeforeValidate) {
+            try {
+                hooks?.onBeforeValidate?.invoke(splits)
+            } catch (e: Exception) {
+                CheckoutEventBus.getInstance().post(
+                    CheckoutEventCode.HEADLESS_CHECKOUT_ON_BEFORE_VALIDATE_HOOK_FAILED,
+                    EventLevel.ERROR,
+                    PurseHeadlessCheckout.monitoringPayload("hook" to "onBeforeValidate", "message" to e.message),
+                )
+                throw PurseCheckoutException.HookFailed(
+                    "onBeforeValidate", e, PurseErrorCode.ON_BEFORE_VALIDATE_HOOK_FAILED,
+                )
             }
         }
 
@@ -98,8 +158,40 @@ class PaymentValidator(private val api: PaymentApiClient) {
             throw PurseCheckoutException.ValidateFailed("validate call failed: ${e.message}", e)
         }
 
+        // Runs before postValidation (and so before any redirection); errors swallowed, like web
+        // (which reports them as HEADLESS_CHECKOUT_CLIENT_HOOK_ERROR).
+        try {
+            hooks?.onAfterValidate?.invoke()
+        } catch (e: Exception) {
+            Log.w(TAG, "onAfterValidate hook failed (ignored): ${e.message}")
+            CheckoutEventBus.getInstance().post(
+                CheckoutEventCode.HEADLESS_CHECKOUT_CLIENT_HOOK_ERROR,
+                EventLevel.ERROR,
+                PurseHeadlessCheckout.monitoringPayload("hook" to "onAfterValidate", "message" to e.message),
+            )
+        }
+
         prepared.forEach { it.plugin.postValidation(result, it.context) }
         return result
+    }
+
+    /**
+     * Enhance a fresh-card payload with the save-token decision — web's `preValidateItems`
+     * (`headless-checkout-validation.ts:25-43`): `payment_preferences.registration` plus
+     * `payment_data.card.token_label` when the shopper named the card.
+     */
+    private fun enhanceWithRegistration(
+        payload: ValidateItemPayload,
+        registration: RegistrationState?,
+    ): ValidateItemPayload {
+        if (registration == null) return payload
+        payload.paymentPreferences.put("registration", registration.registered)
+        if (registration.registered && !registration.name.isNullOrBlank()) {
+            val card = payload.paymentData.optJSONObject("card")
+                ?: org.json.JSONObject().also { payload.paymentData.put("card", it) }
+            card.put("token_label", registration.name)
+        }
+        return payload
     }
 
     /**

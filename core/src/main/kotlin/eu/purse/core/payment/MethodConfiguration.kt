@@ -37,7 +37,8 @@ data class VaultInfo(
 
 data class MethodSettings(
     val registrationMode: RegistrationMode,
-    val saveToken: Boolean,
+    /** `save_token` — nullable because web distinguishes an explicit `false` from an absent value. */
+    val saveToken: Boolean?,
     val saveTokenMode: String?,
     val directDebit: Boolean,
     val paymentMinAmount: BigDecimal?,
@@ -46,4 +47,8 @@ data class MethodSettings(
     val integrationMode: IntegrationMode?,
     /** `merchant_specifics.client_id` — the PSP's client-side SDK id (e.g. PayPal's REST client id). */
     val merchantClientId: String? = null,
+    /** `merchant_specifics.pay_token_no_cvv` — pay a saved token without collecting the CVV. */
+    val payTokenNoCvv: Boolean = false,
+    /** `settings.network_token` — enables the network-token no-CVV path when a token carries one. */
+    val networkToken: Boolean = false,
 )

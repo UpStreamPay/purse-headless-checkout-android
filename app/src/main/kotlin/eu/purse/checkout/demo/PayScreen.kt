@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -46,7 +47,9 @@ import com.paypal.android.paymentbuttons.PayPalButtonColor
 import com.paypal.android.paymentbuttons.PayPalButtonLabel
 import com.paypal.android.paymentbuttons.PaymentButtonShape
 import eu.purse.checkout.PurseHeadlessCheckout
+import eu.purse.checkout.payment.item.PaymentToken
 import eu.purse.checkout.payment.item.PrimaryMethod
+import eu.purse.checkout.payment.item.SavedSecondaryToken
 import eu.purse.checkout.payment.item.SecondaryMethod
 import eu.purse.checkout.payment.split.PaymentSplit
 import eu.purse.core.payment.Method
@@ -85,7 +88,16 @@ fun PayScreen(controller: DemoController) {
                 )
             },
         ) {
-            AmountHeader(checkout, remaining, fulfilled, split)
+            // `paymentSession` is the observable handle on the session in force — `checkout.session`
+            // is replaced by setSession, so a plain read here would never redraw the total.
+            val session by checkout.paymentSession.collectAsState()
+            AmountHeader(session.amount, checkout.currency, remaining, fulfilled, split)
+            SmallButton(
+                text = stringResource(R.string.btn_refresh_session),
+                onClick = controller::refreshSession,
+                enabled = !controller.refreshingSession,
+                loading = controller.refreshingSession,
+            )
 
             if (controller.googlePayReady || controller.paypalReady) {
                 SectionTitle(stringResource(R.string.section_express))
@@ -97,10 +109,24 @@ fun PayScreen(controller: DemoController) {
                 }
             }
 
+            val savedCards by checkout.paymentTokens.collectAsState()
+            if (savedCards.isNotEmpty()) {
+                SectionTitle(stringResource(R.string.section_saved_cards))
+                savedCards.forEach { SavedCardRow(controller, it) }
+            }
+
             val methods = controller.payableMethods
             if (methods.isNotEmpty()) {
                 SectionTitle(stringResource(R.string.section_primary))
                 methods.forEach { PrimaryMethodRow(controller, it) }
+            }
+
+            // Saved gift cards resolve their balance in the background — observe the flow so the
+            // rows move from "checking…" to a balance (or "unavailable") on their own.
+            val savedGiftCards by checkout.savedSecondaryTokens.collectAsState()
+            if (savedGiftCards.isNotEmpty()) {
+                SectionTitle(stringResource(R.string.section_saved_giftcards))
+                savedGiftCards.forEach { SavedGiftCardRow(controller, it) }
             }
 
             val giftCards = controller.giftCardMethods
@@ -128,7 +154,8 @@ fun PayScreen(controller: DemoController) {
  * layout only had buried in a monospace dump. */
 @Composable
 private fun AmountHeader(
-    checkout: PurseHeadlessCheckout,
+    total: java.math.BigDecimal,
+    currency: String,
     remaining: java.math.BigDecimal,
     fulfilled: Boolean,
     split: List<PaymentSplit>,
@@ -142,7 +169,7 @@ private fun AmountHeader(
                     color = LocalContentColor.current.copy(alpha = 0.75f),
                 )
                 Text(
-                    text = amountText(checkout.session.amount, checkout.currency),
+                    text = amountText(total, currency),
                     style = MaterialTheme.typography.headlineLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -151,7 +178,7 @@ private fun AmountHeader(
                 text = if (fulfilled) {
                     stringResource(R.string.label_covered)
                 } else {
-                    "${stringResource(R.string.label_remaining)} ${amountText(remaining, checkout.currency)}"
+                    "${stringResource(R.string.label_remaining)} ${amountText(remaining, currency)}"
                 },
                 style = MaterialTheme.typography.titleSmall,
                 color = if (fulfilled) DemoStatusColors.success else LocalContentColor.current,
@@ -165,7 +192,7 @@ private fun AmountHeader(
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    text = amountText(entry.amount, checkout.currency),
+                    text = amountText(entry.amount, currency),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                 )
@@ -271,6 +298,43 @@ private fun PrimaryMethodRow(controller: DemoController, method: PrimaryMethod) 
 }
 
 /**
+ * One saved card (`paymentTokens`). Selecting it commits it as the primary (`setPrimaryToken`) and
+ * mounts [SavedCardForm] — a CVV field when the PSP still wants one, a one-line notice otherwise.
+ * Tapping the open row again collapses it and clears the primary.
+ */
+@Composable
+private fun SavedCardRow(controller: DemoController, token: PaymentToken) {
+    val selected = controller.selectedToken?.id == token.id
+    DemoCard(
+        border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { controller.selectToken(if (selected) null else token) },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RadioButton(selected = selected, onClick = null)
+            Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                Text(
+                    text = if (token.favorite) "★ ${controller.label(token)}" else controller.label(token),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = "${token.maskedPan} · ${token.brand} · " + stringResource(
+                        if (token.requiresCvv) R.string.saved_card_cvv_badge else R.string.saved_card_no_cvv_badge,
+                    ),
+                    style = monoStyle,
+                    color = LocalContentColor.current.copy(alpha = 0.7f),
+                )
+            }
+            Text(text = if (selected) "▾" else "▸", style = MaterialTheme.typography.bodyLarge)
+        }
+        AnimatedVisibility(selected) { SavedCardForm(controller, token) }
+    }
+}
+
+/**
  * The generic redirection template's entire "UI": an explanation and a readiness line. There is
  * deliberately nothing to fill in — the PSP's own hosted page collects everything, which is exactly
  * why one plugin can serve every partner configured this way. `prepare` (`/init`) runs on mount, i.e.
@@ -312,6 +376,36 @@ private fun KlarnaWidget(controller: DemoController, method: PrimaryMethod) {
         },
         modifier = Modifier.fillMaxWidth(),
     )
+}
+
+/**
+ * One **saved** gift card: its balance arrives in the background (the row says "checking…" until
+ * then), and a single tap draws it in for as much as the order needs — no number, no CVC to type.
+ */
+@Composable
+private fun SavedGiftCardRow(controller: DemoController, token: SavedSecondaryToken) {
+    val applied = controller.isSavedGiftCardApplied(token)
+    DemoCard {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = controller.savedGiftCardLabel(token),
+                style = MaterialTheme.typography.titleSmall,
+                color = if (token.disabled != null) MaterialTheme.colorScheme.onSurfaceVariant else LocalContentColor.current,
+                modifier = Modifier.weight(1f),
+            )
+            if (applied) {
+                SmallButton(
+                    text = stringResource(R.string.btn_remove_giftcard),
+                    onClick = { controller.removeSavedGiftCard(token) },
+                )
+            } else if (token.disabled == null && token.balanceResolved) {
+                SmallButton(
+                    text = stringResource(R.string.btn_apply_saved_giftcard),
+                    onClick = { controller.applySavedGiftCard(token) },
+                )
+            }
+        }
+    }
 }
 
 /**
@@ -373,6 +467,28 @@ private fun GiftCardRow(controller: DemoController, method: SecondaryMethod) {
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    // Only when the method's save_token_mode lets the shopper choose (PREFER /
+                    // PREFER_NO) — ALWAYS and NEVER give nothing to decide.
+                    if (state.token?.canBeRegistered == true) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { state.register = !state.register },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(checked = state.register, onCheckedChange = { state.register = it })
+                            Text(text = stringResource(R.string.giftcard_save), style = MaterialTheme.typography.bodyMedium)
+                        }
+                        if (state.register) {
+                            OutlinedTextField(
+                                value = state.label,
+                                onValueChange = { state.label = it },
+                                label = { Text(stringResource(R.string.hint_giftcard_label)) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
                     SmallButton(
                         text = stringResource(R.string.btn_apply_giftcard),
                         onClick = { controller.applyGiftCard(state) },

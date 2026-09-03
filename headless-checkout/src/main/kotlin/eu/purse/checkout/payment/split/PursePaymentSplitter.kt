@@ -1,6 +1,5 @@
 package eu.purse.checkout.payment.split
 
-import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.checkout.payment.secondary.SecondaryTakePolicy
 import eu.purse.checkout.payment.secondary.SecondaryToken
 import java.math.BigDecimal
@@ -21,7 +20,7 @@ import java.math.RoundingMode
 class PursePaymentSplitter(orderAmount: BigDecimal) {
 
     private var amountCents: Long = toCents(orderAmount)
-    private var primary: PrimaryMethod? = null
+    private var primary: PrimarySource? = null
 
     /** Applied secondary tokens, keyed by token id, in insertion order. */
     private val secondaries = LinkedHashMap<String, Pair<SecondaryToken, Long>>()
@@ -37,7 +36,8 @@ class PursePaymentSplitter(orderAmount: BigDecimal) {
     /** Alias of [primaryReach], the amount still owed. */
     val remaining: BigDecimal get() = primaryReach
 
-    val primaryMethod: PrimaryMethod? get() = primary
+    /** The current primary — a method or a saved token. */
+    val primaryMethod: PrimarySource? get() = primary
 
     /** The applied secondary tokens, in the order they were added. */
     val appliedSecondaries: List<SecondaryToken> get() = secondaries.values.map { it.first }
@@ -58,8 +58,8 @@ class PursePaymentSplitter(orderAmount: BigDecimal) {
             return list
         }
 
-    fun setPrimary(method: PrimaryMethod?) {
-        primary = method
+    fun setPrimary(source: PrimarySource?) {
+        primary = source
     }
 
     /**

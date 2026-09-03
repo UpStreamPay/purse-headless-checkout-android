@@ -36,6 +36,14 @@ object SessionCodec {
                 ),
             entityId = json.optStringOrNull("entity_id") ?: "",
             paymentSession = LegacyPaymentSessionParser.parse(paymentSessionJson),
+            walletSession = json.optJSONObject("wallet_session")?.let { wallet ->
+                WalletSessionParams(
+                    sessionId = wallet.optStringOrNull("session_id") ?: return@let null,
+                    ownerReference = wallet.optStringOrNull("owner_reference") ?: return@let null,
+                    merchant = wallet.optStringOrNull("merchant") ?: "",
+                    expirationDate = wallet.optStringOrNull("expiration_date"),
+                )
+            },
         )
     }
 }

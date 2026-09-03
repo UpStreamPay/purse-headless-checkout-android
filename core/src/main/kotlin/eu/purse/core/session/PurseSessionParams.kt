@@ -11,4 +11,6 @@ data class PurseSessionParams(
     val environment: PurseEnvironment,
     val entityId: String,
     val paymentSession: LegacyPaymentSession,
+    /** Present when the merchant backend attached a `wallet_session` (saved-card wallet access). */
+    val walletSession: WalletSessionParams? = null,
 )

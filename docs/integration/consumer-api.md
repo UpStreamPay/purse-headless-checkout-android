@@ -36,13 +36,20 @@ tests that want to register a plugin in isolation.
 ### `PurseHeadlessCheckout.init`
 
 ```kotlin
-fun init(widgetData: String, lockedEnvironment: PurseEnvironment? = null): PurseHeadlessCheckout
+fun init(
+    widgetData: String,
+    lockedEnvironment: PurseEnvironment? = null,
+    hooks: PurseCheckoutHooks? = null,
+    options: PluginOptions = PluginOptions(),
+): PurseHeadlessCheckout
 ```
 
 | Param | Meaning |
 |---|---|
 | `widgetData` | The base64-encoded `widget.data` string from the merchant backend's Client Session response. |
 | `lockedEnvironment` | Overrides whatever `widgetData` declares. **A release build must always pass `PurseEnvironment.PRODUCTION`** rather than trusting a session-declared environment. |
+| `hooks` | Merchant hooks around "create payment" — see [`PurseCheckoutHooks`](#pursecheckouthooks) below. |
+| `options` | Presentation preferences forwarded to every plugin (locale, theme, card-form texts). |
 
 **Throws:** `PurseSessionException.SessionMalformed` if `widgetData` can't be decoded, or the
 session is missing `id` / `expiration_date`.
@@ -50,18 +57,64 @@ session is missing `id` / `expiration_date`.
 Call this once per checkout session. The returned `PurseHeadlessCheckout` instance is the object
 every other API in this document hangs off.
 
+### `PurseCheckoutHooks`
+
+Web's `PurseHeadlessCheckoutHooks` (`onBeforeValidate` / `onAfterValidate` / `redirectionHandler`):
+
+```kotlin
+class PurseCheckoutHooks(
+    val onBeforeValidate: (suspend (splits: List<PaymentSplit>) -> Unit)? = null,
+    val onAfterValidate: (suspend () -> Unit)? = null,
+    val onRedirection: (suspend (action: RedirectAction) -> Boolean)? = null,
+)
+```
+
+| Hook | When | If it throws |
+|---|---|---|
+| `onBeforeValidate` | After the item payloads are built, right before `POST /validate`. Skipped when a plugin auto-submits (web's `xpay` trigger). | The submit is **aborted before anything is sent**: `submitPayment` throws `PurseCheckoutException.HookFailed` (code `ON_BEFORE_VALIDATE_HOOK_FAILED`, your exception as `cause`), `sessionState` returns to `READY`, split and collected data untouched. |
+| `onAfterValidate` | After `/validate` answers, before plugin `postValidation` (so before any redirect). | Swallowed, like web — reported as a `HEADLESS_CHECKOUT_CLIENT_HOOK_ERROR` monitoring event. |
+| `onRedirection` | `/validate` asked for a redirect, resolved to a `RedirectAction` (`Get` / `PostForm` / `PostHtml`), before the SDK opens its in-app WebView. Return `true` to take it over (the SDK opens nothing; confirm the outcome yourself with `paymentStatus()`), `false` to let the SDK proceed. Consulted by every coordinator that can redirect. | **Nothing is opened**; the failure reaches the payment element's `onError` as `"onRedirection hook failed: …"` (typed internally as `HookFailed`, code `POST_VALIDATE_FAILED` — web has no dedicated code, its handler runs inside `postValidation`), the split stays intact and the shopper can submit again. |
+
 ---
 
 ## 2. Session identity (read-only properties)
 
 | Property | Type | Meaning |
 |---|---|---|
-| `params` | `PurseSessionParams` | Decoded `widget.data` (`apiKey`, `apiUrl`, `environment`, `entityId`, `paymentSession`). |
-| `session` | `PaymentSession` | The built session model (amount, currency, expiration, vault config, means of payment). |
+| `params` | `PurseSessionParams` | Decoded `widget.data` (`apiKey`, `apiUrl`, `environment`, `entityId`, `paymentSession`). Replaced by `setSession`. |
+| `session` | `PaymentSession` | The built session model (amount, currency, expiration, vault config, means of payment). Replaced by `setSession` — hold the checkout, not the session; observe `paymentSession`. |
 | `paymentApiRoot` | `String` | Resolved Payment API root; calls go to `{root}/{entityId}/sessions/{sessionId}/…`. |
 | `currency` | `String` | Session currency code. |
 | `isInformationRequest` | `Boolean` | Whether this session is a zero-amount information request rather than a real charge. |
 | `currentSessionId` | `String` | The Payment API session id (`session.id`). |
+
+### `setSession` — refresh the session without rebuilding the checkout
+
+```kotlin
+suspend fun setSession(widgetData: String)
+```
+
+Web's `setSession`. Hand the existing checkout a **new** Client Session — the cart changed and your
+backend minted one for the new amount, or the current one expired (`sessionState == EXPIRED`) and
+you fetched a fresh one — without tearing the screen down. What survives follows web's
+`payment.setSession`, plus one thing:
+
+| | Survives | Torn down |
+|---|---|---|
+| Primary method whose `protocols[partner][method]` is **deep-equal** in both sessions | its collected data (`setCollected`), its form-fulfilment gate, its save-token decision (`register`), its live plugin — and, beyond web, its place as the split's **primary** when it was selected | — |
+| Primary method whose configuration **changed**, or that **disappeared** | — | plugin (`destroyClient`), collected data, fulfilment, registration; its `itemGenerations` entry is bumped so UI remembered for it rebuilds |
+| Saved cards (`paymentTokens`) | rebuilt from the new session; survive as selected primary when their method survives and the new session still lists them | — |
+| Applied gift cards (`appliedSecondaries`) and their registrations | — | dropped — they were tokenized against the old session |
+| Amount, expiry watchdog, `sessionState` | — | the new session's amount; the watchdog restarts; state returns to `READY` |
+
+Same session id → ignored with a warning, as on web. **Throws** `PurseCheckoutException.SessionExpired`
+(`EXPIRED_SESSION`) when the new session is already expired — the old one stays in force — and
+`IllegalStateException` while a payment is being submitted. Emits `HEADLESS_CHECKOUT_SET_SESSION`.
+
+Keying UI on `(item.id, generation)` is what makes "keep what is still valid" work on the screen:
+`rememberPaymentElement` already does it, so an unchanged card keeps its SecureFields form and
+whatever the shopper typed, while a changed method gets a fresh element. Recipe 19 shows the
+expired-session recovery loop.
 
 ---
 
@@ -72,7 +125,9 @@ it from a coroutine scope; there is no callback-based equivalent.
 
 | Property | Type | Fires when |
 |---|---|---|
-| `sessionState` | `StateFlow<SessionState>` | Lifecycle transitions: `READY` → `SUBMITTING` → `SUBMITTED`/`ERROR`, or `EXPIRED` at init if the session already expired. |
+| `sessionState` | `StateFlow<SessionState>` | Lifecycle transitions: `READY` → `SUBMITTING` → `SUBMITTED`/`ERROR`, or `EXPIRED` at init if the session already expired (and back to `READY` after `setSession`). |
+| `paymentSession` | `StateFlow<PaymentSession>` | The session in force; emits again when `setSession` swaps it — rebuild session-derived UI (amount header, method list) from here. |
+| `itemGenerations` | `StateFlow<Map<String, Int>>` | Per-item generation counters bumped by `setSession` for items that did not survive; key anything you remember per item on `(item.id, generation)` — `generationOf(item)` reads the current one. |
 | `paymentMethods` | `StateFlow<List<PaymentItem>>` | Any time the split changes — each item's `disabled` state is recomputed against the new `remainingAmountToPay`. |
 | `remainingAmountToPay` | `StateFlow<BigDecimal>` | After `setPrimary`, `applySecondary`, or `removeSecondary`. |
 | `isPaymentFulfilled` | `StateFlow<Boolean>` | Same triggers as above, plus every `setFulfilled` — `true` once the split covers the full amount **and** every item in it whose plugin collects a form reports that form complete and valid (see [§6](#form-completeness-gates-the-payment)). |
@@ -109,14 +164,29 @@ One `protocols.{partner}.{method}` entry. `id` follows web's `"{partner}-{method
 | `isSecondary` | `Boolean` | `true` for `SecondaryMethod`. |
 | `minAmount` / `maxAmount` | `BigDecimal?` | From `configuration.settings`. |
 
-Two concrete subtypes:
+Four concrete subtypes:
 
 **`PrimaryMethod`** — exactly one covers the amount left after secondaries.
 - `integrationType: IntegrationMode?` — `redirection` / `popup`, from `merchant_specifics`.
 - `supportedBrands: List<CardBrand>` — card schemes accepted; empty when not vaulted.
 
-**`SecondaryMethod`** — a co-payment method (gift card, voucher, loyalty). No extra fields beyond
-the base `PaymentItem`.
+**`SecondaryMethod`** — a co-payment method (gift card, voucher, loyalty).
+- `saveTokenMode: SaveTokenMode` / `canBeRegistered: Boolean` — whether a gift card typed for this
+  method can be kept for the next session (see `registerSecondary`).
+
+**`PaymentToken`** — a saved *card* (card-on-file) under a primary method; can be the split's
+primary. Exposed on `paymentTokens`, never on `paymentMethods` — see §7.
+
+**`SavedSecondaryToken`** — a saved *gift card / voucher* under a secondary method (web's
+`type: 'token'` secondary). Exposed on `savedSecondaryTokens`, never on `paymentMethods`.
+- `pan` / `cvv` — the stored `uniqueness_token` / `pin_code` the partner re-initialises with.
+- `name`, `expirationDate`, `createdAt`, `favorite` — display metadata.
+- `balance` / `totalBalance` / `balanceResolved` — the session carries no balance, so the SDK
+  `/init`s each saved card in the background right after construction; `balanceResolved` flips to
+  `true` when it lands. A failed `/init` leaves the token listed with
+  `disabled = DisabledState.TokenInitFailed`.
+- `takePolicy` — from the method's `SecondaryConfig`.
+- `asSecondaryToken()` — the splitter-side instrument (`isSaved = true`).
 
 ### `DisabledState` (sealed)
 
@@ -149,11 +219,17 @@ or an applied `SecondaryToken`). The full list is what `submitPayment` sends to 
 | `primaryMethods` | `List<PrimaryMethod>` | Filtered view of `paymentMethods.value`. |
 | `secondaryMethods` | `List<SecondaryMethod>` | Filtered view of `paymentMethods.value`. |
 | `setPrimary` | `fun setPrimary(method: PrimaryMethod?)` | Choose (or clear, with `null`) the primary covering the remaining amount. Triggers a `refresh()` of all reactive state. |
-| `secondaryConfig` | `fun secondaryConfig(method: SecondaryMethod): SecondaryConfig?` | The per-partner form/take-policy rules for a secondary method — `null` if none registered (e.g. `ancv-connect`, not ported yet). |
+| `secondaryConfig` | `fun secondaryConfig(method: SecondaryMethod): SecondaryConfig?` | The per-partner form/take-policy rules for a secondary method — `null` if none registered (shipped or via `SecondaryConfigs.register`; e.g. `ancv-connect` is not shipped). |
 | `getSecondaryToken` | `suspend fun getSecondaryToken(method: SecondaryMethod, pan: String, cvv: String? = null): SecondaryToken` | `POST /init` — tokenizes a card and returns its balance **without** touching the split. Validate PAN/CVV via `secondaryConfig` first. |
 | `applySecondary` | `fun applySecondary(token: SecondaryToken, amount: BigDecimal? = null)` | Draws an already-tokenized `token` into the split, clamped to `min(amount, balance, remaining, limit)`. `amount == null` takes as much as the order needs. |
 | `removeSecondary` | `fun removeSecondary(token: SecondaryToken)` | Removes a previously applied token from the split. |
 | `appliedSecondaries` | `List<SecondaryToken>` | Applied tokens, in the order they were added. |
+| `registrationOf` | `fun registrationOf(token: SecondaryToken): RegistrationState` | The save decision for a **temporary** gift card — defaults from its method's `SaveTokenMode`; always `registered = false` for a saved one. |
+| `registerSecondary` | `fun registerSecondary(token: SecondaryToken, registered: Boolean = true, name: String? = null)` | Ask to keep a temporary gift card (optionally named) — travels into that card's `/validate` item as `payment_preferences.registration` + `payment_data.card.token_label`. Throws `WalletOperationFailed(TOKEN_NOT_REGISTERABLE / INVALID_TOKEN_NAME / TOKEN_NAME_EXISTS)`. |
+| `savedSecondaryTokens` | `StateFlow<List<SavedSecondaryToken>>` | The session's saved gift cards, balances resolving in the background. |
+| `applySecondary` | `fun applySecondary(token: SavedSecondaryToken, amount: BigDecimal? = null)` | Draws a saved gift card in (latest state is used, a stale instance is fine). Throws `SecondaryTokenizationFailed(SECONDARY_TOKEN_EMPTY_BALANCE)` while unresolved / empty, `(FAILED_TO_INIT_SECONDARY_TOKEN)` when its `/init` failed. |
+| `removeSecondary` | `fun removeSecondary(token: SavedSecondaryToken)` | Puts a saved gift card's amount back. |
+| `editToken` / `deleteToken` | `suspend fun editToken(token: SavedSecondaryToken, name: String)` / `suspend fun deleteToken(token: SavedSecondaryToken)` | Rename / delete a saved gift card through the wallet — same rules and errors as the card overloads (§7). Delete also clears it from the split. |
 
 **`getSecondaryToken` throws:**
 - `PurseCheckoutException.NoSecondaryConfig` — no config registered for this `(partner, method)`.
@@ -173,27 +249,86 @@ data class SecondaryToken(
     val balance: BigDecimal, val totalBalance: BigDecimal = balance,
     val expirationDate: String = "", val takePolicy: SecondaryTakePolicy = SecondaryTakePolicy.NONE,
     val limit: BigDecimal? = null,
-)
+    val saveTokenMode: SaveTokenMode = SaveTokenMode.NEVER, val isSaved: Boolean = false,
+) { val canBeRegistered: Boolean }
 ```
 
 `balance` is what's spendable now; `totalBalance` is the full instrument balance when a partner
 distinguishes it. `takePolicy` is `NONE` (splittable — `applySecondary`'s `amount` caps the draw)
-or `MAX` (non-splittable — always takes the full cap regardless of `amount`).
+or `MAX` (non-splittable — always takes the full cap regardless of `amount`). `saveTokenMode` is
+the method's effective save-token policy (set by `getSecondaryToken`); `canBeRegistered` is `true`
+for a temporary token under `PREFER` / `PREFER_NO`, never for a saved one (`isSaved`).
 
-### `SecondaryConfig`
+### `SecondaryConfig` — also the extension point for issuers the SDK doesn't ship
 
-The interface a merchant's form UI queries to drive validation before calling `getSecondaryToken`:
+The interface a merchant's form UI queries to drive validation before calling `getSecondaryToken`,
+and what the SDK itself uses to build `/init` / `/validate` bodies and read balances:
 
 | Member | Meaning |
 |---|---|
-| `takePolicy: SecondaryTakePolicy` | `NONE` / `MAX` — see above. |
-| `requiresCvv(pan: String): Boolean` | Whether to show/require a CVV field for this PAN. |
-| `validatePan(pan: String): Boolean` | Client-side PAN format check. |
+| `takePolicy: SecondaryTakePolicy` | `NONE` / `MAX` — see above. **Required.** |
+| `requiresCvv(pan: String): Boolean` | Whether to show/require a CVV field for this PAN. **Required.** |
+| `validatePan(pan: String): Boolean` | Client-side PAN format check. **Required.** |
 | `validateCvv(cvv: String): Boolean` | Client-side CVV format check (default: always valid). |
+| `nameLogKey: String?` | `plugin_result.logs` key holding the display label (default parse). |
+| `buildInitPaymentData(pan, cvv)` / `buildValidatePaymentData(token)` | `payment_data` bodies (default: `{ card: { number, csc } }`). |
+| `parseToken(method, initResponse, pan, cvv)` | `/init` response → `SecondaryToken` (default: generic card shape). |
+| `shouldPoll(initResponse)` / `pollForToken(api, initResponse, initPayload)` | Two-phase partners: a `SUCCESS` that only says `PROCESSING` is polled through the config (default: never). |
+| `classifyInitError(initResponse): PurseCheckoutException?` | Map a partner refusal onto a typed exception (default: generic `SecondaryTokenizationFailed`). |
 
-Registered partners today: `illicado-giftcard`, `buybox-giftcard`, `maxxing-loyaltycard`,
+Shipped partners: `illicado-giftcard`, `buybox-giftcard`, `maxxing-loyaltycard`,
 `ogloba-giftcard`, `mybeezbox-giftcard`, `easy2play-giftcard`, `easy2play-voucher`.
-`ancv-connect` is not yet registered (needs a two-phase holder→poll `/init` flow).
+`ancv-connect` is not shipped (its two-phase holder→poll flow is exactly what `pollForToken` is
+for — a host can register one).
+
+**Adding an issuer without changing the SDK** — `SecondaryConfigs` is a process-wide registry:
+
+| Function | Notes |
+|---|---|
+| `SecondaryConfigs.register(partner: Partner, method: Method, config: SecondaryConfig)` | Register (or override) the config for `(partner, method)`; `Partner.Other("acme")` / `Method.Other("voucher")` work — the key is the wire values. Do it once at app start. |
+| `SecondaryConfigs.unregister(partner, method)` | Drop a registration (shipped or host-added). |
+| `SecondaryConfigs.isRegistered(partner, method)` / `forMethod(...)` | Query. |
+| `SecondaryConfigs.reset()` | Back to the shipped catalogue only. |
+
+Once registered, that method's `secondaryConfig(...)`, `getSecondaryToken(...)`, saved-token balance
+resolution and `/validate` items all go through it — same as a built-in.
+
+### Loan simulation (BNPL)
+
+Some instalment methods quote their schedule before the shopper commits — web's
+`method.simulateLoan(product)`. A method advertises it through the `simulable` configuration
+label; everything else fails fast with a dedicated code rather than a partner error.
+
+| Member | Signature | Notes |
+|---|---|---|
+| `PrimaryMethod.simulable` | `val simulable: Boolean` | `configuration.labels` contains `"simulable"`. Check it before showing a "see instalments" affordance. |
+| `simulateLoan` | `suspend fun simulateLoan(method: PrimaryMethod, product: LoanProduct): LoanSimulation` | `POST /simulation/{entityId}/{partner}/{method}` (entity-scoped, not under the session). Runs on `Dispatchers.IO`. |
+| `simulateLoans` | `suspend fun simulateLoans(method: PrimaryMethod, product: LoanProduct): List<LoanSimulation>` | The `/multi` variant — every schedule the partner offers. Candidates without schedule data are skipped, so the list may be empty. |
+
+```kotlin
+data class LoanProduct(val amount: BigDecimal, val currencyCode: String)
+
+data class LoanSimulation(
+    val initialInstallmentAmount: BigDecimal, val finalInstallmentAmount: BigDecimal,
+    val installmentAmount: BigDecimal, val installmentCount: Int,
+    val totalCost: BigDecimal, val totalAmount: BigDecimal,
+    val legalText: String?, val aprc: BigDecimal?,
+)
+```
+
+`totalCost` is the price of the credit (excluding the financed amount); `totalAmount` is what the
+shopper pays in all — `(count - 1) × installmentAmount + initial + final`, rounded to two decimals,
+exactly web's arithmetic. Like web, the schedule carries **counts and amounts only**: the API
+returns no per-instalment dates.
+
+**Throws:**
+- `PurseCheckoutException.MethodNotSimulable` (`METHOD_IS_NOT_SIMULABLE`) — the method has no
+  `simulable` label. No API call is made.
+- `PurseCheckoutException.LoanSimulationFailed` (`INVALID_LOAN_SIMULATION`) — the API answered
+  without a schedule: no `plugin_result`, or an API-level refusal such as Riverty's
+  `409 EMPTY_SIMULATION` when the partner doesn't offer the method for this order. The API's own
+  code is on `cause` (`PaymentApiException.errorCode`). Same single code as web.
+- `PaymentApiException` — network/transport failure (no HTTP answer at all).
 
 ---
 
@@ -242,7 +377,7 @@ either. If you write your own coordinator around a form, call `setFulfilled` fro
 | `googlePayHost` | `fun googlePayHost(item: PaymentItem): GooglePayHost` | The `GooglePayHost` implementation for `item`. |
 | `klarnaHost` | `fun klarnaHost(item: PaymentItem, klarnaReturnUrl: String): KlarnaHost` | The `KlarnaHost` implementation for `item`. `klarnaReturnUrl` falls back to the session's own return URL if you don't have a better one. |
 | `paypalHost` | `fun paypalHost(item: PaymentItem): PaypalHost` | The `PaypalHost` implementation for `item`. No return URL argument — the PayPal SDK supplies its own, and the matching Activity ships in `:partner-ui`. |
-| `cardHost` | `fun cardHost(item: PrimaryMethod): CardHost` | The `CardHost` implementation for `item`. Takes `PrimaryMethod` specifically (not the generic `PaymentItem`) since `CardHost.supportedBrands` reads `item.supportedBrands`. |
+| `cardHost` | `fun cardHost(item: PaymentItem): CardHost` | The `CardHost` implementation for `item` — the card `PrimaryMethod` (fresh card, full form) or one of its saved `PaymentToken`s (a CVV-only form when `token.requiresCvv`, no form otherwise; the token reaches the plugin as `PartnerUiContext.token`). Throws `IllegalArgumentException` for anything else. |
 | `redirectionHost` | `fun redirectionHost(item: PaymentItem): RedirectionHost` | The `RedirectionHost` implementation for `item`. Not tied to a partner or method — ask for one per item the session routes to the redirection template. |
 
 ### `PartnerUiContext`
@@ -407,9 +542,26 @@ shopper able to pick another method rather than showing them a failure screen.
 
 **Compose-first** — unlike `GooglePayCoordinator`/`KlarnaCoordinator` above (plain classes driving
 View-system widgets), the card plugin's interactive half is a `@Composable` function. Rendering it
-requires the SecureFields Android SDK's own Compose surface (`VaultForm`/`VaultField`) — your app
-needs a Compose entry point somewhere in its view hierarchy (this SDK's own demo is Compose
-throughout; a `ComposeView` embedded in an otherwise View-based layout works just as well).
+goes through the SDK's own `PurseCardForm(coordinator)` (or SecureFields' bare `VaultForm`/`VaultField`
+when you want no labels or messages) — your app needs a Compose entry point somewhere in its view
+hierarchy (this SDK's own demo is Compose throughout; a `ComposeView` embedded in an otherwise
+View-based layout works just as well).
+
+**`PurseCardForm(coordinator: CardCoordinator, modifier: Modifier = Modifier)`** — the card form
+web's hosted form renders: each secure field with its **label** above, its **help text** under it
+while focused, and its **error message** in place of the help text when the shopper leaves it empty
+(`requiredError`) or SecureFields rejects its content (`formatError`). It renders the four fields in
+`FRESH_CARD`, only the CVV in `TOKEN_CVV`, nothing in `TOKEN_NO_CVV`, and sizes itself — no fixed
+height needed. This is what `PaymentElementUi` shows for a card element.
+
+Copy comes from `PluginOptions.cardFormTexts` (`CardFormTexts`, one `CardFormTexts.FieldTexts` per
+field: `label`, `placeholder`, `helperText`, `requiredError`, `formatError`), every `null` falling
+back to the SDK's localized `purse_card_*` resources — web's `hostedForm` translations, in English and
+French. Styling comes from `PluginOptions.theme` (`PurseTheme`): the `input*` scopes reach
+SecureFields' `VaultStyles`, `label*` and `helperText*` reach the texts around them, `global*` is the
+base every scope falls back to and `gap` the spacing between fields. `PurseTheme.resolve()` applies
+web's `Theme.build()` order — scope variant → scope → global variant → global — over web's default
+theme, so a partial theme never leaves a hole. See recipe 16.
 
 One trap worth naming: `rememberCardCoordinator` keys its SecureFields instance on the `host` object,
 so build the host with `remember(...)` rather than inline —
@@ -442,9 +594,11 @@ Pay/Klarna) — call it from anywhere in your composition; its 3-D Secure redire
 
 | Member | Signature | Notes |
 |---|---|---|
-| `sdk` | `val sdk: SecureFieldsAndroid` | Render this with SecureFields' own `VaultForm(coordinator.sdk)` (full form) or `VaultField(coordinator.sdk.cardNumber)` etc. (custom layout, one field at a time). |
-| `formValid` | `var formValid: Boolean` (Compose state) | Whether the card form currently validates — `false` until every field is valid. Drive your "Pay" button's `enabled` off this, or off `isPaymentFulfilled`, which the coordinator keeps in step for you. |
-| `submit` | `fun submit()` | Tokenizes via SecureFields, then runs `/init`+`/validate` through `host`. Call once `formValid` is `true` and the shopper tapped "Pay". No-op while a prior tap's flow is still in progress, and a no-op (never an error — an unfilled form is not a failed payment) while the form isn't complete and valid. |
+| `sdk` | `val sdk: SecureFieldsAndroid` | The live SecureFields instance. Render it through `PurseCardForm(coordinator)` (labels, help texts, errors, theme), or with SecureFields' bare `VaultForm(coordinator.sdk)` / `VaultField(coordinator.sdk.cardNumber)` for your own layout — only when `mode.rendersForm`. |
+| `theme` | `val theme: PurseTheme.Resolved` | The merchant's `PluginOptions.theme` resolved over web's defaults — what `PurseCardForm` styles with, exposed for a custom layout that wants the same values. |
+| `mode` | `val mode: CardCoordinator.Mode` | `FRESH_CARD` (a `PrimaryMethod` host), `TOKEN_CVV` (a `PaymentToken` host whose `requiresCvv` is `true`: CVV-only form) or `TOKEN_NO_CVV` (payable as-is, nothing to render). `mode.rendersForm` is `false` only for the last. |
+| `formValid` | `var formValid: Boolean` (Compose state) | Whether the card form currently validates — `false` until every configured field is valid (always `true` in `TOKEN_NO_CVV`). Drive your "Pay" button's `enabled` off this, or off `isPaymentFulfilled`, which the coordinator keeps in step for you. |
+| `submit` | `fun submit()` | Tokenizes via SecureFields (the card, or just the CVV of a saved one), then runs `/init`+`/validate` through `host`; in `TOKEN_NO_CVV` it skips tokenization. Call once `formValid` is `true` and the shopper tapped "Pay". No-op while a prior tap's flow is still in progress, and a no-op (never an error — an unfilled form is not a failed payment) while the form isn't complete and valid. |
 
 **`CardCoordinator.Listener`** callbacks:
 
@@ -565,13 +719,16 @@ suspend fun submitPayment(): ValidationResult
 ```
 
 Runs the plugin-driven `/validate` pipeline over the current split. Must be called once
-`isPaymentFulfilled` is `true`. Sets `sessionState` to `SUBMITTING`, then `SUBMITTED`/`ERROR`.
+`isPaymentFulfilled` is `true`. Sets `sessionState` to `SUBMITTING`, then `SUBMITTED`/`ERROR` —
+or back to `READY` when a merchant `onBeforeValidate` hook aborted it before anything was sent.
 
 **Throws:**
 - `PurseCheckoutException.PaymentNotFulfilled` — the split doesn't cover the amount, or no primary
   is set.
 - `PurseCheckoutException.ItemNotFulfilled` — an item in the split has a form that isn't complete and
   valid (see [§6](#form-completeness-gates-the-payment)).
+- `PurseCheckoutException.HookFailed` — your `onBeforeValidate` hook threw (code
+  `ON_BEFORE_VALIDATE_HOOK_FAILED`, your exception as `cause`); nothing was sent.
 - `PurseCheckoutException.NoPluginRegistered` — no `:partner-ui` plugin registered for the chosen
   primary's `(partner, method)`.
 - `PurseCheckoutException.ValidateFailed` — a client-side or API validation step failed.
@@ -629,9 +786,12 @@ interactive plugin.
 | `PurseCheckoutException.ItemNotFulfilled` | `submitPayment` | An item in the split has an incomplete or invalid form (web's `ELEMENT_NOT_FULFILLED`). |
 | `PurseCheckoutException.NoPluginRegistered` | `submitPayment` | No `:partner-ui` plugin for the chosen `(partner, method)`. |
 | `PurseCheckoutException.ValidateFailed` | `submitPayment` | Client-side or API validation step failed. |
+| `PurseCheckoutException.HookFailed` | `submitPayment` (`onBeforeValidate`), coordinators (`onRedirection`) | A merchant hook threw — `hook` names it, `cause` is the merchant's exception. `ON_BEFORE_VALIDATE_HOOK_FAILED` aborts the submit with nothing sent; `POST_VALIDATE_FAILED` (`onRedirection`) opens no redirect. Neither moves the split. |
 | `PurseCheckoutException.NoSecondaryConfig` | `getSecondaryToken` | No `SecondaryConfig` registered for this secondary method. |
 | `PurseCheckoutException.InvalidSecondaryCard` | `getSecondaryToken` | Client-side PAN/CVV validation failed. |
 | `PurseCheckoutException.SecondaryTokenizationFailed` | `getSecondaryToken` | `/init` unsuccessful, or the card carries no balance. |
+| `PurseCheckoutException.MethodNotSimulable` | `simulateLoan` / `simulateLoans` | The method has no `simulable` label (`METHOD_IS_NOT_SIMULABLE`). |
+| `PurseCheckoutException.LoanSimulationFailed` | `simulateLoan` / `simulateLoans` | The simulation API answered without a schedule — no `plugin_result`, or a refusal like `EMPTY_SIMULATION` (`INVALID_LOAN_SIMULATION`; the API's code is on the cause). |
 | `PurseSessionException.SessionMalformed` | `PurseHeadlessCheckout.init` | `widget.data` couldn't be decoded, or is missing required fields. |
 | `PaymentApiException` | Any Payment API call | Network/transport failure, non-2xx/3xx status, or an unusable response body. |
 
@@ -648,6 +808,7 @@ your app's error UI.
 | `PurseEnvironment` | `DEVELOPMENT, TEST, SANDBOX, PRODUCTION` | Each carries its own `paymentApiRoot`. |
 | `PurseSessionParams` | `apiKey, apiUrl, environment, entityId, paymentSession` | The decoded `widget.data`. |
 | `MethodConfiguration` | `stable, template, labels, position, vault, settings` | Raw `configurations` block; `isSecondary` derives from `labels`. |
+| `LoanProduct` / `LoanSimulation` | see [Loan simulation](#loan-simulation-bnpl) | Input and result of `simulateLoan`. |
 | `MethodSettings` | `registrationMode, saveToken, directDebit, paymentMinAmount, paymentMaxAmount, integrationMode, merchantClientId, …` | Per-method settings a UI may want to branch on. |
 
 ---

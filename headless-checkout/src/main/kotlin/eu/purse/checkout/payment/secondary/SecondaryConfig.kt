@@ -2,6 +2,8 @@ package eu.purse.checkout.payment.secondary
 
 import eu.purse.checkout.PurseCheckoutException
 import eu.purse.checkout.payment.item.SecondaryMethod
+import eu.purse.core.api.PaymentApiClient
+import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
 import org.json.JSONObject
@@ -15,6 +17,14 @@ import java.math.BigDecimal
  * `/validate`, and parses the `/init` response into a [SecondaryToken].
  *
  * Secondaries have **no `:partner-ui` plugin** — the whole flow lives here, matching web.
+ *
+ * **This is the public extension point for issuers the SDK doesn't ship.** A host app implements it
+ * for its own gift-card / voucher partner and hands it to [SecondaryConfigs.register] — the
+ * tokenizer, the splitter and the `/validate` pipeline then treat that method exactly like a
+ * built-in one, with no SDK change. Everything has a default except [takePolicy], [requiresCvv]
+ * and [validatePan]; override [parseToken] when the `/init` response isn't the generic card shape,
+ * [shouldPoll] / [pollForToken] when the partner answers `PROCESSING` first, and
+ * [classifyInitError] to map a partner-specific refusal onto a typed exception.
  */
 interface SecondaryConfig {
 
@@ -42,6 +52,28 @@ interface SecondaryConfig {
      */
     fun parseToken(method: SecondaryMethod, initResponse: JSONObject, pan: String, cvv: String?): SecondaryToken =
         parseCardToken(method, initResponse, pan, cvv, takePolicy, nameLogKey)
+
+    /**
+     * Whether a successful `/init` answer is only an acknowledgement that must be polled for the
+     * real token — web's `shouldPoll` (`status.state == SUCCESS && plugin_result.status ==
+     * PROCESSING`). Default: never poll.
+     */
+    fun shouldPoll(initResponse: JSONObject): Boolean = false
+
+    /**
+     * Second phase of a two-step tokenization (web's `pollForToken`): called when [shouldPoll] says
+     * so, with the [api] to re-`/init` against and the wire [initPayload] that was sent. Must
+     * return the final `/init`-shaped response to hand to [parseToken]. Default: [initResponse].
+     */
+    fun pollForToken(api: PaymentApiClient, initResponse: JSONObject, initPayload: JSONObject): JSONObject =
+        initResponse
+
+    /**
+     * Map an unsuccessful `/init` answer onto a partner-specific exception — web's
+     * `classifyInitError`. Return `null` to fall back to the generic
+     * [PurseCheckoutException.SecondaryTokenizationFailed].
+     */
+    fun classifyInitError(initResponse: JSONObject): PurseCheckoutException? = null
 }
 
 /** Illicado gift card — `configs/illicado-config.ts`. */
@@ -79,7 +111,10 @@ object MaxxingConfig : SecondaryConfig {
         val balance = logs?.optString("eligible_euros").orEmpty().toBigDecimalOrNull() ?: BigDecimal.ZERO
         val total = logs?.optString("total_euros").orEmpty().toBigDecimalOrNull() ?: balance
         if (balance.signum() <= 0) {
-            throw PurseCheckoutException.SecondaryTokenizationFailed("loyalty card has no eligible balance")
+            throw PurseCheckoutException.SecondaryTokenizationFailed(
+                "loyalty card has no eligible balance",
+                PurseErrorCode.SECONDARY_TOKEN_EMPTY_BALANCE,
+            )
         }
         return SecondaryToken(
             id = "${method.id}-${pan.takeLast(4)}",
@@ -133,13 +168,19 @@ object Easy2playVoucherConfig : SecondaryConfig {
     override fun buildValidatePaymentData(token: SecondaryToken) = JSONObject().put("voucher_number", token.pan)
 }
 
-/** Resolves the [SecondaryConfig] for a secondary method — web's `configs/configs.ts` registry. */
+/**
+ * Resolves the [SecondaryConfig] for a secondary method — web's `configs/configs.ts` registry, made
+ * **host-extensible**: the shipped partners are registered up front, and a merchant adds an issuer
+ * the SDK doesn't know with [register], keyed by `"{partner}-{method}"` wire values so
+ * [Partner.Other] / [Method.Other] work. Registration is process-wide, like `PluginRegistry` —
+ * do it once at app start.
+ */
 object SecondaryConfigs {
 
     // Keyed by "{partner}-{method}" wire values, exactly as web's SecondarySpecificConfigs.
     // NOTE: `ancv-connect` is intentionally absent — it needs a two-phase (holder → poll) init flow
-    // that isn't implemented yet; see docs/architecture/headless-checkout.md.
-    private val byKey: Map<String, SecondaryConfig> = mapOf(
+    // that isn't implemented yet; a host can supply one through `register` + `pollForToken`.
+    private val builtIn: Map<String, SecondaryConfig> = mapOf(
         "illicado-giftcard" to IllicadoConfig,
         "buybox-giftcard" to BuyboxConfig,
         "maxxing-loyaltycard" to MaxxingConfig,
@@ -149,10 +190,36 @@ object SecondaryConfigs {
         "easy2play-voucher" to Easy2playVoucherConfig,
     )
 
-    fun forMethod(partner: Partner, method: Method): SecondaryConfig? =
-        byKey["${partner.wireValue}-${method.wireValue}"]
+    private val byKey: MutableMap<String, SecondaryConfig> = java.util.concurrent.ConcurrentHashMap(builtIn)
+
+    private fun key(partner: Partner, method: Method) = "${partner.wireValue}-${method.wireValue}"
+
+    fun forMethod(partner: Partner, method: Method): SecondaryConfig? = byKey[key(partner, method)]
 
     fun forMethod(method: SecondaryMethod): SecondaryConfig? = forMethod(method.partner, method.method)
+
+    /**
+     * Register (or replace) the config driving `(partner, method)` — how a host app adds an issuer
+     * that isn't in the catalogue, or overrides a shipped one. Resolution happens per call, so a
+     * checkout that already exists sees it on its next tokenization.
+     */
+    fun register(partner: Partner, method: Method, config: SecondaryConfig) {
+        byKey[key(partner, method)] = config
+    }
+
+    /** Remove a registration (built-in or host-added); [reset] restores the shipped catalogue. */
+    fun unregister(partner: Partner, method: Method) {
+        byKey.remove(key(partner, method))
+    }
+
+    /** Whether any config — shipped or registered — drives `(partner, method)`. */
+    fun isRegistered(partner: Partner, method: Method): Boolean = byKey.containsKey(key(partner, method))
+
+    /** Back to the shipped catalogue only, dropping every host registration. */
+    fun reset() {
+        byKey.clear()
+        byKey.putAll(builtIn)
+    }
 }
 
 // --- shared helpers -------------------------------------------------------------------------------
@@ -189,7 +256,10 @@ internal fun parseCardToken(
     val card = pluginResult.optJSONObject("payment_data")?.optJSONArray("cards")?.optJSONObject(0)
     val balance = card?.let { bigDecimalOrNull(it, "balance") } ?: BigDecimal.ZERO
     if (balance.signum() <= 0) {
-        throw PurseCheckoutException.SecondaryTokenizationFailed("secondary card has no balance")
+        throw PurseCheckoutException.SecondaryTokenizationFailed(
+            "secondary card has no balance",
+            PurseErrorCode.SECONDARY_TOKEN_EMPTY_BALANCE,
+        )
     }
     val name = nameLogKey?.let { pluginResult.optJSONObject("logs")?.optString(it) }.orEmpty()
     return SecondaryToken(

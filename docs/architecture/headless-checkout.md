@@ -68,7 +68,32 @@ suspend fun getSecondaryToken(method: SecondaryMethod, pan: String, cvv: String?
 fun applySecondary(token: SecondaryToken, amount: BigDecimal? = null)
 fun removeSecondary(token: SecondaryToken)
 val appliedSecondaries: List<SecondaryToken>
+// keeping a temporary gift card (web's temporary token `registration`)
+fun registrationOf(token: SecondaryToken): RegistrationState
+fun registerSecondary(token: SecondaryToken, registered: Boolean = true, name: String? = null)
+// saved gift cards (web's `type: 'token'` secondaries)
+val savedSecondaryTokens: StateFlow<List<SavedSecondaryToken>>
+fun applySecondary(token: SavedSecondaryToken, amount: BigDecimal? = null)
+fun removeSecondary(token: SavedSecondaryToken)
+suspend fun editToken(token: SavedSecondaryToken, name: String)
+suspend fun deleteToken(token: SavedSecondaryToken)
 ```
+
+- **Saved gift cards.** A secondary method's `integrated_tokens[]` become `SavedSecondaryToken`
+  items (never `PaymentToken`s — that was a bug the parity pass fixed), exposed on
+  `savedSecondaryTokens` and excluded from `paymentMethods`. The session carries no balance, so the
+  checkout re-`/init`s each one right after construction with its stored `uniqueness_token` +
+  `pin_code` (web's `buildSecondaryPaymentToken`), **sequentially on one IO coroutine** — `InitGuard`
+  coalesces concurrent `/init`s of the same `(partner, method, amount)`, so two saved cards of one
+  issuer fired in parallel would share a single answer. Success fills `balance` /
+  `balanceResolved`; a failure leaves the token listed with `TokenInitFailed` (technically disabled,
+  like web's `TOKEN_INIT_FAILED`); a session-terminal answer terminates the checkout.
+  `applySecondary(saved)` converts through `asSecondaryToken()` (`isSaved = true`) so the splitter
+  and `/validate` pipeline see an ordinary `SecondaryToken`.
+- **Keeping a temporary gift card.** `SecondaryToken` carries its method's `saveTokenMode`;
+  `registerSecondary` records the decision per token id, and `PaymentValidator` adds
+  `payment_preferences.registration` + `payment_data.card.token_label` to that item **only when
+  registered and not already saved** (web's `buildSecondaryValidateItemPayload`).
 
 - **`getSecondaryToken`** POSTs `/init` and returns the balance **without** modifying the split —
   call it alone to just read a balance. `SecondaryToken` carries `balance`, `totalBalance`, `pan`,
@@ -88,8 +113,17 @@ Configs live in `SecondaryConfigs`, keyed by `"{partner}-{method}"` exactly as w
 Ported: `illicado-giftcard`, `buybox-giftcard`, `maxxing-loyaltycard` (non-splittable, balance from
 logs), `ogloba-giftcard`, `mybeezbox-giftcard`, `easy2play-giftcard` (requires CVV), `easy2play-voucher`
 (`voucher_number` body, non-splittable). Each declares its CVV/PAN rules, take policy, and token
-formatter (name log-key / custom parse). **`ancv-connect` is deferred** — it needs a two-phase
-holder→poll `/init` flow. Adding a partner is a new `SecondaryConfig` + registry entry.
+formatter (name log-key / custom parse).
+
+**`SecondaryConfig` is the public extension point.** The registry is host-extensible —
+`SecondaryConfigs.register(partner, method, config)` / `unregister` / `isRegistered` / `reset` —
+keyed by wire values so `Partner.Other` / `Method.Other` work: an issuer that isn't in the catalogue
+is added by the merchant app, with no SDK change, and the tokenizer, saved-token balance resolution
+and `/validate` pipeline resolve it per call like a shipped one. The interface also carries web's
+two-phase hooks — `shouldPoll` / `pollForToken` (a `SUCCESS` that only says `PROCESSING` is polled
+through the config) and `classifyInitError` (a partner refusal → typed exception) — with no-op
+defaults. **`ancv-connect` itself is still not shipped**, but its holder→poll flow is now
+expressible through those hooks rather than blocked on an SDK change.
 
 ## Plugin lifecycle (`:partner-ui`)
 
@@ -226,12 +260,67 @@ payment step. Consequently a `/validate` carrying **no** redirect — the happy 
 plugin — means here that the PSP never handed over a page; the coordinator logs it and says so in its
 summary rather than reporting a silent success.
 
+## Shipped since the POC (web-parity work)
+
+The MVP-parity pass added: suspensions (`stable=false` → `METHOD_UNSTABLE`) and the full
+disabled-state classification sets; the server-clock expiry watchdog (`GET /datetime`);
+`TERMINATED` detection on terminal API answers; the `/init` retry/coalescing guard (web's
+`initGuard`); typed error codes (`PurseErrorCode`) on every checkout exception; the live plugin
+event system (`PluginEvent` sealed class, dispatched by every coordinator, reacted to by the
+checkout, re-exposed on `pluginEvents`); driven lifecycle hooks (`onSessionSet`, `onAmountUpdate`,
+`destroyClient`, `ensureClientCompatibility`); full monitoring parity (`CheckoutEventBus`, all 40
+codes, batched to the same `/widget/headless_checkout` route as web in web's envelope
+`{event, instanceId, entityId, paymentSessionId, version, wrapper, env}` plus `platform: "android"`
+— the top-level field the native SecureFields loggers already send, and the one to filter a
+platform on; `wrapper` keeps web's meaning and is `direct` — flushed on app-background); wallet / saved cards
+(`wallet_session`, `paymentTokens`, pay-with-token, rename/delete/favorite, `SaveTokenMode`
+registration incl. `payment_preferences.registration` + `card.token_label`); saved gift cards
+(`SavedSecondaryToken` / `savedSecondaryTokens`, background balance `/init`, apply/remove,
+rename/delete), keeping a temporary gift card (`registerSecondary`, registration + `token_label` on
+its `/validate` item) and host-registrable issuer configs (`SecondaryConfigs.register`,
+`pollForToken` / `classifyInitError` hooks); merchant hooks
+(`onBeforeValidate` / `onAfterValidate` / `onRedirection` — the last is web's `redirectionHandler`,
+threaded to every coordinator through the `RedirectionDelegate` seam on its host; a throwing hook
+surfaces as a typed `HookFailed` without moving the split or the session state); locale-aware
+overridable card-form texts (`CardFormTexts`, one `FieldTexts` per field: label / placeholder / help
+text / required and format errors, web's `hostedForm` translations as defaults) + a `PurseTheme` with
+web's scopes (`global` / `input` / `label` / `helperText`, `:focus` / `:invalid` / `:valid` variants)
+and web's fallback chain, applied to SecureFields' `VaultStyles` **and** to the SDK's own
+`PurseCardForm` (labels, help texts, error messages around the secure fields — what
+`PaymentElementUi` renders for a card); session refresh (`setSession` — web's `setSession`: a
+primary whose `protocols[partner][method]` is deep-equal survives with its collected data,
+fulfilment gate, registration, live plugin and — beyond web — its place as primary; the rest is
+torn down and gets a new `itemGenerations` generation so `rememberPaymentElement` rebuilds it;
+applied gift cards are dropped; the watchdog restarts; `paymentSession` emits the swap); CDN method
+icons (`PurseAssets`); typed
+payment confirmation (`paymentStatus()` / `awaitPaymentOutcome()` over `sessionTransactions()`);
+and a hardened redirect WebView (progress, first-page watchdog, network-failure surfacing,
+process-death safety); BNPL loan simulation (`PrimaryMethod.simulable` off the `simulable` label,
+`simulateLoan` / `simulateLoans` over the entity-scoped `POST /simulation/…` endpoints, `LoanProduct` /
+`LoanSimulation` mapped as web's `mapPluginResultToSimulation` — counts and amounts, no per-instalment
+dates — and the `METHOD_IS_NOT_SIMULABLE` / `INVALID_LOAN_SIMULATION` codes).
+
+Since then (SDK-12216): **CVV re-entry on a saved card** — `PaymentToken.requiresCvv` (the inverse
+of web's no-CVV gates) arms the per-item fulfillment gate at `setPrimaryToken`, `cardHost(token)`
+puts the card coordinator in `CardCoordinator.Mode.TOKEN_CVV`, which renders a CVV-only
+SecureFields form (`securefields-android` ≥ 1.4.0 omits the `card` object when no PAN field is
+mounted), and the resulting `vault_vendor_token_id` rides alongside `payment_data.token` on
+`/validate` exactly like web's `submitForResult` over a token. A token behind the gates
+(`pay_token_no_cvv` / network token) runs in `Mode.TOKEN_NO_CVV`: no form, payable at selection.
+`rememberPaymentElement(checkout, token)` wraps both behind the element shape.
+
 ## Deferred (intentionally not built yet)
 
 PayPal BNPL ("Pay Later") and PayPal vaulting (the wallet pay-now plugin ships; see
 [docs/plugins/paypal.md](../plugins/paypal.md)), Apple Pay (same shape as Google Pay), the
 `adyen`/`stripe` Google
-Pay gateway builders beyond the `default` fallback, the rendering host (web's `<purse-partner-ui>`
-element) for anything other than the card plugin's own Compose surface, the `ancv-connect`
-two-phase secondary flow, the splitter's voucher→loyalty→primary autofill middleware, and wallet
-(saved-token) sessions.
+Pay gateway builders beyond the `default` fallback, the `ancv-connect`
+two-phase secondary flow, the splitter's voucher→loyalty→primary autofill middleware, and the
+`pci_proxy` vault vendor (only the `purse` vault resolves a card plugin — so a `pci_proxy`-vaulted
+saved token that requires a CVV has no form to collect it on Android yet).
+
+The rendering host (web's `<purse-partner-ui>` element) is **no longer deferred**: the unified
+payment element (`eu.purse.checkout.element.rememberPaymentElement` + `PaymentElementUi`) is its
+Compose analog, dispatching to each plugin's rendered surface — the SecureFields card form, the
+official Google Pay / PayPal buttons, Klarna's native widget — behind one shape and one
+`PaymentElementListener` contract, with launchers and `prepare` wired automatically.
