@@ -1,5 +1,7 @@
 package eu.purse.checkout
 
+import eu.purse.checkout.monitoring.CheckoutEventBus
+import eu.purse.checkout.monitoring.CheckoutEventCode
 import eu.purse.checkout.payment.item.DisabledState
 import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.checkout.state.SessionState
@@ -11,6 +13,7 @@ import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.PluginRegistry
+import eu.purse.partnerui.redirect.RedirectAction
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -205,10 +208,12 @@ class PurseHeadlessCheckoutTest {
     }
 
     @Test
-    fun `a throwing onBeforeValidate hook aborts the submit`() {
+    fun `a throwing onBeforeValidate hook aborts the submit and leaves the checkout submittable`() {
+        var hookCalls = 0
         var hookSplits = -1
         val checkout = checkout(
             hooks = PurseCheckoutHooks(onBeforeValidate = { splits ->
+                hookCalls++
                 hookSplits = splits.size
                 throw IllegalStateException("merchant said no")
             }),
@@ -221,13 +226,96 @@ class PurseHeadlessCheckoutTest {
                 pan = "9250004781234567890", cvv = "123", name = "gift", balance = BigDecimal("10.00"),
             ),
         )
+        val seen = recordEvents()
 
-        val thrown = assertThrows(IllegalStateException::class.java) {
-            runBlocking { checkout.submitPayment() }
+        try {
+            val thrown = assertThrows(PurseCheckoutException.HookFailed::class.java) {
+                runBlocking { checkout.submitPayment() }
+            }
+            // Typed like web's ON_BEFORE_VALIDATE_HOOK_FAILED, the merchant's own exception as cause.
+            assertEquals(PurseErrorCode.ON_BEFORE_VALIDATE_HOOK_FAILED, thrown.code)
+            assertEquals("onBeforeValidate", thrown.hook)
+            assertEquals("merchant said no", thrown.cause?.message)
+            assertEquals(1, hookSplits)
+            assertTrue(seen.contains(CheckoutEventCode.HEADLESS_CHECKOUT_ON_BEFORE_VALIDATE_HOOK_FAILED))
+
+            // Nothing was sent, so nothing moved: split intact, still fulfilled, back to READY …
+            assertEquals(SessionState.READY, checkout.sessionState.value)
+            assertTrue(checkout.isPaymentFulfilled.value)
+            assertEquals(1, checkout.amountSplit.value.size)
+            assertEquals(1, checkout.appliedSecondaries.size)
+
+            // … and a second submit reaches the hook again instead of being refused.
+            assertThrows(PurseCheckoutException.HookFailed::class.java) {
+                runBlocking { checkout.submitPayment() }
+            }
+            assertEquals(2, hookCalls)
+        } finally {
+            seen.stop()
         }
-        assertEquals("merchant said no", thrown.message)
-        assertEquals(1, hookSplits)
-        assertEquals(SessionState.ERROR, checkout.sessionState.value)
+    }
+
+    @Test
+    fun `without an onRedirection hook every host lets the SDK open its own WebView`() {
+        val checkout = checkout()
+        val card = checkout.primaryMethods.single { it.method == Method.CreditCard }
+        val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
+        val action = RedirectAction.Get("https://acs.example/challenge")
+
+        assertFalse(runBlocking { checkout.cardHost(card).delegateRedirection(action) })
+        assertFalse(runBlocking { checkout.paypalHost(paypal).delegateRedirection(action) })
+        assertFalse(runBlocking { checkout.redirectionHost(paypal).delegateRedirection(action) })
+    }
+
+    @Test
+    fun `a handling onRedirection hook takes the redirect over`() {
+        var handed: RedirectAction? = null
+        val checkout = checkout(hooks = PurseCheckoutHooks(onRedirection = { action -> handed = action; true }))
+        val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
+        val action = RedirectAction.PostForm("https://acs.example/challenge", "PaReq=abc")
+
+        assertTrue(runBlocking { checkout.paypalHost(paypal).delegateRedirection(action) })
+        assertEquals(action, handed)
+    }
+
+    @Test
+    fun `a throwing onRedirection hook surfaces typed and leaves the checkout intact`() {
+        val checkout = checkout(
+            hooks = PurseCheckoutHooks(onRedirection = { throw IllegalStateException("no browser available") }),
+        )
+        val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
+        checkout.setPrimary(paypal)
+        val seen = recordEvents()
+
+        try {
+            val thrown = assertThrows(PurseCheckoutException.HookFailed::class.java) {
+                runBlocking {
+                    checkout.paypalHost(paypal).delegateRedirection(RedirectAction.Get("https://acs.example/challenge"))
+                }
+            }
+            assertEquals(PurseErrorCode.POST_VALIDATE_FAILED, thrown.code)
+            assertEquals("onRedirection", thrown.hook)
+            assertEquals("no browser available", thrown.cause?.message)
+            assertTrue(seen.contains(CheckoutEventCode.HEADLESS_CHECKOUT_CLIENT_HOOK_ERROR))
+
+            // The hook failing is the merchant's problem, not the split's.
+            assertTrue(checkout.isPaymentFulfilled.value)
+            assertEquals(paypal.id, checkout.amountSplit.value.single().source.id)
+            assertEquals(SessionState.READY, checkout.sessionState.value)
+        } finally {
+            seen.stop()
+        }
+    }
+
+    /** Every code posted on the (singleton) monitoring bus from now until [RecordedEvents.stop]. */
+    private class RecordedEvents(private val codes: MutableList<CheckoutEventCode>, val stop: () -> Unit) {
+        fun contains(code: CheckoutEventCode) = codes.contains(code)
+    }
+
+    private fun recordEvents(): RecordedEvents {
+        val codes = mutableListOf<CheckoutEventCode>()
+        val unsubscribe = CheckoutEventBus.getInstance().subscribe(CheckoutEventBus.Scope.ALL) { codes.add(it.code) }
+        return RecordedEvents(codes, unsubscribe)
     }
 
     @Test

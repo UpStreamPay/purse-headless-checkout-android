@@ -37,6 +37,15 @@ sealed class PurseCheckoutException(
     class NoPluginRegistered(message: String) :
         PurseCheckoutException(message, PurseErrorCode.METHOD_NOT_IMPLEMENTED)
 
+    /**
+     * A merchant hook ([PurseCheckoutHooks]) threw. [hook] names it (`onBeforeValidate`,
+     * `onRedirection`); the merchant's own exception is the [cause]. `onBeforeValidate` carries
+     * web's `ON_BEFORE_VALIDATE_HOOK_FAILED`; `onRedirection` — which web has no dedicated code
+     * for, its handler runs inside `postValidation` — carries `POST_VALIDATE_FAILED`.
+     */
+    class HookFailed(val hook: String, cause: Throwable, code: PurseErrorCode) :
+        PurseCheckoutException("$hook hook failed: ${cause.message}", code, cause)
+
     /** A client-side or API validation step failed during "create payment". */
     class ValidateFailed(
         message: String,

@@ -34,6 +34,7 @@ import eu.purse.partnerui.plugins.generics.redirection.RedirectionHost
 import eu.purse.partnerui.plugins.partners.klarna.KlarnaHost
 import eu.purse.partnerui.plugins.partners.paypal.wallet.PaypalHost
 import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardHost
+import eu.purse.partnerui.redirect.RedirectAction
 import eu.purse.checkout.confirmation.PaymentSessionStatus
 import eu.purse.checkout.monitoring.CheckoutEventBus
 import eu.purse.checkout.monitoring.CheckoutEventCode
@@ -755,6 +756,8 @@ class PurseHeadlessCheckout private constructor(
             override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
             override fun setAsPrimary() = makePrimary(item)
             override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+            override suspend fun delegateRedirection(action: RedirectAction) =
+                this@PurseHeadlessCheckout.delegateRedirection(action)
         }
     }
 
@@ -771,6 +774,8 @@ class PurseHeadlessCheckout private constructor(
             override fun buildContext() = pluginContext(item)
             override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
             override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+            override suspend fun delegateRedirection(action: RedirectAction) =
+                this@PurseHeadlessCheckout.delegateRedirection(action)
         }
     }
 
@@ -791,6 +796,8 @@ class PurseHeadlessCheckout private constructor(
             override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
             override fun setAsPrimary() = makePrimary(item)
             override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+            override suspend fun delegateRedirection(action: RedirectAction) =
+                this@PurseHeadlessCheckout.delegateRedirection(action)
         }
     }
 
@@ -809,6 +816,8 @@ class PurseHeadlessCheckout private constructor(
             override fun buildContext() = pluginContext(item)
             override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
             override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+            override suspend fun delegateRedirection(action: RedirectAction) =
+                this@PurseHeadlessCheckout.delegateRedirection(action)
         }
     }
 
@@ -828,6 +837,29 @@ class PurseHeadlessCheckout private constructor(
             override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
             override fun setFulfilled(fulfilled: Boolean) = setFulfilled(item, fulfilled)
             override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
+            override suspend fun delegateRedirection(action: RedirectAction) =
+                this@PurseHeadlessCheckout.delegateRedirection(action)
+        }
+    }
+
+    /**
+     * The merchant's [PurseCheckoutHooks.onRedirection] hook, as every coordinator host sees it
+     * (`RedirectionDelegate`). No hook → `false` (the SDK opens its WebView). A throwing hook is
+     * reported as `HEADLESS_CHECKOUT_CLIENT_HOOK_ERROR` and rethrown typed, so the coordinator opens
+     * nothing and surfaces the failure without the checkout's own state having moved — web runs its
+     * `redirectionHandler` inside `postValidation`, hence `POST_VALIDATE_FAILED`.
+     */
+    private suspend fun delegateRedirection(action: RedirectAction): Boolean {
+        val hook = hooks?.onRedirection ?: return false
+        return try {
+            hook(action)
+        } catch (e: Exception) {
+            bus.post(
+                CheckoutEventCode.HEADLESS_CHECKOUT_CLIENT_HOOK_ERROR,
+                EventLevel.ERROR,
+                monitoringPayload("hook" to "onRedirection", "message" to e.message),
+            )
+            throw PurseCheckoutException.HookFailed("onRedirection", e, PurseErrorCode.POST_VALIDATE_FAILED)
         }
     }
 
@@ -879,8 +911,13 @@ class PurseHeadlessCheckout private constructor(
             )
             result
         } catch (e: Throwable) {
-            _sessionState.value =
-                if (e.sessionTerminal()) SessionState.TERMINATED else SessionState.ERROR
+            _sessionState.value = when {
+                e.sessionTerminal() -> SessionState.TERMINATED
+                // A merchant onBeforeValidate hook aborted the submit before anything was sent:
+                // no payment was attempted, so the checkout is exactly as submittable as before.
+                e is PurseCheckoutException.HookFailed -> SessionState.READY
+                else -> SessionState.ERROR
+            }
             bus.post(
                 CheckoutEventCode.HEADLESS_CHECKOUT_PAYMENT_ERROR,
                 EventLevel.ERROR,
