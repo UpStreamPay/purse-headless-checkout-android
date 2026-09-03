@@ -619,6 +619,23 @@ class PurseHeadlessCheckoutTest {
     @Before
     fun resetInitGuard() = InitGuard.reset()
 
+    /**
+     * A checkout on the saved-gift-card fixture whose background balance `/init` is answered by a
+     * throwaway fake with a definitive, non-terminal 400 (the fake's default 404 carries `NOT_FOUND`,
+     * which the SDK reads as session-terminal), and waited for — so the token is settled (disabled
+     * `TOKEN_INIT_FAILED`) before the test body runs and nothing lingers past the test.
+     */
+    private fun savedGiftCardCheckoutOffline(): PurseHeadlessCheckout {
+        val api = FakePaymentApi()
+        api.on("init") { 400 to FakePaymentApi.failedInit("offline fixture", errorCode = "OFFLINE_FIXTURE") }
+        val checkout = checkout(
+            widgetData = CheckoutTestSessions.widgetData(CheckoutTestSessions.sessionWithSavedGiftCard(), api.apiRoot),
+        )
+        awaitUntil { checkout.savedSecondaryTokens.value.single().let { it.balanceResolved || it.disabled != null } }
+        api.close()
+        return checkout
+    }
+
     /** Poll [condition] on the checkout's flows — its saved-token `/init` runs on a background IO coroutine. */
     private fun awaitUntil(timeoutMs: Long = 5_000, condition: () -> Boolean) {
         val deadline = System.currentTimeMillis() + timeoutMs
@@ -732,7 +749,9 @@ class PurseHeadlessCheckoutTest {
 
     @Test
     fun `managing a saved gift card requires a wallet session`() {
-        val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(CheckoutTestSessions.sessionWithSavedGiftCard()))
+        // Route the background balance /init at a fake so this network-free test never reaches the
+        // real sandbox host (whose slow transport failure would leak into the next test's guard).
+        val checkout = savedGiftCardCheckoutOffline()
         val saved = checkout.savedSecondaryTokens.value.single()
 
         val rename = assertThrows(PurseCheckoutException.WalletOperationFailed::class.java) {
@@ -747,7 +766,9 @@ class PurseHeadlessCheckoutTest {
 
     @Test
     fun `a saved gift card's name counts towards label uniqueness`() {
-        val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(CheckoutTestSessions.sessionWithSavedGiftCard()))
+        // Route the background balance /init at a fake so this network-free test never reaches the
+        // real sandbox host (whose slow transport failure would leak into the next test's guard).
+        val checkout = savedGiftCardCheckoutOffline()
         val card = checkout.primaryMethods.single { it.method == Method.CreditCard }
 
         // "birthday card" is the saved gift card's name (the fixture carries no display_token).
@@ -807,7 +828,9 @@ class PurseHeadlessCheckoutTest {
 
     @Test
     fun `a saved gift card is never registered again`() {
-        val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(CheckoutTestSessions.sessionWithSavedGiftCard()))
+        // Route the background balance /init at a fake so this network-free test never reaches the
+        // real sandbox host (whose slow transport failure would leak into the next test's guard).
+        val checkout = savedGiftCardCheckoutOffline()
         val saved = checkout.savedSecondaryTokens.value.single().asSecondaryToken()
 
         assertFalse(saved.canBeRegistered)
