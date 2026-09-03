@@ -435,6 +435,69 @@ primary is needed — `isPaymentFulfilled` flips to `true` on its own and `submi
 the gift-card items alone. Non-splittable instruments (loyalty) always take their maximum;
 per-session usage limits and balances are enforced by the splitter.
 
+**Keep the gift card for next time** — when the method's `save_token_mode` lets the shopper
+choose (`PREFER` / `PREFER_NO`), offer a "save" box; the decision rides that card's own
+`/validate` item (`payment_preferences.registration` + `payment_data.card.token_label`):
+
+```kotlin
+if (token.canBeRegistered) {                                  // never true for a saved card
+    saveBox.isChecked = checkout.registrationOf(token).registered   // default from save_token_mode
+    saveBox.setOnCheckedChangeListener { _, checked ->
+        checkout.registerSecondary(token, registered = checked, name = "gift one")
+        // throws WalletOperationFailed(INVALID_TOKEN_NAME / TOKEN_NAME_EXISTS) on a bad label
+    }
+}
+checkout.applySecondary(token)
+```
+
+**Saved gift cards** — a session whose secondary method carries `integrated_tokens` surfaces them
+on `savedSecondaryTokens`. The session has no balance for them, so the SDK `/init`s each one in the
+background right after `init`; render "checking…" until `balanceResolved`, and one tap draws the
+card in — no number or CVC to type:
+
+```kotlin
+lifecycleScope.launch {
+    checkout.savedSecondaryTokens.collect { saved ->
+        savedGiftCards.render(
+            saved.map { card ->
+                SavedGiftCardRow(
+                    label = card.name.ifBlank { "•••• ${card.pan.takeLast(4)}" },
+                    balance = card.balance.takeIf { card.balanceResolved },   // null → "checking…"
+                    unavailable = card.disabled != null,                     // TokenInitFailed: stays listed, dimmed
+                    onUse = { checkout.applySecondary(card) },               // as much as the order needs
+                    onRemove = { checkout.removeSecondary(card) },
+                )
+            },
+        )
+    }
+}
+```
+
+`applySecondary(saved)` throws `SecondaryTokenizationFailed(SECONDARY_TOKEN_EMPTY_BALANCE)` while
+the balance isn't in yet (or is zero), and `(FAILED_TO_INIT_SECONDARY_TOKEN)` when the card's own
+`/init` failed. Rename / delete go through the wallet, exactly like saved cards (§11):
+`checkout.editToken(saved, "work card")` / `checkout.deleteToken(saved)` — a `wallet_session` is
+required, otherwise `WalletOperationFailed(MISSING_WALLET_SESSION)`.
+
+**An issuer the SDK doesn't ship** — implement `SecondaryConfig` and register it once at app
+start; `Partner.Other` / `Method.Other` carry the wire values the session uses:
+
+```kotlin
+object AcmeVoucherConfig : SecondaryConfig {
+    override val takePolicy = SecondaryTakePolicy.MAX                 // non-splittable
+    override fun requiresCvv(pan: String) = false
+    override fun validatePan(pan: String) = pan.startsWith("ACME-")
+    override fun buildInitPaymentData(pan: String, cvv: String?) = JSONObject().put("voucher_code", pan)
+    override fun buildValidatePaymentData(token: SecondaryToken) = JSONObject().put("voucher_code", token.pan)
+    // Optional: shouldPoll / pollForToken for a two-phase partner, classifyInitError for typed refusals,
+    // parseToken when the /init response isn't the generic `payment_data.cards[0].balance` shape.
+}
+
+SecondaryConfigs.register(Partner.Other("acme"), Method.Other("voucher"), AcmeVoucherConfig)
+// From here on, `secondaryConfig`, `getSecondaryToken`, saved-token balances and /validate items
+// for acme/voucher all go through AcmeVoucherConfig — no SDK change.
+```
+
 ---
 
 ## 11. Saved cards (wallet)

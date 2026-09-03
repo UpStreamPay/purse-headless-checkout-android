@@ -68,7 +68,32 @@ suspend fun getSecondaryToken(method: SecondaryMethod, pan: String, cvv: String?
 fun applySecondary(token: SecondaryToken, amount: BigDecimal? = null)
 fun removeSecondary(token: SecondaryToken)
 val appliedSecondaries: List<SecondaryToken>
+// keeping a temporary gift card (web's temporary token `registration`)
+fun registrationOf(token: SecondaryToken): RegistrationState
+fun registerSecondary(token: SecondaryToken, registered: Boolean = true, name: String? = null)
+// saved gift cards (web's `type: 'token'` secondaries)
+val savedSecondaryTokens: StateFlow<List<SavedSecondaryToken>>
+fun applySecondary(token: SavedSecondaryToken, amount: BigDecimal? = null)
+fun removeSecondary(token: SavedSecondaryToken)
+suspend fun editToken(token: SavedSecondaryToken, name: String)
+suspend fun deleteToken(token: SavedSecondaryToken)
 ```
+
+- **Saved gift cards.** A secondary method's `integrated_tokens[]` become `SavedSecondaryToken`
+  items (never `PaymentToken`s — that was a bug the parity pass fixed), exposed on
+  `savedSecondaryTokens` and excluded from `paymentMethods`. The session carries no balance, so the
+  checkout re-`/init`s each one right after construction with its stored `uniqueness_token` +
+  `pin_code` (web's `buildSecondaryPaymentToken`), **sequentially on one IO coroutine** — `InitGuard`
+  coalesces concurrent `/init`s of the same `(partner, method, amount)`, so two saved cards of one
+  issuer fired in parallel would share a single answer. Success fills `balance` /
+  `balanceResolved`; a failure leaves the token listed with `TokenInitFailed` (technically disabled,
+  like web's `TOKEN_INIT_FAILED`); a session-terminal answer terminates the checkout.
+  `applySecondary(saved)` converts through `asSecondaryToken()` (`isSaved = true`) so the splitter
+  and `/validate` pipeline see an ordinary `SecondaryToken`.
+- **Keeping a temporary gift card.** `SecondaryToken` carries its method's `saveTokenMode`;
+  `registerSecondary` records the decision per token id, and `PaymentValidator` adds
+  `payment_preferences.registration` + `payment_data.card.token_label` to that item **only when
+  registered and not already saved** (web's `buildSecondaryValidateItemPayload`).
 
 - **`getSecondaryToken`** POSTs `/init` and returns the balance **without** modifying the split —
   call it alone to just read a balance. `SecondaryToken` carries `balance`, `totalBalance`, `pan`,
@@ -88,8 +113,17 @@ Configs live in `SecondaryConfigs`, keyed by `"{partner}-{method}"` exactly as w
 Ported: `illicado-giftcard`, `buybox-giftcard`, `maxxing-loyaltycard` (non-splittable, balance from
 logs), `ogloba-giftcard`, `mybeezbox-giftcard`, `easy2play-giftcard` (requires CVV), `easy2play-voucher`
 (`voucher_number` body, non-splittable). Each declares its CVV/PAN rules, take policy, and token
-formatter (name log-key / custom parse). **`ancv-connect` is deferred** — it needs a two-phase
-holder→poll `/init` flow. Adding a partner is a new `SecondaryConfig` + registry entry.
+formatter (name log-key / custom parse).
+
+**`SecondaryConfig` is the public extension point.** The registry is host-extensible —
+`SecondaryConfigs.register(partner, method, config)` / `unregister` / `isRegistered` / `reset` —
+keyed by wire values so `Partner.Other` / `Method.Other` work: an issuer that isn't in the catalogue
+is added by the merchant app, with no SDK change, and the tokenizer, saved-token balance resolution
+and `/validate` pipeline resolve it per call like a shipped one. The interface also carries web's
+two-phase hooks — `shouldPoll` / `pollForToken` (a `SUCCESS` that only says `PROCESSING` is polled
+through the config) and `classifyInitError` (a partner refusal → typed exception) — with no-op
+defaults. **`ancv-connect` itself is still not shipped**, but its holder→poll flow is now
+expressible through those hooks rather than blocked on an SDK change.
 
 ## Plugin lifecycle (`:partner-ui`)
 
@@ -237,7 +271,11 @@ checkout, re-exposed on `pluginEvents`); driven lifecycle hooks (`onSessionSet`,
 `destroyClient`, `ensureClientCompatibility`); full monitoring parity (`CheckoutEventBus`, all 40
 codes, batched to `/widget/headless_checkout`, flushed on app-background); wallet / saved cards
 (`wallet_session`, `paymentTokens`, pay-with-token, rename/delete/favorite, `SaveTokenMode`
-registration incl. `payment_preferences.registration` + `card.token_label`); merchant hooks
+registration incl. `payment_preferences.registration` + `card.token_label`); saved gift cards
+(`SavedSecondaryToken` / `savedSecondaryTokens`, background balance `/init`, apply/remove,
+rename/delete), keeping a temporary gift card (`registerSecondary`, registration + `token_label` on
+its `/validate` item) and host-registrable issuer configs (`SecondaryConfigs.register`,
+`pollForToken` / `classifyInitError` hooks); merchant hooks
 (`onBeforeValidate` / `onAfterValidate` / `onRedirection` — the last is web's `redirectionHandler`,
 threaded to every coordinator through the `RedirectionDelegate` seam on its host; a throwing hook
 surfaces as a typed `HookFailed` without moving the split or the session state); locale-aware

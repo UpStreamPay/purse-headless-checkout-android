@@ -134,14 +134,29 @@ One `protocols.{partner}.{method}` entry. `id` follows web's `"{partner}-{method
 | `isSecondary` | `Boolean` | `true` for `SecondaryMethod`. |
 | `minAmount` / `maxAmount` | `BigDecimal?` | From `configuration.settings`. |
 
-Two concrete subtypes:
+Four concrete subtypes:
 
 **`PrimaryMethod`** — exactly one covers the amount left after secondaries.
 - `integrationType: IntegrationMode?` — `redirection` / `popup`, from `merchant_specifics`.
 - `supportedBrands: List<CardBrand>` — card schemes accepted; empty when not vaulted.
 
-**`SecondaryMethod`** — a co-payment method (gift card, voucher, loyalty). No extra fields beyond
-the base `PaymentItem`.
+**`SecondaryMethod`** — a co-payment method (gift card, voucher, loyalty).
+- `saveTokenMode: SaveTokenMode` / `canBeRegistered: Boolean` — whether a gift card typed for this
+  method can be kept for the next session (see `registerSecondary`).
+
+**`PaymentToken`** — a saved *card* (card-on-file) under a primary method; can be the split's
+primary. Exposed on `paymentTokens`, never on `paymentMethods` — see §7.
+
+**`SavedSecondaryToken`** — a saved *gift card / voucher* under a secondary method (web's
+`type: 'token'` secondary). Exposed on `savedSecondaryTokens`, never on `paymentMethods`.
+- `pan` / `cvv` — the stored `uniqueness_token` / `pin_code` the partner re-initialises with.
+- `name`, `expirationDate`, `createdAt`, `favorite` — display metadata.
+- `balance` / `totalBalance` / `balanceResolved` — the session carries no balance, so the SDK
+  `/init`s each saved card in the background right after construction; `balanceResolved` flips to
+  `true` when it lands. A failed `/init` leaves the token listed with
+  `disabled = DisabledState.TokenInitFailed`.
+- `takePolicy` — from the method's `SecondaryConfig`.
+- `asSecondaryToken()` — the splitter-side instrument (`isSaved = true`).
 
 ### `DisabledState` (sealed)
 
@@ -174,11 +189,17 @@ or an applied `SecondaryToken`). The full list is what `submitPayment` sends to 
 | `primaryMethods` | `List<PrimaryMethod>` | Filtered view of `paymentMethods.value`. |
 | `secondaryMethods` | `List<SecondaryMethod>` | Filtered view of `paymentMethods.value`. |
 | `setPrimary` | `fun setPrimary(method: PrimaryMethod?)` | Choose (or clear, with `null`) the primary covering the remaining amount. Triggers a `refresh()` of all reactive state. |
-| `secondaryConfig` | `fun secondaryConfig(method: SecondaryMethod): SecondaryConfig?` | The per-partner form/take-policy rules for a secondary method — `null` if none registered (e.g. `ancv-connect`, not ported yet). |
+| `secondaryConfig` | `fun secondaryConfig(method: SecondaryMethod): SecondaryConfig?` | The per-partner form/take-policy rules for a secondary method — `null` if none registered (shipped or via `SecondaryConfigs.register`; e.g. `ancv-connect` is not shipped). |
 | `getSecondaryToken` | `suspend fun getSecondaryToken(method: SecondaryMethod, pan: String, cvv: String? = null): SecondaryToken` | `POST /init` — tokenizes a card and returns its balance **without** touching the split. Validate PAN/CVV via `secondaryConfig` first. |
 | `applySecondary` | `fun applySecondary(token: SecondaryToken, amount: BigDecimal? = null)` | Draws an already-tokenized `token` into the split, clamped to `min(amount, balance, remaining, limit)`. `amount == null` takes as much as the order needs. |
 | `removeSecondary` | `fun removeSecondary(token: SecondaryToken)` | Removes a previously applied token from the split. |
 | `appliedSecondaries` | `List<SecondaryToken>` | Applied tokens, in the order they were added. |
+| `registrationOf` | `fun registrationOf(token: SecondaryToken): RegistrationState` | The save decision for a **temporary** gift card — defaults from its method's `SaveTokenMode`; always `registered = false` for a saved one. |
+| `registerSecondary` | `fun registerSecondary(token: SecondaryToken, registered: Boolean = true, name: String? = null)` | Ask to keep a temporary gift card (optionally named) — travels into that card's `/validate` item as `payment_preferences.registration` + `payment_data.card.token_label`. Throws `WalletOperationFailed(TOKEN_NOT_REGISTERABLE / INVALID_TOKEN_NAME / TOKEN_NAME_EXISTS)`. |
+| `savedSecondaryTokens` | `StateFlow<List<SavedSecondaryToken>>` | The session's saved gift cards, balances resolving in the background. |
+| `applySecondary` | `fun applySecondary(token: SavedSecondaryToken, amount: BigDecimal? = null)` | Draws a saved gift card in (latest state is used, a stale instance is fine). Throws `SecondaryTokenizationFailed(SECONDARY_TOKEN_EMPTY_BALANCE)` while unresolved / empty, `(FAILED_TO_INIT_SECONDARY_TOKEN)` when its `/init` failed. |
+| `removeSecondary` | `fun removeSecondary(token: SavedSecondaryToken)` | Puts a saved gift card's amount back. |
+| `editToken` / `deleteToken` | `suspend fun editToken(token: SavedSecondaryToken, name: String)` / `suspend fun deleteToken(token: SavedSecondaryToken)` | Rename / delete a saved gift card through the wallet — same rules and errors as the card overloads (§7). Delete also clears it from the split. |
 
 **`getSecondaryToken` throws:**
 - `PurseCheckoutException.NoSecondaryConfig` — no config registered for this `(partner, method)`.
@@ -198,27 +219,49 @@ data class SecondaryToken(
     val balance: BigDecimal, val totalBalance: BigDecimal = balance,
     val expirationDate: String = "", val takePolicy: SecondaryTakePolicy = SecondaryTakePolicy.NONE,
     val limit: BigDecimal? = null,
-)
+    val saveTokenMode: SaveTokenMode = SaveTokenMode.NEVER, val isSaved: Boolean = false,
+) { val canBeRegistered: Boolean }
 ```
 
 `balance` is what's spendable now; `totalBalance` is the full instrument balance when a partner
 distinguishes it. `takePolicy` is `NONE` (splittable — `applySecondary`'s `amount` caps the draw)
-or `MAX` (non-splittable — always takes the full cap regardless of `amount`).
+or `MAX` (non-splittable — always takes the full cap regardless of `amount`). `saveTokenMode` is
+the method's effective save-token policy (set by `getSecondaryToken`); `canBeRegistered` is `true`
+for a temporary token under `PREFER` / `PREFER_NO`, never for a saved one (`isSaved`).
 
-### `SecondaryConfig`
+### `SecondaryConfig` — also the extension point for issuers the SDK doesn't ship
 
-The interface a merchant's form UI queries to drive validation before calling `getSecondaryToken`:
+The interface a merchant's form UI queries to drive validation before calling `getSecondaryToken`,
+and what the SDK itself uses to build `/init` / `/validate` bodies and read balances:
 
 | Member | Meaning |
 |---|---|
-| `takePolicy: SecondaryTakePolicy` | `NONE` / `MAX` — see above. |
-| `requiresCvv(pan: String): Boolean` | Whether to show/require a CVV field for this PAN. |
-| `validatePan(pan: String): Boolean` | Client-side PAN format check. |
+| `takePolicy: SecondaryTakePolicy` | `NONE` / `MAX` — see above. **Required.** |
+| `requiresCvv(pan: String): Boolean` | Whether to show/require a CVV field for this PAN. **Required.** |
+| `validatePan(pan: String): Boolean` | Client-side PAN format check. **Required.** |
 | `validateCvv(cvv: String): Boolean` | Client-side CVV format check (default: always valid). |
+| `nameLogKey: String?` | `plugin_result.logs` key holding the display label (default parse). |
+| `buildInitPaymentData(pan, cvv)` / `buildValidatePaymentData(token)` | `payment_data` bodies (default: `{ card: { number, csc } }`). |
+| `parseToken(method, initResponse, pan, cvv)` | `/init` response → `SecondaryToken` (default: generic card shape). |
+| `shouldPoll(initResponse)` / `pollForToken(api, initResponse, initPayload)` | Two-phase partners: a `SUCCESS` that only says `PROCESSING` is polled through the config (default: never). |
+| `classifyInitError(initResponse): PurseCheckoutException?` | Map a partner refusal onto a typed exception (default: generic `SecondaryTokenizationFailed`). |
 
-Registered partners today: `illicado-giftcard`, `buybox-giftcard`, `maxxing-loyaltycard`,
+Shipped partners: `illicado-giftcard`, `buybox-giftcard`, `maxxing-loyaltycard`,
 `ogloba-giftcard`, `mybeezbox-giftcard`, `easy2play-giftcard`, `easy2play-voucher`.
-`ancv-connect` is not yet registered (needs a two-phase holder→poll `/init` flow).
+`ancv-connect` is not shipped (its two-phase holder→poll flow is exactly what `pollForToken` is
+for — a host can register one).
+
+**Adding an issuer without changing the SDK** — `SecondaryConfigs` is a process-wide registry:
+
+| Function | Notes |
+|---|---|
+| `SecondaryConfigs.register(partner: Partner, method: Method, config: SecondaryConfig)` | Register (or override) the config for `(partner, method)`; `Partner.Other("acme")` / `Method.Other("voucher")` work — the key is the wire values. Do it once at app start. |
+| `SecondaryConfigs.unregister(partner, method)` | Drop a registration (shipped or host-added). |
+| `SecondaryConfigs.isRegistered(partner, method)` / `forMethod(...)` | Query. |
+| `SecondaryConfigs.reset()` | Back to the shipped catalogue only. |
+
+Once registered, that method's `secondaryConfig(...)`, `getSecondaryToken(...)`, saved-token balance
+resolution and `/validate` items all go through it — same as a built-in.
 
 ### Loan simulation (BNPL)
 
