@@ -80,4 +80,17 @@ class CardMapperTest {
         assertEquals("VISA", data.getJSONObject("card").getString("selected_network"))
         assertTrue("no fresh vault token when paying a saved one", !data.has("vault_vendor_token_id"))
     }
+
+    @Test
+    fun `token payment data pairs the CVV-only vault token with the saved token like web submitForResult`() {
+        val data = CardMapper.buildTokenPaymentData(
+            eu.purse.partnerui.PayToken(value = "tok-value-1", selectedNetwork = "VISA", requiresCvv = true),
+            vaultVendorTokenId = "cvv-vault-token",
+        )
+
+        assertEquals("tok-value-1", data.getString("token"))
+        assertEquals("cvv-vault-token", data.getString("vault_vendor_token_id"))
+        assertEquals("purse", data.getString("vault_vendor"))
+        assertEquals("VISA", data.getJSONObject("card").getString("selected_network"))
+    }
 }

@@ -12,6 +12,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.res.stringResource
 import eu.purse.core.environment.PurseEnvironment
+import eu.purse.partnerui.PayToken
 import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.PurseTheme
@@ -53,11 +54,17 @@ import kotlinx.coroutines.withContext
  * `rememberLauncherForActivityResult` handles the 3-D Secure redirect launcher's lifecycle without
  * the "construct in `onCreate`, before STARTED" caveat those two imperative coordinators carry.
  *
- * Render the returned [CardCoordinator]'s [CardCoordinator.sdk] with SecureFields' own `VaultForm`
- * (or `VaultField` per field, for a custom layout), and call [CardCoordinator.submit] from your own
- * "Pay" button's `onClick` once [CardCoordinator.formValid] is `true`.
+ * The host decides which of three shapes the flow takes — see [CardCoordinator.Mode]: a **fresh
+ * card** (the full form), a **saved card that still needs its CVV** (a CVV-only form, web's
+ * `cvvOnly` hosted fields), or a **saved card that pays without one** (no form at all — web's
+ * no-CVV gates). The host's `buildContext().token` (and its `requiresCvv`) is what selects it.
  *
- * That last condition is enforced, not just advised: mounting this form reports the item unfulfilled
+ * Render the returned [CardCoordinator]'s [CardCoordinator.sdk] with SecureFields' own `VaultForm`
+ * (or `VaultField` per field, for a custom layout) whenever [CardCoordinator.mode] renders a form,
+ * and call [CardCoordinator.submit] from your own "Pay" button's `onClick` once
+ * [CardCoordinator.formValid] is `true`.
+ *
+ * That last condition is enforced, not just advised: mounting a form reports the item unfulfilled
  * through [CardHost.setFulfilled], so `PurseHeadlessCheckout.isPaymentFulfilled` is `false` — and
  * `submitPayment` throws `ItemNotFulfilled` — until the form is complete and valid.
  */
@@ -65,6 +72,9 @@ import kotlinx.coroutines.withContext
 fun rememberCardCoordinator(host: CardHost, listener: PaymentElementListener): CardCoordinator {
     val scope = rememberCoroutineScope()
     val partnerWireValue = remember(host) { host.buildContext().partner.wireValue }
+    // The saved card this host pays with, if any — decides the mode (see CardCoordinator.Mode).
+    val payToken = remember(host) { host.buildContext().token }
+    val mode = remember(payToken) { CardCoordinator.Mode.of(payToken) }
 
     val redirectLauncher = rememberLauncherForActivityResult(RedirectionCheckoutContract()) { result ->
         when (result) {
@@ -77,12 +87,17 @@ fun rememberCardCoordinator(host: CardHost, listener: PaymentElementListener): C
         }
     }
 
-    val brands = remember(host.supportedBrands) {
-        // Session's supported_brands (CardBrand) → SecureFields' Brand; fall back to a sane default.
-        host.supportedBrands.map { Brand.fromString(it.wireValue) }
-            .filter { it != Brand.UNKNOWN }
-            .distinct()
-            .ifEmpty { listOf(Brand.VISA, Brand.MASTERCARD, Brand.CARTE_BANCAIRE) }
+    val brands = remember(host.supportedBrands, payToken) {
+        // A saved card's own scheme first (the CVV-only form has no PAN to detect a brand from);
+        // otherwise the session's supported_brands (CardBrand) → SecureFields' Brand, with a sane
+        // default when the session names none.
+        val tokenBrand = payToken?.selectedNetwork?.let { Brand.fromString(it) }?.takeIf { it != Brand.UNKNOWN }
+        listOfNotNull(tokenBrand).ifEmpty {
+            host.supportedBrands.map { Brand.fromString(it.wireValue) }
+                .filter { it != Brand.UNKNOWN }
+                .distinct()
+                .ifEmpty { listOf(Brand.VISA, Brand.MASTERCARD, Brand.CARTE_BANCAIRE) }
+        }
     }
     // Placeholder copy: merchant overrides (PluginOptions.cardFormTexts) win; otherwise the SDK's
     // localized resources (values/, values-fr/, …) — web's HostedFormUIOptions-over-translations.
@@ -96,19 +111,27 @@ fun rememberCardCoordinator(host: CardHost, listener: PaymentElementListener): C
     val holderNamePlaceholder =
         texts.holderNamePlaceholder ?: stringResource(R.string.purse_card_holder_name_placeholder)
     val config = remember(
-        brands, cardNumberPlaceholder, expDatePlaceholder, cvvPlaceholder, holderNamePlaceholder, options.theme,
+        brands, mode, cardNumberPlaceholder, expDatePlaceholder, cvvPlaceholder, holderNamePlaceholder, options.theme,
     ) {
         SecureFieldsConfig(
             brands = brands,
-            fields = SecureFieldsFieldsConfig(
-                // No `view` targets — SecureFields builds its own composited form (`sdk.formView`)
-                // for `VaultForm`/`VaultField` to host, instead of the View-system's per-field
-                // `VaultFieldView` targets.
-                cardNumber = VaultFieldConfig(placeholder = cardNumberPlaceholder),
-                expDate = VaultFieldConfig(placeholder = expDatePlaceholder),
-                cvv = VaultFieldConfig(placeholder = cvvPlaceholder),
-                holderName = VaultFieldConfig(placeholder = holderNamePlaceholder),
-            ),
+            // No `view` targets — SecureFields builds its own composited form (`sdk.formView`) for
+            // `VaultForm`/`VaultField` to host, instead of the View-system's per-field
+            // `VaultFieldView` targets.
+            fields = when (mode) {
+                CardCoordinator.Mode.FRESH_CARD -> SecureFieldsFieldsConfig(
+                    cardNumber = VaultFieldConfig(placeholder = cardNumberPlaceholder),
+                    expDate = VaultFieldConfig(placeholder = expDatePlaceholder),
+                    cvv = VaultFieldConfig(placeholder = cvvPlaceholder),
+                    holderName = VaultFieldConfig(placeholder = holderNamePlaceholder),
+                )
+                // CVV-only (web's `cvvOnly` hosted fields): `cvv` is SecureFields' one mandatory
+                // field, and with no card-number field mounted its tokenizer omits the `card` object
+                // entirely — which is what the Vault reads as a CVV-only submission.
+                CardCoordinator.Mode.TOKEN_CVV,
+                CardCoordinator.Mode.TOKEN_NO_CVV,
+                -> SecureFieldsFieldsConfig(cvv = VaultFieldConfig(placeholder = cvvPlaceholder))
+            },
             styles = options.theme?.toVaultStyles(),
         )
     }
@@ -120,14 +143,22 @@ fun rememberCardCoordinator(host: CardHost, listener: PaymentElementListener): C
     )
 
     val coordinator = remember(sdk, host, partnerWireValue) {
-        CardCoordinator(sdk, host, partnerWireValue, scope, redirectLauncher, listener)
+        CardCoordinator(sdk, host, partnerWireValue, mode, payToken, scope, redirectLauncher, listener)
     }
 
     DisposableEffect(sdk, coordinator) {
-        // Arm the fulfillment gate before anything can be typed: a mounted-but-empty card form means
+        if (mode == CardCoordinator.Mode.TOKEN_NO_CVV) {
+            // Nothing to render and nothing to gate — the saved card is payable as it stands, so
+            // the SDK instance is never rendered (SecureFields builds its native fields lazily, at
+            // `render()`), and readiness is immediate.
+            listener.onReady(true)
+            return@DisposableEffect onDispose { }
+        }
+        // Arm the fulfillment gate before anything can be typed: a mounted-but-empty form means
         // the payment is NOT fulfilled, so `isPaymentFulfilled` stays false (and `submitPayment`
-        // throws) until SecureFields reports every field valid. Web gets there from the other end —
-        // its `setAsPrimarySource` throws ELEMENT_NOT_FULFILLED — but the guarantee is the same one.
+        // throws) until SecureFields reports every configured field valid. Web gets there from the
+        // other end — its `setAsPrimarySource` throws ELEMENT_NOT_FULFILLED — but the guarantee is
+        // the same one.
         host.setFulfilled(false)
         // Tracks which brand to submit as, for a co-badged card (e.g. a French card that's both CB
         // and VISA) — mirrors web vault-front's BrandSelection: default to the first brand
@@ -151,7 +182,12 @@ fun rememberCardCoordinator(host: CardHost, listener: PaymentElementListener): C
             }
         })
         sdk.render()
-        onDispose { unregister() }
+        onDispose {
+            unregister()
+            // The form is gone, so whatever it had validated no longer stands — an item can only
+            // be fulfilled by a form that is actually on screen.
+            host.setFulfilled(false)
+        }
     }
 
     return coordinator
@@ -160,13 +196,17 @@ fun rememberCardCoordinator(host: CardHost, listener: PaymentElementListener): C
 /**
  * The state holder [rememberCardCoordinator] returns. [sdk] is the live `SecureFieldsAndroid`
  * instance — render it with SecureFields' own `VaultForm(coordinator.sdk)` /
- * `VaultField(coordinator.sdk.cardNumber)`. [formValid] and [selectedBrand] are Compose state, so
- * reading them in a composable recomposes correctly.
+ * `VaultField(coordinator.sdk.cvv)` whenever [mode] renders a form ([Mode.rendersForm]).
+ * [formValid] and [selectedBrand] are Compose state, so reading them in a composable recomposes
+ * correctly.
  */
 class CardCoordinator internal constructor(
     val sdk: SecureFieldsAndroid,
     private val host: CardHost,
     private val partnerWireValue: String,
+    /** Which of the three card flows this coordinator drives — decided by the host's token. */
+    val mode: Mode,
+    private val payToken: PayToken?,
     private val scope: CoroutineScope,
     private val redirectLauncher: ManagedActivityResultLauncher<RedirectAction, RedirectionCheckoutResult>,
     private val listener: PaymentElementListener,
@@ -179,11 +219,43 @@ class CardCoordinator internal constructor(
     interface Listener : PaymentElementListener
 
     /**
+     * The three shapes of a Purse-vaulted card payment, mirroring web's hosted-fields plugin
+     * rendered without a token, with a token in `cvvOnly` mode, or with a token behind the no-CVV
+     * gates (`plugins/utils/noCVV.ts`).
+     */
+    enum class Mode {
+        /** No saved card: the full PAN / expiry / CVV / holder form, tokenized on submit. */
+        FRESH_CARD,
+
+        /**
+         * A saved card whose PSP still wants the CVV ([PayToken.requiresCvv]): a CVV-only form,
+         * tokenized on submit into a `vault_vendor_token_id` that `/validate` pairs with the saved
+         * `token`.
+         */
+        TOKEN_CVV,
+
+        /** A saved card that pays without a CVV (`pay_token_no_cvv` / network token): no form. */
+        TOKEN_NO_CVV;
+
+        /** Whether this mode puts a SecureFields form on screen (and gates fulfillment on it). */
+        val rendersForm: Boolean get() = this != TOKEN_NO_CVV
+
+        companion object {
+            fun of(token: PayToken?): Mode = when {
+                token == null -> FRESH_CARD
+                token.requiresCvv -> TOKEN_CVV
+                else -> TOKEN_NO_CVV
+            }
+        }
+    }
+
+    /**
      * The SecureFields form's current validity — `false` until every configured field is valid, so
      * an untouched form never reads as payable. Mirrored into the checkout's own
-     * `isPaymentFulfilled` via [CardHost.setFulfilled].
+     * `isPaymentFulfilled` via [CardHost.setFulfilled]. Always `true` in [Mode.TOKEN_NO_CVV],
+     * where there is no form to validate.
      */
-    var formValid: Boolean by mutableStateOf(false)
+    var formValid: Boolean by mutableStateOf(!mode.rendersForm)
         internal set
 
     /** Which co-badged brand to submit as (see [rememberCardCoordinator]'s `DisposableEffect` doc). */
@@ -197,11 +269,22 @@ class CardCoordinator internal constructor(
         runCatching { host.buildContext().dispatchEvent(event) }
     }
 
-    /** Tokenize via SecureFields, then run `/init`+`/validate` through [host]. Call once [formValid]
-     * is `true` and the shopper tapped "Pay". No-op while a previous tap's flow is still in progress,
-     * and no-op (never an error) while the form isn't complete and valid. */
+    /**
+     * Tokenize via SecureFields (the full card, or just the CVV of a saved one), then run
+     * `/init`+`/validate` through [host]; a saved card that needs no CVV skips straight to
+     * `/init`+`/validate`. Call once [formValid] is `true` and the shopper tapped "Pay". No-op while
+     * a previous tap's flow is still in progress, and no-op (never an error) while the form isn't
+     * complete and valid.
+     */
     fun submit() {
         if (submitting) return
+        if (mode == Mode.TOKEN_NO_CVV) {
+            // Nothing to tokenize: the saved token alone is the payment instrument (web renders the
+            // element with a `token` attribute and no fields behind the no-CVV gates).
+            submitting = true
+            scope.launch { capture(tokenized = null, selectedNetwork = payToken?.selectedNetwork) }
+            return
+        }
         if (!formValid) {
             // The web analog of this gate is the plugin's own `validateUi`, which submits the form
             // and returns its per-field errors before `preValidation` may tokenize. Here SecureFields
@@ -215,18 +298,25 @@ class CardCoordinator internal constructor(
         submitting = true
         scope.launch {
             try {
-                // The resolved gateway scheme (e.g. "CARTE_BANCAIRE") — SecureFields' own `Brand`
-                // enum is a different, vault-internal vocabulary than what the Payment API's
-                // `selected_network` expects (matching session `vault.supported_brands`).
-                val gatewayScheme = selectedBrand?.toGatewayScheme()
-                // saveToken forwards the checkout's registration decision to the vault — web's
-                // `client.submit({saveToken: context.register})`.
-                val submitOptions = SubmitOptions(
-                    selectedNetwork = gatewayScheme,
-                    saveToken = host.buildContext().register,
-                )
+                val submitOptions = when (mode) {
+                    // The resolved gateway scheme (e.g. "CARTE_BANCAIRE") — SecureFields' own `Brand`
+                    // enum is a different, vault-internal vocabulary than what the Payment API's
+                    // `selected_network` expects (matching session `vault.supported_brands`).
+                    // saveToken forwards the checkout's registration decision to the vault — web's
+                    // `client.submit({saveToken: context.register})`.
+                    Mode.FRESH_CARD -> SubmitOptions(
+                        selectedNetwork = selectedBrand?.toGatewayScheme(),
+                        saveToken = host.buildContext().register,
+                    )
+                    // CVV-only: the card is already saved, so nothing to (re-)register, and no PAN
+                    // for a network to apply to — SecureFields drops the `card` object entirely.
+                    Mode.TOKEN_CVV, Mode.TOKEN_NO_CVV -> SubmitOptions(selectedNetwork = null, saveToken = false)
+                }
                 when (val tokenized = withContext(Dispatchers.IO) { sdk.submit(submitOptions) }) {
-                    is SubmitResult.Success -> capture(tokenized, gatewayScheme)
+                    is SubmitResult.Success -> capture(
+                        tokenized,
+                        selectedNetwork = if (mode == Mode.FRESH_CARD) submitOptions.selectedNetwork else payToken?.selectedNetwork,
+                    )
                     is SubmitResult.Error -> {
                         submitting = false
                         dispatch(PluginEvent.ClientError(tokenized.message))
@@ -240,14 +330,21 @@ class CardCoordinator internal constructor(
         }
     }
 
-    private suspend fun capture(tokenized: SubmitResult.Success, selectedNetwork: String?) {
-        host.setCollected(
-            mapOf(
-                CardPlugin.COLLECTED_TOKEN to tokenized.vaultFormToken,
-                CardPlugin.COLLECTED_BIN to tokenized.card?.bin,
-                CardPlugin.COLLECTED_NETWORK to selectedNetwork,
-            ),
-        )
+    /**
+     * Hand the tokenization result (if any) to the host and run `/init`+`/validate`, following a
+     * 3-D Secure redirect when `/validate` asks for one. [tokenized] is `null` only in
+     * [Mode.TOKEN_NO_CVV], where nothing was tokenized.
+     */
+    private suspend fun capture(tokenized: SubmitResult.Success?, selectedNetwork: String?) {
+        if (tokenized != null) {
+            host.setCollected(
+                mapOf(
+                    CardPlugin.COLLECTED_TOKEN to tokenized.vaultFormToken,
+                    CardPlugin.COLLECTED_BIN to tokenized.card?.bin,
+                    CardPlugin.COLLECTED_NETWORK to selectedNetwork,
+                ),
+            )
+        }
         try {
             val result = withContext(Dispatchers.IO) { host.submitPayment() }
             Log.d(

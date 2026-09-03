@@ -27,25 +27,35 @@ class CardPlugin(override val partner: Partner) : PartnerUiPlugin {
      * per-field errors that block `preValidation`. Here the form lives in [CardCoordinator] (which
      * refuses to tokenize an invalid one and shows SecureFields' own field errors), so all this hook
      * can check is the outcome — a vault token means the form was submitted successfully. A saved
-     * token ([PartnerUiContext.token]) needs no form at all.
+     * token ([PartnerUiContext.token]) that pays without a CVV needs no form at all; one that still
+     * requires its CVV ([eu.purse.partnerui.PayToken.requiresCvv]) needs the CVV-only form's vault
+     * token exactly like a fresh card needs the full form's.
      */
     override suspend fun validateUi(context: PartnerUiContext): Boolean =
-        context.token != null || context.collected[COLLECTED_TOKEN] is String
+        context.token?.requiresCvv == false || context.collected[COLLECTED_TOKEN] is String
 
     override suspend fun preValidation(context: PartnerUiContext): ValidateItemPayload {
         val stepId = CardMapper.parseInit(
             context.api.init(CardMapper.buildInitPayload(context.amount, partner.wireValue)),
         ).stepId
 
-        // Saved token (card-on-file): no SecureFields tokenization — the opaque token value plus
-        // the card metadata travels straight into payment_data (web's patchItemPayloadWithToken).
+        // Saved token (card-on-file): the opaque token value plus the card metadata travels straight
+        // into payment_data (web's patchItemPayloadWithToken). When the token still needs its CVV,
+        // the CVV-only SecureFields tokenization rides along as `vault_vendor_token_id` — the same
+        // key a fresh card uses, but paired with `token` here (web's submitForResult over a token).
         context.token?.let { token ->
+            val cvvVaultToken = if (token.requiresCvv) {
+                context.collected[COLLECTED_TOKEN] as? String
+                    ?: error("CVV vault token missing — collect the CVV with SecureFields before submitting")
+            } else {
+                null
+            }
             return ItemPayload(
                 partner = partner,
                 method = method,
                 amount = context.amount,
                 stepId = stepId,
-                paymentData = CardMapper.buildTokenPaymentData(token),
+                paymentData = CardMapper.buildTokenPaymentData(token, cvvVaultToken),
             )
         }
 

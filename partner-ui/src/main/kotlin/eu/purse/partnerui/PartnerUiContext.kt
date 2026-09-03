@@ -95,6 +95,14 @@ data class PayToken(
     val holderName: String? = null,
     /** The card scheme in session vocabulary (e.g. `VISA`), when known. */
     val selectedNetwork: String? = null,
+    /**
+     * Whether paying with this token still needs the shopper's CVV — the inverse of web's no-CVV
+     * gates (`plugins/utils/noCVV.ts`: the merchant's `pay_token_no_cvv` setting, or an available
+     * network token when the experience enables them). When `true`, the card plugin renders a
+     * CVV-only SecureFields form and `/validate` carries the resulting `vault_vendor_token_id`
+     * alongside the saved `token`; when `false`, no form is involved at all.
+     */
+    val requiresCvv: Boolean = false,
 ) {
     /**
      * `expiry_date` as the Payment API expects it — web's `formatUTCToExpiration` (`yyyy-MM-dd`),
