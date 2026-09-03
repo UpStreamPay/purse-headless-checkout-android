@@ -42,6 +42,10 @@ enum class PurseErrorCode {
     METHOD_NOT_REGISTERABLE,
     FAILED_TO_DELETE_ALL_TOKENS,
 
+    // Loan simulation
+    METHOD_IS_NOT_SIMULABLE,
+    INVALID_LOAN_SIMULATION,
+
     // Transport / other
     API_ERROR,
     UNKNOWN_ERROR,
