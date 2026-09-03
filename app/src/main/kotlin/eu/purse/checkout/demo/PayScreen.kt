@@ -88,7 +88,16 @@ fun PayScreen(controller: DemoController) {
                 )
             },
         ) {
-            AmountHeader(checkout, remaining, fulfilled, split)
+            // `paymentSession` is the observable handle on the session in force — `checkout.session`
+            // is replaced by setSession, so a plain read here would never redraw the total.
+            val session by checkout.paymentSession.collectAsState()
+            AmountHeader(session.amount, checkout.currency, remaining, fulfilled, split)
+            SmallButton(
+                text = stringResource(R.string.btn_refresh_session),
+                onClick = controller::refreshSession,
+                enabled = !controller.refreshingSession,
+                loading = controller.refreshingSession,
+            )
 
             if (controller.googlePayReady || controller.paypalReady) {
                 SectionTitle(stringResource(R.string.section_express))
@@ -145,7 +154,8 @@ fun PayScreen(controller: DemoController) {
  * layout only had buried in a monospace dump. */
 @Composable
 private fun AmountHeader(
-    checkout: PurseHeadlessCheckout,
+    total: java.math.BigDecimal,
+    currency: String,
     remaining: java.math.BigDecimal,
     fulfilled: Boolean,
     split: List<PaymentSplit>,
@@ -159,7 +169,7 @@ private fun AmountHeader(
                     color = LocalContentColor.current.copy(alpha = 0.75f),
                 )
                 Text(
-                    text = amountText(checkout.session.amount, checkout.currency),
+                    text = amountText(total, currency),
                     style = MaterialTheme.typography.headlineLarge,
                     fontWeight = FontWeight.SemiBold,
                 )
@@ -168,7 +178,7 @@ private fun AmountHeader(
                 text = if (fulfilled) {
                     stringResource(R.string.label_covered)
                 } else {
-                    "${stringResource(R.string.label_remaining)} ${amountText(remaining, checkout.currency)}"
+                    "${stringResource(R.string.label_remaining)} ${amountText(remaining, currency)}"
                 },
                 style = MaterialTheme.typography.titleSmall,
                 color = if (fulfilled) DemoStatusColors.success else LocalContentColor.current,
@@ -182,7 +192,7 @@ private fun AmountHeader(
                     modifier = Modifier.weight(1f),
                 )
                 Text(
-                    text = amountText(entry.amount, checkout.currency),
+                    text = amountText(entry.amount, currency),
                     style = MaterialTheme.typography.bodyMedium,
                     fontWeight = FontWeight.Medium,
                 )

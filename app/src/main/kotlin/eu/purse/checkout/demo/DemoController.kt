@@ -378,6 +378,40 @@ class DemoController(private val activity: ComponentActivity) {
         if (checkout != null) step = DemoStep.Pay
     }
 
+    var refreshingSession by mutableStateOf(false)
+        private set
+
+    /**
+     * Mint a **new** session through alfred and hand it to the live checkout — `setSession`, the
+     * "cart changed / session expired" path. The screen stays; whatever survives the refresh (an
+     * unchanged card method keeps its form and selection) is the SDK's doing, not this demo's.
+     * The xpay coordinators are re-prepared against the new session's items.
+     */
+    fun refreshSession() {
+        val co = checkout ?: return
+        refreshingSession = true
+        scope.launch {
+            try {
+                val session = alfred.createSession()
+                co.setSession(session.widgetData)
+                widgetData = session.widgetData
+                lastOrchestrationSessionId = session.orchestrationSessionId
+                alfredSessionId = resolveAlfredSessionId(session.widgetData)
+                sessionDetails = summarize(co)
+                captureAmount = co.session.amount.toPlainString()
+                googlePayItem = co.primaryMethods.firstOrNull { it.method == Method.GooglePay }
+                googlePayItem?.let { googlePay.prepare(co.googlePayHost(it)) }
+                paypalItem = co.primaryMethods.firstOrNull { it.method == Method.Wallet && !isRedirection(it) }
+                paypalItem?.let { paypal.prepare(co.paypalHost(it)) }
+                log("session refreshed → ${co.currentSessionId} (${co.session.amount} ${co.currency})")
+            } catch (e: Exception) {
+                log("session refresh failed: ${e.message}")
+            } finally {
+                refreshingSession = false
+            }
+        }
+    }
+
     // --- 2 · pay ----------------------------------------------------------------------------------
 
     /**
