@@ -3,6 +3,7 @@ package eu.purse.partnerui.plugins.partners.paypal.wallet
 import eu.purse.core.environment.PurseEnvironment
 import eu.purse.core.payload.ValidationResult
 import eu.purse.partnerui.PartnerUiContext
+import eu.purse.partnerui.redirect.RedirectionDelegate
 
 /**
  * What [PaypalCoordinator] needs from the surrounding checkout session — kept as an interface so
@@ -11,7 +12,7 @@ import eu.purse.partnerui.PartnerUiContext
  * `PurseHeadlessCheckout.paypalHost` is the concrete implementation — the same seam shape as
  * [eu.purse.partnerui.plugins.generics.googlepay.GooglePayHost].
  */
-interface PaypalHost {
+interface PaypalHost : RedirectionDelegate {
 
     /**
      * The Purse environment, mapped to PayPal's own by [PaypalCoordinator]:

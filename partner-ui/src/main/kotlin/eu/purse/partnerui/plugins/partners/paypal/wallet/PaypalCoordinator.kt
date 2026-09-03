@@ -12,6 +12,7 @@ import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.redirect.RedirectAction
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.partnerui.redirect.RedirectionCheckoutResult
+import eu.purse.partnerui.redirect.RedirectDispatcher
 import eu.purse.partnerui.redirect.RedirectionResolver
 import eu.purse.partnerui.redirect.withReturnUrlPrefix
 import kotlinx.coroutines.Dispatchers
@@ -190,7 +191,7 @@ class PaypalCoordinator private constructor(
         }
     }
 
-    private fun resolveOutcome(result: ValidationResult, host: PaypalHost) {
+    private suspend fun resolveOutcome(result: ValidationResult, host: PaypalHost) {
         Log.d(
             TAG,
             "validate response: global_status=${result.globalStatus} " +
@@ -219,9 +220,19 @@ class PaypalCoordinator private constructor(
             ?.takeUnless { it.targetUrl()?.isPaypalApprovalUrl() == true }
 
         if (action != null) {
-            dispatch(PluginEvent.Redirect)
-            listener.onRequiresAction()
-            launchRedirect?.invoke(action)
+            // The merchant's onRedirection hook goes first (web's redirectionHandler); the SDK's
+            // WebView only opens when it declines.
+            when (val outcome = RedirectDispatcher.dispatch(action, host, launchRedirect)) {
+                is RedirectDispatcher.Outcome.HookFailed -> {
+                    // Nothing was opened — the shopper can retry once the merchant fixes it.
+                    submitting = false
+                    listener.onError("onRedirection hook failed: ${outcome.error.message}")
+                }
+                else -> {
+                    dispatch(PluginEvent.Redirect)
+                    listener.onRequiresAction()
+                }
+            }
         } else {
             listener.onResult("global_status=${result.globalStatus}", result.globalStatus)
         }

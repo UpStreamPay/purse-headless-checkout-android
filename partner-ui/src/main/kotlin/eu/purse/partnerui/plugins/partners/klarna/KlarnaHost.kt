@@ -2,6 +2,7 @@ package eu.purse.partnerui.plugins.partners.klarna
 
 import eu.purse.core.payload.ValidationResult
 import eu.purse.partnerui.PartnerUiContext
+import eu.purse.partnerui.redirect.RedirectionDelegate
 
 /**
  * What [KlarnaCoordinator] needs from the surrounding checkout session — kept as an interface so this
@@ -10,7 +11,7 @@ import eu.purse.partnerui.PartnerUiContext
  * `PurseHeadlessCheckout.klarnaHost` is the concrete implementation — the same seam shape as
  * `GooglePayHost`.
  */
-interface KlarnaHost {
+interface KlarnaHost : RedirectionDelegate {
 
     /**
      * The deep-link URL `KlarnaPaymentView`'s `returnURL` should carry, for the SDK to return control

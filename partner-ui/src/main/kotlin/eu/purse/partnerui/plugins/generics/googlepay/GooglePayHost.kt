@@ -3,6 +3,7 @@ package eu.purse.partnerui.plugins.generics.googlepay
 import eu.purse.core.environment.PurseEnvironment
 import eu.purse.core.payload.ValidationResult
 import eu.purse.partnerui.PartnerUiContext
+import eu.purse.partnerui.redirect.RedirectionDelegate
 
 /**
  * What [GooglePayCoordinator] needs from the surrounding checkout session — kept as an interface so
@@ -10,7 +11,7 @@ import eu.purse.partnerui.PartnerUiContext
  * depends on `:partner-ui`; a dependency back the other way would cycle). `:headless-checkout`'s
  * `PurseHeadlessCheckout.googlePayHost` is the concrete implementation.
  */
-interface GooglePayHost {
+interface GooglePayHost : RedirectionDelegate {
 
     val environment: PurseEnvironment
 

@@ -8,6 +8,7 @@ import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.partnerui.redirect.RedirectionCheckoutResult
+import eu.purse.partnerui.redirect.RedirectDispatcher
 import eu.purse.partnerui.redirect.RedirectionResolver
 import eu.purse.partnerui.redirect.withReturnUrlPrefix
 import kotlinx.coroutines.Dispatchers
@@ -141,7 +142,7 @@ class RedirectionCoordinator private constructor(
      * `SUCCESS` for an amount that needed no interaction — but it is logged and carried into the
      * summary, because it's the first thing to check when a redirection method silently does nothing.
      */
-    private fun resolveOutcome(result: ValidationResult, request: RedirectionRequest, host: RedirectionHost) {
+    private suspend fun resolveOutcome(result: ValidationResult, request: RedirectionRequest, host: RedirectionHost) {
         submitting = false
         Log.d(
             TAG,
@@ -162,9 +163,16 @@ class RedirectionCoordinator private constructor(
         )?.withReturnUrlPrefix(host.redirectionReturnUrl)
 
         if (action != null) {
-            dispatch(PluginEvent.Redirect)
-            listener.onRequiresAction()
-            launchRedirect?.invoke(action)
+            // The merchant's onRedirection hook goes first (web's redirectionHandler); the SDK's
+            // WebView only opens when it declines.
+            when (val outcome = RedirectDispatcher.dispatch(action, host, launchRedirect)) {
+                is RedirectDispatcher.Outcome.HookFailed ->
+                    listener.onError("onRedirection hook failed: ${outcome.error.message}")
+                else -> {
+                    dispatch(PluginEvent.Redirect)
+                    listener.onRequiresAction()
+                }
+            }
         } else {
             Log.w(TAG, "no redirect to follow — a redirection method's /validate normally carries one")
             listener.onResult(
