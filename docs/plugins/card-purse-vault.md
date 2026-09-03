@@ -15,6 +15,7 @@ fields themselves.
 | UI surface | **Compose-first** — `rememberCardCoordinator(...)`, no `onCreate` construction caveat |
 | Native step vs `/validate` | tokenize **before**, then `/init` and `/validate` back to back |
 | Gates `isPaymentFulfilled`? | **Yes** — the only plugin that does |
+| Saved cards | **Yes** — `cardHost(token)`: a CVV-only form when `token.requiresCvv` (`Mode.TOKEN_CVV`), no form behind the no-CVV gates (`Mode.TOKEN_NO_CVV`) |
 | Manifest work | None (3-D Secure uses the Activity `:partner-ui` ships) |
 
 Because the vault family resolves first, this plugin serves *any* partner's `creditcard` as long as
@@ -131,6 +132,24 @@ sequenceDiagram
    `card.selected_network` inside — exactly web's `submitForResult` shape.
 9. **Two separate environment enums.** `PurseEnvironment` (Payment API) maps to SecureFields'
    `VaultEnvironment`; `DEVELOPMENT` maps to `SANDBOX`, since the vault has no development target.
+10. **A saved card runs through the same coordinator, in one of two token modes.** `cardHost(token)`
+    hands the coordinator the `PaymentToken` as `PartnerUiContext.token` (web's `token` attribute),
+    and `CardCoordinator.Mode.of(token)` decides the shape — the port of web's `isNoCVV` +
+    `cvvOnly` hosted fields:
+    - `TOKEN_CVV` (`token.requiresCvv`, i.e. neither `pay_token_no_cvv` nor an enabled network token):
+      SecureFields is configured with **only the `cvv` field**. SecureFields ≥ 1.4.0 then omits the
+      `card` object from its gateway request — absent `card` + present `cvv` is what the Vault reads
+      as a CVV-only submission — and `submit()` still returns a `vaultFormToken`. The plugin puts it
+      in `payment_data.vault_vendor_token_id` **next to** `payment_data.token` (web's
+      `submitForResult` over a token); the Vault pairs the two. The fulfillment gate is armed twice
+      over: by `setPrimaryToken` (so a host that never renders the field cannot submit) and by the
+      form at mount, and `validateUi` refuses the item until a CVV vault token was collected.
+      `saveToken` is forced `false` (the card is already saved) and `selectedNetwork` is the token's
+      own scheme — there is no PAN to detect a brand from, and SecureFields' CVV length therefore
+      stays at its 3-digit default (a 4-digit AMEX CVV is a known gap on the SecureFields side).
+    - `TOKEN_NO_CVV`: nothing is rendered (`sdk.render()` is never called — SecureFields builds its
+      native fields lazily) and nothing gates; `submit()` skips tokenization and goes straight to
+      `/init`+`/validate` with the token payload, then follows a 3-D Secure redirect as usual.
 
 ## Host integration
 
@@ -151,6 +170,26 @@ fun CardPaymentForm(checkout: PurseHeadlessCheckout, method: PrimaryMethod, list
 Your app needs a Compose entry point for the form (a `ComposeView` inside an otherwise View-based
 layout is fine). No `PluginRegistry` call — `CardModule` is registered by default.
 
+A saved card is the same three lines with the token as the host's item; only the rendering is
+conditional:
+
+```kotlin
+@Composable
+fun SavedCardForm(checkout: PurseHeadlessCheckout, token: PaymentToken, listener: CardCoordinator.Listener) {
+    val host = remember(token.id) { checkout.cardHost(token) }          // selects TOKEN_CVV / TOKEN_NO_CVV
+    val coordinator = rememberCardCoordinator(host, listener)
+
+    if (coordinator.mode.rendersForm) {                                   // TOKEN_CVV: just the CVV field
+        VaultForm(coordinator.sdk, modifier = Modifier.fillMaxWidth().height(56.dp))
+    }
+    LaunchedEffect(coordinator) { onSubmitReady { coordinator.submit() } }
+}
+```
+
+Or let the unified element do the dispatch: `rememberPaymentElement(checkout, token, listener)` —
+`hasUi` is `false` in `TOKEN_NO_CVV`. Select the token with `checkout.setPrimaryToken(token)`
+either way.
+
 ## Outcomes
 
 | Callback | Fires |
@@ -167,8 +206,9 @@ layout is fine). No `PluginRegistry` call — `CardModule` is registered by defa
 | Symptom | Cause |
 |---|---|
 | Pay button never enables | The form isn't valid — SecureFields reports `hasErrors` until every configured field is valid |
-| `PurseCheckoutException.ItemNotFulfilled` | `submitPayment()` called directly while the card form is incomplete |
-| `PurseCheckoutException.ValidateFailed: client-side validation failed…` | No vault token collected — tokenization never succeeded |
+| `PurseCheckoutException.ItemNotFulfilled` | `submitPayment()` called directly while the card form is incomplete — or a saved token that requires a CVV was selected and its CVV field never validated (or was never rendered) |
+| `PurseCheckoutException.ValidateFailed: client-side validation failed…` | No vault token collected — tokenization never succeeded (for a `TOKEN_CVV` saved card: the CVV-only tokenization) |
+| `IllegalArgumentException: … cannot host a card form` | `cardHost(item)` called with a secondary method — only the card `PrimaryMethod` or a `PaymentToken` can |
 | `PaymentApiException: creditcard init not successful` | `/init` returned a non-`SUCCESS` state |
 | Form rebuilds and loses input on every keystroke elsewhere | The `host` wasn't `remember`ed — specificity 5 |
 | SecureFields fails to initialize | Blank `vaultTenantId` — the session carries no `vault.vendor_front_data.purse.tenant_id` |

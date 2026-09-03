@@ -302,7 +302,7 @@ either. If you write your own coordinator around a form, call `setFulfilled` fro
 | `googlePayHost` | `fun googlePayHost(item: PaymentItem): GooglePayHost` | The `GooglePayHost` implementation for `item`. |
 | `klarnaHost` | `fun klarnaHost(item: PaymentItem, klarnaReturnUrl: String): KlarnaHost` | The `KlarnaHost` implementation for `item`. `klarnaReturnUrl` falls back to the session's own return URL if you don't have a better one. |
 | `paypalHost` | `fun paypalHost(item: PaymentItem): PaypalHost` | The `PaypalHost` implementation for `item`. No return URL argument — the PayPal SDK supplies its own, and the matching Activity ships in `:partner-ui`. |
-| `cardHost` | `fun cardHost(item: PrimaryMethod): CardHost` | The `CardHost` implementation for `item`. Takes `PrimaryMethod` specifically (not the generic `PaymentItem`) since `CardHost.supportedBrands` reads `item.supportedBrands`. |
+| `cardHost` | `fun cardHost(item: PaymentItem): CardHost` | The `CardHost` implementation for `item` — the card `PrimaryMethod` (fresh card, full form) or one of its saved `PaymentToken`s (a CVV-only form when `token.requiresCvv`, no form otherwise; the token reaches the plugin as `PartnerUiContext.token`). Throws `IllegalArgumentException` for anything else. |
 | `redirectionHost` | `fun redirectionHost(item: PaymentItem): RedirectionHost` | The `RedirectionHost` implementation for `item`. Not tied to a partner or method — ask for one per item the session routes to the redirection template. |
 
 ### `PartnerUiContext`
@@ -502,9 +502,10 @@ Pay/Klarna) — call it from anywhere in your composition; its 3-D Secure redire
 
 | Member | Signature | Notes |
 |---|---|---|
-| `sdk` | `val sdk: SecureFieldsAndroid` | Render this with SecureFields' own `VaultForm(coordinator.sdk)` (full form) or `VaultField(coordinator.sdk.cardNumber)` etc. (custom layout, one field at a time). |
-| `formValid` | `var formValid: Boolean` (Compose state) | Whether the card form currently validates — `false` until every field is valid. Drive your "Pay" button's `enabled` off this, or off `isPaymentFulfilled`, which the coordinator keeps in step for you. |
-| `submit` | `fun submit()` | Tokenizes via SecureFields, then runs `/init`+`/validate` through `host`. Call once `formValid` is `true` and the shopper tapped "Pay". No-op while a prior tap's flow is still in progress, and a no-op (never an error — an unfilled form is not a failed payment) while the form isn't complete and valid. |
+| `sdk` | `val sdk: SecureFieldsAndroid` | Render this with SecureFields' own `VaultForm(coordinator.sdk)` (full form, or just the CVV field in `TOKEN_CVV`) or `VaultField(coordinator.sdk.cardNumber)` etc. (custom layout, one field at a time) — only when `mode.rendersForm`. |
+| `mode` | `val mode: CardCoordinator.Mode` | `FRESH_CARD` (a `PrimaryMethod` host), `TOKEN_CVV` (a `PaymentToken` host whose `requiresCvv` is `true`: CVV-only form) or `TOKEN_NO_CVV` (payable as-is, nothing to render). `mode.rendersForm` is `false` only for the last. |
+| `formValid` | `var formValid: Boolean` (Compose state) | Whether the card form currently validates — `false` until every configured field is valid (always `true` in `TOKEN_NO_CVV`). Drive your "Pay" button's `enabled` off this, or off `isPaymentFulfilled`, which the coordinator keeps in step for you. |
+| `submit` | `fun submit()` | Tokenizes via SecureFields (the card, or just the CVV of a saved one), then runs `/init`+`/validate` through `host`; in `TOKEN_NO_CVV` it skips tokenization. Call once `formValid` is `true` and the shopper tapped "Pay". No-op while a prior tap's flow is still in progress, and a no-op (never an error — an unfilled form is not a failed payment) while the form isn't complete and valid. |
 
 **`CardCoordinator.Listener`** callbacks:
 

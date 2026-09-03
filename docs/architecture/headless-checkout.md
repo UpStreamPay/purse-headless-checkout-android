@@ -250,17 +250,24 @@ process-death safety); BNPL loan simulation (`PrimaryMethod.simulable` off the `
 `LoanSimulation` mapped as web's `mapPluginResultToSimulation` — counts and amounts, no per-instalment
 dates — and the `METHOD_IS_NOT_SIMULABLE` / `INVALID_LOAN_SIMULATION` codes).
 
+Since then (SDK-12216): **CVV re-entry on a saved card** — `PaymentToken.requiresCvv` (the inverse
+of web's no-CVV gates) arms the per-item fulfillment gate at `setPrimaryToken`, `cardHost(token)`
+puts the card coordinator in `CardCoordinator.Mode.TOKEN_CVV`, which renders a CVV-only
+SecureFields form (`securefields-android` ≥ 1.4.0 omits the `card` object when no PAN field is
+mounted), and the resulting `vault_vendor_token_id` rides alongside `payment_data.token` on
+`/validate` exactly like web's `submitForResult` over a token. A token behind the gates
+(`pay_token_no_cvv` / network token) runs in `Mode.TOKEN_NO_CVV`: no form, payable at selection.
+`rememberPaymentElement(checkout, token)` wraps both behind the element shape.
+
 ## Deferred (intentionally not built yet)
 
 PayPal BNPL ("Pay Later") and PayPal vaulting (the wallet pay-now plugin ships; see
 [docs/plugins/paypal.md](../plugins/paypal.md)), Apple Pay (same shape as Google Pay), the
 `adyen`/`stripe` Google
 Pay gateway builders beyond the `default` fallback, the `ancv-connect`
-two-phase secondary flow, the splitter's voucher→loyalty→primary autofill middleware, the
-`pci_proxy` vault vendor (only the `purse` vault resolves a card plugin), and CVV re-entry when
-paying a saved token — `securefields-android` 1.0.0 has no tokenize-against-existing-token mode,
-so saved-token payments ride the no-CVV gates (`pay_token_no_cvv` / network tokens) until the
-SecureFields SDK grows one.
+two-phase secondary flow, the splitter's voucher→loyalty→primary autofill middleware, and the
+`pci_proxy` vault vendor (only the `purse` vault resolves a card plugin — so a `pci_proxy`-vaulted
+saved token that requires a CVV has no form to collect it on Android yet).
 
 The rendering host (web's `<purse-partner-ui>` element) is **no longer deferred**: the unified
 payment element (`eu.purse.checkout.element.rememberPaymentElement` + `PaymentElementUi`) is its

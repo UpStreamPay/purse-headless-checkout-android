@@ -451,7 +451,7 @@ lifecycleScope.launch {
                     label = token.name.ifBlank { token.label },  // "my visa" / "VISA •••• 4242"
                     maskedPan = token.maskedPan,
                     favorite = token.favorite,
-                    noCvv = token.paysWithoutCvv,   // pay_token_no_cvv / network-token gates
+                    needsCvv = token.requiresCvv,   // inverse of the pay_token_no_cvv / network-token gates
                 )
             },
         )
@@ -459,16 +459,37 @@ lifecycleScope.launch {
 }
 ```
 
-**Pay with a saved card** — the token becomes the split's primary:
+**Pay with a saved card** — the token becomes the split's primary, and the element renders whatever
+the PSP still asks for: a **CVV-only** field when `token.requiresCvv`, **nothing** otherwise. Same
+shape as recipe 5, with the token in place of the method:
 
 ```kotlin
-checkout.setPrimaryToken(token)
-lifecycleScope.launch { withContext(Dispatchers.IO) { checkout.submitPayment() } }
+@Composable
+fun SavedCardPayment(checkout: PurseHeadlessCheckout, token: PaymentToken) {
+    val element = rememberPaymentElement(checkout, token, listener = object : PaymentElementListener {
+        override fun onResult(summary: String, globalStatus: String?) { /* recipe 12 if globalStatus == null */ }
+        override fun onError(message: String?) { }
+    })
+    LaunchedEffect(token.id) { checkout.setPrimaryToken(token) }   // selection is your call
+
+    Column {
+        if (element.hasUi) {                                        // requiresCvv → the CVV field
+            PaymentElementUi(element, Modifier.fillMaxWidth().height(56.dp))
+        }
+        Button(onClick = { element.submit() }, enabled = element.ready) { Text("Pay") }
+    }
+}
 ```
 
-> `securefields-android` 1.0.0 has no CVV-re-entry-against-token mode, so saved-token payments
-> currently ride the no-CVV gates (`token.paysWithoutCvv`). Check that flag before showing the
-> "pay with this card" affordance.
+`setPrimaryToken` on a token that requires a CVV arms the same fulfillment gate a fresh card form
+arms: `isPaymentFulfilled` stays `false` (and `submitPayment()` throws `ItemNotFulfilled`) until the
+CVV field validates — so a screen that forgets to render the element cannot submit the token. On
+`/validate` the CVV-only vault token travels as `payment_data.vault_vendor_token_id` next to
+`payment_data.token`, exactly like web. A token behind the no-CVV gates is payable the moment it's
+selected; `element.ready` is `true` immediately and `element.hasUi` is `false`.
+
+Lower level: `rememberCardCoordinator(remember(token.id) { checkout.cardHost(token) }, listener)` —
+the coordinator's `mode` (`TOKEN_CVV` / `TOKEN_NO_CVV`) tells you whether to place `VaultForm(coordinator.sdk)`.
 
 **Save a fresh card** — driven by the method's `save_token_mode`:
 
