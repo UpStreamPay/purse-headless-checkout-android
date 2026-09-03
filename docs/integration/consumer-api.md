@@ -81,12 +81,40 @@ class PurseCheckoutHooks(
 
 | Property | Type | Meaning |
 |---|---|---|
-| `params` | `PurseSessionParams` | Decoded `widget.data` (`apiKey`, `apiUrl`, `environment`, `entityId`, `paymentSession`). |
-| `session` | `PaymentSession` | The built session model (amount, currency, expiration, vault config, means of payment). |
+| `params` | `PurseSessionParams` | Decoded `widget.data` (`apiKey`, `apiUrl`, `environment`, `entityId`, `paymentSession`). Replaced by `setSession`. |
+| `session` | `PaymentSession` | The built session model (amount, currency, expiration, vault config, means of payment). Replaced by `setSession` — hold the checkout, not the session; observe `paymentSession`. |
 | `paymentApiRoot` | `String` | Resolved Payment API root; calls go to `{root}/{entityId}/sessions/{sessionId}/…`. |
 | `currency` | `String` | Session currency code. |
 | `isInformationRequest` | `Boolean` | Whether this session is a zero-amount information request rather than a real charge. |
 | `currentSessionId` | `String` | The Payment API session id (`session.id`). |
+
+### `setSession` — refresh the session without rebuilding the checkout
+
+```kotlin
+suspend fun setSession(widgetData: String)
+```
+
+Web's `setSession`. Hand the existing checkout a **new** Client Session — the cart changed and your
+backend minted one for the new amount, or the current one expired (`sessionState == EXPIRED`) and
+you fetched a fresh one — without tearing the screen down. What survives follows web's
+`payment.setSession`, plus one thing:
+
+| | Survives | Torn down |
+|---|---|---|
+| Primary method whose `protocols[partner][method]` is **deep-equal** in both sessions | its collected data (`setCollected`), its form-fulfilment gate, its save-token decision (`register`), its live plugin — and, beyond web, its place as the split's **primary** when it was selected | — |
+| Primary method whose configuration **changed**, or that **disappeared** | — | plugin (`destroyClient`), collected data, fulfilment, registration; its `itemGenerations` entry is bumped so UI remembered for it rebuilds |
+| Saved cards (`paymentTokens`) | rebuilt from the new session; survive as selected primary when their method survives and the new session still lists them | — |
+| Applied gift cards (`appliedSecondaries`) and their registrations | — | dropped — they were tokenized against the old session |
+| Amount, expiry watchdog, `sessionState` | — | the new session's amount; the watchdog restarts; state returns to `READY` |
+
+Same session id → ignored with a warning, as on web. **Throws** `PurseCheckoutException.SessionExpired`
+(`EXPIRED_SESSION`) when the new session is already expired — the old one stays in force — and
+`IllegalStateException` while a payment is being submitted. Emits `HEADLESS_CHECKOUT_SET_SESSION`.
+
+Keying UI on `(item.id, generation)` is what makes "keep what is still valid" work on the screen:
+`rememberPaymentElement` already does it, so an unchanged card keeps its SecureFields form and
+whatever the shopper typed, while a changed method gets a fresh element. Recipe 19 shows the
+expired-session recovery loop.
 
 ---
 
@@ -97,7 +125,9 @@ it from a coroutine scope; there is no callback-based equivalent.
 
 | Property | Type | Fires when |
 |---|---|---|
-| `sessionState` | `StateFlow<SessionState>` | Lifecycle transitions: `READY` → `SUBMITTING` → `SUBMITTED`/`ERROR`, or `EXPIRED` at init if the session already expired. |
+| `sessionState` | `StateFlow<SessionState>` | Lifecycle transitions: `READY` → `SUBMITTING` → `SUBMITTED`/`ERROR`, or `EXPIRED` at init if the session already expired (and back to `READY` after `setSession`). |
+| `paymentSession` | `StateFlow<PaymentSession>` | The session in force; emits again when `setSession` swaps it — rebuild session-derived UI (amount header, method list) from here. |
+| `itemGenerations` | `StateFlow<Map<String, Int>>` | Per-item generation counters bumped by `setSession` for items that did not survive; key anything you remember per item on `(item.id, generation)` — `generationOf(item)` reads the current one. |
 | `paymentMethods` | `StateFlow<List<PaymentItem>>` | Any time the split changes — each item's `disabled` state is recomputed against the new `remainingAmountToPay`. |
 | `remainingAmountToPay` | `StateFlow<BigDecimal>` | After `setPrimary`, `applySecondary`, or `removeSecondary`. |
 | `isPaymentFulfilled` | `StateFlow<Boolean>` | Same triggers as above, plus every `setFulfilled` — `true` once the split covers the full amount **and** every item in it whose plugin collects a form reports that form complete and valid (see [§6](#form-completeness-gates-the-payment)). |

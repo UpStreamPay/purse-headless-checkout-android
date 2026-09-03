@@ -284,7 +284,12 @@ text / required and format errors, web's `hostedForm` translations as defaults) 
 web's scopes (`global` / `input` / `label` / `helperText`, `:focus` / `:invalid` / `:valid` variants)
 and web's fallback chain, applied to SecureFields' `VaultStyles` **and** to the SDK's own
 `PurseCardForm` (labels, help texts, error messages around the secure fields — what
-`PaymentElementUi` renders for a card); CDN method icons (`PurseAssets`); typed
+`PaymentElementUi` renders for a card); session refresh (`setSession` — web's `setSession`: a
+primary whose `protocols[partner][method]` is deep-equal survives with its collected data,
+fulfilment gate, registration, live plugin and — beyond web — its place as primary; the rest is
+torn down and gets a new `itemGenerations` generation so `rememberPaymentElement` rebuilds it;
+applied gift cards are dropped; the watchdog restarts; `paymentSession` emits the swap); CDN method
+icons (`PurseAssets`); typed
 payment confirmation (`paymentStatus()` / `awaitPaymentOutcome()` over `sessionTransactions()`);
 and a hardened redirect WebView (progress, first-page watchdog, network-failure surfacing,
 process-death safety); BNPL loan simulation (`PrimaryMethod.simulable` off the `simulable` label,

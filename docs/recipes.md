@@ -833,3 +833,41 @@ return them. Simulation is a quote only: paying still goes through the normal `s
   lifecycle, Klarna widget states, redirection resolution priority).
 - The `:app` demo module — a working playground driving every recipe above against a sandbox
   session minted through alfred.
+
+---
+
+## 19. Refresh the session — cart changed, or session expired
+
+`setSession` swaps the session under a live checkout (web's `setSession`). Two triggers:
+
+```kotlin
+// 1 · The cart changed: your backend minted a new Client Session for the new amount.
+lifecycleScope.launch {
+    val widgetData = backend.createClientSession(cart)      // your own API
+    checkout.setSession(widgetData)                          // suspend; syncs the server clock first
+}
+
+// 2 · The session expired under the shopper: recover instead of restarting.
+lifecycleScope.launch {
+    checkout.sessionState.collect { state ->
+        if (state == SessionState.EXPIRED) {
+            try {
+                checkout.setSession(backend.createClientSession(cart))
+            } catch (e: PurseCheckoutException.SessionExpired) {
+                // The replacement was itself expired — the old session stays in force; ask again.
+            }
+        }
+    }
+}
+```
+
+What the shopper keeps: any primary method whose configuration is unchanged in the new session
+keeps its selection, its collected data and its rendered element — a half-typed card form survives
+a cart change. Anything else is rebuilt from the new session: changed or vanished methods get a new
+`itemGenerations` generation (so `rememberPaymentElement` hands you a fresh element), applied gift
+cards are dropped (they were tokenized against the old session), and the amount is the new one.
+
+Observe `checkout.paymentSession` for the swap itself — it's the right trigger to redraw the amount
+header and the method list — and `checkout.itemGenerations` if you remember anything per method
+outside `rememberPaymentElement`. Same session id is a no-op; a call while a payment is being
+submitted throws `IllegalStateException`.
