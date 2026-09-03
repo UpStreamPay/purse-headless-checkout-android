@@ -11,6 +11,8 @@ import eu.purse.core.payment.resolvedSaveTokenMode
 import eu.purse.core.vault.CardBrand
 import java.math.BigDecimal
 
+private const val SIMULABLE_LABEL = "simulable"
+
 /**
  * One `protocols.{partner}.{method}` entry turned into a means of payment — the Kotlin analog of
  * web's `PurseHeadlessCheckoutPaymentItem` hierarchy (`types/headless-checkout.ts`). [id] follows
@@ -57,6 +59,13 @@ data class PrimaryMethod(
 
     /** Whether the shopper can choose to save this card — web's `canBeRegistered`. */
     val canBeRegistered: Boolean get() = saveTokenMode.canBeRegistered
+
+    /**
+     * Whether the method quotes a BNPL instalment schedule via
+     * [eu.purse.checkout.PurseHeadlessCheckout.simulateLoan] — web's `simulable`, true when the
+     * configuration `labels` carry `"simulable"`.
+     */
+    val simulable: Boolean get() = configuration.labels.contains(SIMULABLE_LABEL)
 }
 
 /** A secondary (co-payment) method — gift cards, vouchers, loyalty. Drawn down before the primary. */

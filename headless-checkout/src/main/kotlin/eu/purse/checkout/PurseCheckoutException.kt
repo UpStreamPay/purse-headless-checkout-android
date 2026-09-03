@@ -76,4 +76,18 @@ sealed class PurseCheckoutException(
         message: String,
         code: PurseErrorCode = PurseErrorCode.FAILED_TO_INIT_SECONDARY_TOKEN,
     ) : PurseCheckoutException(message, code)
+
+    /** `simulateLoan` on a method whose configuration lacks the `simulable` label. */
+    class MethodNotSimulable(itemId: String) :
+        PurseCheckoutException(
+            "loan simulation is not available for $itemId",
+            PurseErrorCode.METHOD_IS_NOT_SIMULABLE,
+        )
+
+    /**
+     * The simulation API answered without usable schedule data (no `plugin_result`) — web's
+     * `INVALID_LOAN_SIMULATION`.
+     */
+    class LoanSimulationFailed(message: String, cause: Throwable? = null) :
+        PurseCheckoutException(message, PurseErrorCode.INVALID_LOAN_SIMULATION, cause)
 }

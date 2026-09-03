@@ -21,6 +21,8 @@ import eu.purse.checkout.validation.PaymentValidator
 import eu.purse.core.api.PaymentApiClient
 import eu.purse.core.environment.PurseEnvironment
 import eu.purse.core.payload.ValidationResult
+import eu.purse.core.payment.LoanProduct
+import eu.purse.core.payment.LoanSimulation
 import eu.purse.core.session.PurseSessionParams
 import eu.purse.core.session.SessionCodec
 import eu.purse.core.assets.PurseAssets
@@ -984,6 +986,68 @@ class PurseHeadlessCheckout private constructor(
     /** The saved tokens, minus filtered states — what [paymentTokens] renders. */
     private fun visibleTokens(): List<PaymentToken> =
         meansOfPayment.filterIsInstance<PaymentToken>().filterNot { it.disabled?.isFiltered == true }
+
+    // --- BNPL loan simulation (SDK-12216 / US-51) ---------------------------------------------------
+
+    /**
+     * Quote a BNPL instalment schedule for [product] with [method] — web's
+     * `method.simulateLoan(product)`. Only methods flagged [PrimaryMethod.simulable] (the
+     * `simulable` configuration label) answer; every other method fails fast with a dedicated code
+     * instead of a partner error. Runs the blocking call on `Dispatchers.IO`.
+     *
+     * The schedule carries counts and amounts only (no per-instalment dates) — see
+     * [LoanSimulation].
+     *
+     * @throws PurseCheckoutException.MethodNotSimulable `METHOD_IS_NOT_SIMULABLE` — [method] does
+     * not offer simulation.
+     * @throws PurseCheckoutException.LoanSimulationFailed `INVALID_LOAN_SIMULATION` — the API
+     * answered without usable schedule data.
+     * @throws PaymentApiException on network / HTTP failure.
+     */
+    suspend fun simulateLoan(method: PrimaryMethod, product: LoanProduct): LoanSimulation {
+        requireSimulable(method, product)
+        return withContext(Dispatchers.IO) {
+            try {
+                apiClient().getSimulation(method.partner, method.method, product)
+            } catch (e: PaymentApiException) {
+                throw e.asLoanSimulationFailureOrSelf()
+            }
+        }
+    }
+
+    /**
+     * Every schedule the partner offers for [product] (`…/simulation/…/multi`) — web's
+     * `getSimulationMulti`. Same preconditions and errors as [simulateLoan]; candidates the API
+     * returns without schedule data are skipped, so the list may be empty.
+     */
+    suspend fun simulateLoans(method: PrimaryMethod, product: LoanProduct): List<LoanSimulation> {
+        requireSimulable(method, product)
+        return withContext(Dispatchers.IO) {
+            apiClient().getSimulationMulti(method.partner, method.method, product)
+        }
+    }
+
+    private fun requireSimulable(method: PrimaryMethod, product: LoanProduct) {
+        if (!method.simulable) throw PurseCheckoutException.MethodNotSimulable(method.id)
+        // Web's monitoring proxy posts HEADLESS_CHECKOUT_METHOD_LOAN_SIM with the product on every
+        // simulateLoan call (`monitoringConfigs.ts`).
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_LOAN_SIM,
+            payload = monitoringPayload(
+                "partner" to method.partner.wireValue,
+                "method" to method.method.wireValue,
+                "amount" to product.amount.toPlainString(),
+                "currencyCode" to product.currencyCode,
+            ),
+        )
+    }
+
+    private fun PaymentApiException.asLoanSimulationFailureOrSelf(): Exception =
+        if (errorCode == PaymentApiClient.INVALID_LOAN_SIMULATION) {
+            PurseCheckoutException.LoanSimulationFailed(message ?: "invalid loan simulation", this)
+        } else {
+            this
+        }
 
     private fun apiClient(): PaymentApiClient =
         PaymentApiClient(params.apiKey, paymentApiRoot, params.entityId, session.id)
