@@ -3,6 +3,7 @@ package eu.purse.checkout
 import eu.purse.checkout.monitoring.CheckoutEventBus
 import eu.purse.checkout.monitoring.CheckoutEventCode
 import eu.purse.checkout.payment.item.DisabledState
+import eu.purse.checkout.payment.registration.RegistrationState
 import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.checkout.state.SessionState
 import eu.purse.core.api.InitGuard
@@ -754,5 +755,84 @@ class PurseHeadlessCheckoutTest {
             checkout.register(card, name = "birthday card")
         }
         assertEquals(PurseErrorCode.TOKEN_NAME_EXISTS, duplicate.code)
+    }
+
+    // --- keeping a temporary gift card ---------------------------------------------------------------
+
+    private fun temporaryGiftCard(
+        saveTokenMode: eu.purse.core.payment.SaveTokenMode,
+        id: String = "illicado-giftcard-7890",
+    ) = SecondaryToken(
+        id = id,
+        partner = Partner.Illicado,
+        method = Method.GiftCard,
+        pan = "9250004781234567890",
+        cvv = "123",
+        name = "",
+        balance = BigDecimal("10.00"),
+        saveTokenMode = saveTokenMode,
+    )
+
+    @Test
+    fun `a temporary gift card's registration follows its method's save-token policy`() {
+        val checkout = checkout()
+
+        // PREFER: the shopper can choose, and it starts registered.
+        val keepable = temporaryGiftCard(eu.purse.core.payment.SaveTokenMode.PREFER)
+        assertTrue(keepable.canBeRegistered)
+        assertTrue(checkout.registrationOf(keepable).registered)
+        checkout.registerSecondary(keepable, registered = false)
+        assertFalse(checkout.registrationOf(keepable).registered)
+        checkout.registerSecondary(keepable, name = "gift one")
+        assertEquals(RegistrationState(registered = true, name = "gift one"), checkout.registrationOf(keepable))
+
+        // NEVER (the fixture's illicado has no save_token settings): asking throws.
+        val never = temporaryGiftCard(eu.purse.core.payment.SaveTokenMode.NEVER, id = "illicado-giftcard-0000")
+        assertFalse(checkout.registrationOf(never).registered)
+        val thrown = assertThrows(PurseCheckoutException.WalletOperationFailed::class.java) {
+            checkout.registerSecondary(never)
+        }
+        assertEquals(PurseErrorCode.TOKEN_NOT_REGISTERABLE, thrown.code)
+
+        // Labels obey the same rules as cards.
+        val invalid = assertThrows(PurseCheckoutException.WalletOperationFailed::class.java) {
+            checkout.registerSecondary(keepable, name = "bad-label!")
+        }
+        assertEquals(PurseErrorCode.INVALID_TOKEN_NAME, invalid.code)
+        val duplicate = assertThrows(PurseCheckoutException.WalletOperationFailed::class.java) {
+            checkout.registerSecondary(keepable, name = "my visa")
+        }
+        assertEquals(PurseErrorCode.TOKEN_NAME_EXISTS, duplicate.code)
+    }
+
+    @Test
+    fun `a saved gift card is never registered again`() {
+        val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(CheckoutTestSessions.sessionWithSavedGiftCard()))
+        val saved = checkout.savedSecondaryTokens.value.single().asSecondaryToken()
+
+        assertFalse(saved.canBeRegistered)
+        assertFalse(checkout.registrationOf(saved).registered)
+        val thrown = assertThrows(PurseCheckoutException.WalletOperationFailed::class.java) {
+            checkout.registerSecondary(saved)
+        }
+        assertEquals(PurseErrorCode.TOKEN_NOT_REGISTERABLE, thrown.code)
+    }
+
+    @Test
+    fun `a registered temporary gift card's decision travels into validate`() {
+        FakePaymentApi().use { api ->
+            api.respond("validate", """{"global_status":"SUCCESS","results":[]}""")
+            val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(apiUrl = api.apiRoot))
+            val keepable = temporaryGiftCard(eu.purse.core.payment.SaveTokenMode.PREFER)
+            checkout.registerSecondary(keepable, name = "gift one")
+            checkout.applySecondary(keepable)   // 10.00 covers the 4.80 order alone
+            assertTrue(checkout.isPaymentFulfilled.value)
+
+            runBlocking { checkout.submitPayment() }
+
+            val item = org.json.JSONArray(api.requests.single { it.path.endsWith("/validate") }.body).getJSONObject(0)
+            assertTrue(item.getJSONObject("payment_preferences").getBoolean("registration"))
+            assertEquals("gift one", item.getJSONObject("payment_data").getJSONObject("card").getString("token_label"))
+        }
     }
 }

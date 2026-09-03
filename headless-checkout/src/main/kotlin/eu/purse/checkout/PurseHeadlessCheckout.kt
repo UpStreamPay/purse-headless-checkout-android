@@ -181,6 +181,9 @@ class PurseHeadlessCheckout private constructor(
     /** Per-method save-token decisions — web's `registration` stores. */
     private val registrationByMethod = mutableMapOf<String, RegistrationState>()
 
+    /** Per-temporary-gift-card save decisions, keyed by token id — web's temporary token `registration`. */
+    private val registrationBySecondaryToken = mutableMapOf<String, RegistrationState>()
+
     private val _remainingAmountToPay = MutableStateFlow(splitter.remaining)
     val remainingAmountToPay: StateFlow<BigDecimal> = _remainingAmountToPay.asStateFlow()
 
@@ -380,6 +383,46 @@ class PurseHeadlessCheckout private constructor(
             payload = monitoringPayload(
                 "partner" to method.partner.wireValue,
                 "method" to method.method.wireValue,
+                "saveToken" to registered,
+            ),
+        )
+    }
+
+    /**
+     * The current save decision for a **temporary** gift card (one the shopper just typed and
+     * [getSecondaryToken] tokenized) — defaults from its method's `SaveTokenMode`, like primaries.
+     * Always `registered = false` for a saved instrument.
+     */
+    fun registrationOf(token: SecondaryToken): RegistrationState =
+        if (token.isSaved) RegistrationState(registered = false)
+        else registrationBySecondaryToken[token.id] ?: RegistrationState(token.saveTokenMode.registeredByDefault)
+
+    /**
+     * Ask to keep a temporary gift card for the next session, optionally under [name] — web's
+     * `temporaryToken.register(value, {name})`. Travels into `/validate` as
+     * `payment_preferences.registration` + `payment_data.card.token_label` on that card's item.
+     * Same label rules as [register].
+     *
+     * @throws PurseCheckoutException.WalletOperationFailed TOKEN_NOT_REGISTERABLE (the method's
+     * policy doesn't let the shopper choose, or the token is already saved) / INVALID_TOKEN_NAME /
+     * TOKEN_NAME_EXISTS.
+     */
+    fun registerSecondary(token: SecondaryToken, registered: Boolean = true, name: String? = null) {
+        if (!token.canBeRegistered) {
+            throw PurseCheckoutException.WalletOperationFailed(
+                if (token.isSaved) "${token.id} is already a saved instrument"
+                else "${token.id} cannot be registered (save_token_mode=${token.saveTokenMode})",
+                PurseErrorCode.TOKEN_NOT_REGISTERABLE,
+            )
+        }
+        if (name != null) validateTokenLabel(name, excludingTokenId = null)
+        registrationBySecondaryToken[token.id] =
+            RegistrationState(registered, name ?: registrationBySecondaryToken[token.id]?.name)
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_SECONDARY_TOKEN_REGISTER,
+            payload = monitoringPayload(
+                "partner" to token.partner.wireValue,
+                "method" to token.method.wireValue,
                 "saveToken" to registered,
             ),
         )
@@ -1110,9 +1153,14 @@ class PurseHeadlessCheckout private constructor(
         return try {
             // Every primary method in the split carries its save-token decision (defaults from its
             // SaveTokenMode) — web's preValidateItems enhancement.
+            // Temporary gift cards ride the same map, keyed by their token id (never a method id).
             val registrations = splitter.splits
                 .mapNotNull { it.source as? PrimaryMethod }
-                .associate { it.id to registrationOf(it) }
+                .associate { it.id to registrationOf(it) } +
+                splitter.splits
+                    .mapNotNull { it.source as? SecondaryToken }
+                    .filter { it.canBeRegistered }
+                    .associate { it.id to registrationOf(it) }
             val result = PaymentValidator(apiClient()).execute(
                 splitter.splits,
                 session.source,

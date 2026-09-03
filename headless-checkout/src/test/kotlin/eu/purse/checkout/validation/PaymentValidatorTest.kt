@@ -1,7 +1,9 @@
 package eu.purse.checkout.validation
 
+import eu.purse.checkout.FakePaymentApi
 import eu.purse.checkout.PurseCheckoutException
 import eu.purse.checkout.payment.item.PrimaryMethod
+import eu.purse.checkout.payment.registration.RegistrationState
 import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.checkout.payment.split.PaymentSplit
 import eu.purse.checkout.payment.split.PursePaymentSplitter
@@ -11,6 +13,7 @@ import eu.purse.core.payment.MethodConfiguration
 import eu.purse.core.payment.MethodSettings
 import eu.purse.core.payment.Partner
 import eu.purse.core.payment.RegistrationMode
+import eu.purse.core.payment.SaveTokenMode
 import eu.purse.core.session.LegacyPaymentSession
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
@@ -156,5 +159,62 @@ class PaymentValidatorTest {
         // fails plugin resolution — which is itself proof the guard let the pair through.
         assertFalse(error.message!!.contains("repeated split source"))
         assertTrue(error is PurseCheckoutException.NoPluginRegistered)
+    }
+
+    // --- what a secondary item carries to /validate -------------------------------------------------
+
+    private fun validateItemsSent(api: FakePaymentApi): List<org.json.JSONObject> {
+        val body = org.json.JSONArray(api.requests.single { it.path.endsWith("/validate") }.body)
+        return (0 until body.length()).map { body.getJSONObject(it) }
+    }
+
+    @Test
+    fun `a temporary gift card the shopper asked to keep carries registration and its label`() {
+        FakePaymentApi().use { api ->
+            api.respond("validate", """{"global_status":"SUCCESS","results":[]}""")
+            val token = giftCard("illicado-giftcard-1111").copy(saveTokenMode = SaveTokenMode.PREFER)
+
+            runBlocking {
+                PaymentValidator(PaymentApiClient("k", api.apiRoot, "e", "s-1")).execute(
+                    listOf(PaymentSplit(BigDecimal("10.00"), token)),
+                    session,
+                    registrationByMethod = mapOf(token.id to RegistrationState(registered = true, name = "gift one")),
+                )
+            }
+
+            val item = validateItemsSent(api).single()
+            assertTrue(item.getJSONObject("payment_preferences").getBoolean("registration"))
+            val card = item.getJSONObject("payment_data").getJSONObject("card")
+            assertEquals("gift one", card.getString("token_label"))
+            // The instrument itself still travels — the label is added, nothing replaced.
+            assertEquals(token.pan, card.getString("number"))
+            assertEquals("123", card.getString("csc"))
+        }
+    }
+
+    @Test
+    fun `a gift card not asked to be kept, and a saved one, carry no registration at all`() {
+        FakePaymentApi().use { api ->
+            api.respond("validate", """{"global_status":"SUCCESS","results":[]}""")
+            val declined = giftCard("illicado-giftcard-1111").copy(saveTokenMode = SaveTokenMode.PREFER)
+            val saved = giftCard("gc-saved").copy(isSaved = true)
+
+            runBlocking {
+                PaymentValidator(PaymentApiClient("k", api.apiRoot, "e", "s-1")).execute(
+                    listOf(PaymentSplit(BigDecimal("4.00"), declined), PaymentSplit(BigDecimal("6.00"), saved)),
+                    session,
+                    registrationByMethod = mapOf(
+                        declined.id to RegistrationState(registered = false, name = "ignored"),
+                        // A stale "registered" entry for a saved instrument must never re-register it.
+                        saved.id to RegistrationState(registered = true, name = "never sent"),
+                    ),
+                )
+            }
+
+            validateItemsSent(api).forEach { item ->
+                assertFalse(item.getJSONObject("payment_preferences").has("registration"))
+                assertFalse(item.getJSONObject("payment_data").getJSONObject("card").has("token_label"))
+            }
+        }
     }
 }

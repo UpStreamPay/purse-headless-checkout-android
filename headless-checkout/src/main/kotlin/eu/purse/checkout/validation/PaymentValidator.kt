@@ -58,12 +58,17 @@ class PaymentValidator(private val api: PaymentApiClient) {
                 is SecondaryToken -> {
                     val config = SecondaryConfigs.forMethod(source.partner, source.method)
                         ?: throw PurseCheckoutException.NoSecondaryConfig("no secondary config for ${source.id}")
-                    payloads += ItemPayload(
+                    val payload = ItemPayload(
                         partner = source.partner,
                         method = source.method,
                         amount = split.amount,
                         paymentData = config.buildValidatePaymentData(source),
                     )
+                    // A gift card the shopper asked to keep — web's `buildSecondaryValidateItemPayload`:
+                    // `payment_preferences.registration` + `card.token_label` only when registered,
+                    // and never for an instrument that is already saved.
+                    val registration = registrationByMethod[source.id]?.takeIf { it.registered && !source.isSaved }
+                    payloads += if (registration != null) enhanceWithRegistration(payload, registration) else payload
                 }
 
                 is PrimaryMethod -> {
