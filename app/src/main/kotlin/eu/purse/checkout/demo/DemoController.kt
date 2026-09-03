@@ -12,6 +12,7 @@ import eu.purse.checkout.PurseHeadlessCheckout
 import eu.purse.checkout.payment.item.PaymentItem
 import eu.purse.checkout.payment.item.PaymentToken
 import eu.purse.checkout.payment.item.PrimaryMethod
+import eu.purse.checkout.payment.item.SavedSecondaryToken
 import eu.purse.checkout.payment.item.SecondaryMethod
 import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.core.payment.Method
@@ -573,6 +574,8 @@ class DemoController(private val activity: ComponentActivity) {
                 .onSuccess { token ->
                     state.token = token
                     state.balanceLabel = balanceLabel(token)
+                    // The "keep this card" box starts where the method's save_token_mode puts it.
+                    state.register = co.registrationOf(token).registered
                 }
                 .onFailure { e ->
                     state.token = null
@@ -607,9 +610,54 @@ class DemoController(private val activity: ComponentActivity) {
             }
         }
         state.error = null
+        // The save decision rides the token's own /validate item (registration + token_label) —
+        // recorded before applying, and only when the method lets the shopper choose.
+        if (token.canBeRegistered) {
+            try {
+                co.registerSecondary(token, state.register, state.label.trim().ifEmpty { null })
+            } catch (e: Exception) {
+                state.error = e.message
+                return
+            }
+        }
         co.applySecondary(token, requested)
         val applied = co.amountSplit.value.firstOrNull { it.source.id == token.id }?.amount ?: BigDecimal.ZERO
         state.appliedLabel = activity.getString(R.string.giftcard_applied, applied.toString())
+        sessionDetails = summarize(co)
+    }
+
+    // --- saved gift cards ---------------------------------------------------------------------------
+
+    /** One line per saved gift card: its name plus balance, "checking…", or why it's unavailable. */
+    fun savedGiftCardLabel(token: SavedSecondaryToken): String {
+        val name = token.name.ifBlank { "•••• ${token.pan.takeLast(4)}" }
+        return when {
+            token.disabled != null -> activity.getString(R.string.giftcard_unavailable, name, token.disabled!!.code.name)
+            !token.balanceResolved -> activity.getString(R.string.giftcard_balance_pending, name)
+            token.totalBalance.compareTo(token.balance) != 0 ->
+                activity.getString(R.string.giftcard_balance_partial, name, token.balance.toString(), token.totalBalance.toString())
+            else -> activity.getString(R.string.giftcard_balance, name, token.balance.toString())
+        }
+    }
+
+    /** Whether [token] is currently drawn into the split. */
+    fun isSavedGiftCardApplied(token: SavedSecondaryToken): Boolean =
+        checkout?.amountSplit?.value?.any { it.source.id == token.id } == true
+
+    /** Draw a saved gift card in for as much as the order still needs (no amount control — kept small). */
+    fun applySavedGiftCard(token: SavedSecondaryToken) {
+        val co = checkout ?: return
+        try {
+            co.applySecondary(token)
+            sessionDetails = summarize(co)
+        } catch (e: Exception) {
+            snackbar = activity.getString(R.string.giftcard_error, e.message)
+        }
+    }
+
+    fun removeSavedGiftCard(token: SavedSecondaryToken) {
+        val co = checkout ?: return
+        co.removeSecondary(token)
         sessionDetails = summarize(co)
     }
 
@@ -891,6 +939,9 @@ class GiftCardFormState {
     var pan by mutableStateOf("")
     var cvv by mutableStateOf("")
     var amount by mutableStateOf("")
+    /** "Keep this card for next time" — only shown when the tokenized card `canBeRegistered`. */
+    var register by mutableStateOf(false)
+    var label by mutableStateOf("")
     var token by mutableStateOf<SecondaryToken?>(null)
     var balanceLabel by mutableStateOf<String?>(null)
     var appliedLabel by mutableStateOf<String?>(null)

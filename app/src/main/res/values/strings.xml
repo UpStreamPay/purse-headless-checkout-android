@@ -48,6 +48,13 @@
     <string name="giftcard_balance_partial">%1$s — balance %2$s of %3$s</string>
     <string name="giftcard_applied">Applied %1$s</string>
     <string name="giftcard_error">Couldn\'t read that card: %1$s</string>
+    <string name="giftcard_save">Keep this card for next time</string>
+    <string name="hint_giftcard_label">Name (optional)</string>
+    <string name="section_saved_giftcards">Your saved gift cards</string>
+    <string name="giftcard_balance_pending">%1$s — checking balance…</string>
+    <string name="giftcard_unavailable">%1$s — unavailable (%2$s)</string>
+    <string name="btn_apply_saved_giftcard">Use</string>
+    <string name="btn_remove_giftcard">Remove</string>
     <string name="method_klarna">Klarna</string>
     <string name="method_card">Card</string>
     <string name="method_redirection">Redirect to the payment page</string>

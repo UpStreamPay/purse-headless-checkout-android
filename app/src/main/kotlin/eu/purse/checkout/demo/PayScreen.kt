@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LocalContentColor
 import androidx.compose.material3.MaterialTheme
@@ -48,6 +49,7 @@ import com.paypal.android.paymentbuttons.PaymentButtonShape
 import eu.purse.checkout.PurseHeadlessCheckout
 import eu.purse.checkout.payment.item.PaymentToken
 import eu.purse.checkout.payment.item.PrimaryMethod
+import eu.purse.checkout.payment.item.SavedSecondaryToken
 import eu.purse.checkout.payment.item.SecondaryMethod
 import eu.purse.checkout.payment.split.PaymentSplit
 import eu.purse.core.payment.Method
@@ -108,6 +110,14 @@ fun PayScreen(controller: DemoController) {
             if (methods.isNotEmpty()) {
                 SectionTitle(stringResource(R.string.section_primary))
                 methods.forEach { PrimaryMethodRow(controller, it) }
+            }
+
+            // Saved gift cards resolve their balance in the background — observe the flow so the
+            // rows move from "checking…" to a balance (or "unavailable") on their own.
+            val savedGiftCards by checkout.savedSecondaryTokens.collectAsState()
+            if (savedGiftCards.isNotEmpty()) {
+                SectionTitle(stringResource(R.string.section_saved_giftcards))
+                savedGiftCards.forEach { SavedGiftCardRow(controller, it) }
             }
 
             val giftCards = controller.giftCardMethods
@@ -359,6 +369,36 @@ private fun KlarnaWidget(controller: DemoController, method: PrimaryMethod) {
 }
 
 /**
+ * One **saved** gift card: its balance arrives in the background (the row says "checking…" until
+ * then), and a single tap draws it in for as much as the order needs — no number, no CVC to type.
+ */
+@Composable
+private fun SavedGiftCardRow(controller: DemoController, token: SavedSecondaryToken) {
+    val applied = controller.isSavedGiftCardApplied(token)
+    DemoCard {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = controller.savedGiftCardLabel(token),
+                style = MaterialTheme.typography.titleSmall,
+                color = if (token.disabled != null) MaterialTheme.colorScheme.onSurfaceVariant else LocalContentColor.current,
+                modifier = Modifier.weight(1f),
+            )
+            if (applied) {
+                SmallButton(
+                    text = stringResource(R.string.btn_remove_giftcard),
+                    onClick = { controller.removeSavedGiftCard(token) },
+                )
+            } else if (token.disabled == null && token.balanceResolved) {
+                SmallButton(
+                    text = stringResource(R.string.btn_apply_saved_giftcard),
+                    onClick = { controller.applySavedGiftCard(token) },
+                )
+            }
+        }
+    }
+}
+
+/**
  * One gift card: check its balance (`/init`, which does **not** touch the split), then decide what
  * to contribute. Two deliberate steps — the amount controls only appear once a balance is known.
  */
@@ -417,6 +457,28 @@ private fun GiftCardRow(controller: DemoController, method: SecondaryMethod) {
                         singleLine = true,
                         modifier = Modifier.fillMaxWidth(),
                     )
+                    // Only when the method's save_token_mode lets the shopper choose (PREFER /
+                    // PREFER_NO) — ALWAYS and NEVER give nothing to decide.
+                    if (state.token?.canBeRegistered == true) {
+                        Row(
+                            Modifier
+                                .fillMaxWidth()
+                                .clickable { state.register = !state.register },
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Checkbox(checked = state.register, onCheckedChange = { state.register = it })
+                            Text(text = stringResource(R.string.giftcard_save), style = MaterialTheme.typography.bodyMedium)
+                        }
+                        if (state.register) {
+                            OutlinedTextField(
+                                value = state.label,
+                                onValueChange = { state.label = it },
+                                label = { Text(stringResource(R.string.hint_giftcard_label)) },
+                                singleLine = true,
+                                modifier = Modifier.fillMaxWidth(),
+                            )
+                        }
+                    }
                     SmallButton(
                         text = stringResource(R.string.btn_apply_giftcard),
                         onClick = { controller.applyGiftCard(state) },
