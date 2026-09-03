@@ -241,8 +241,12 @@ registration incl. `payment_preferences.registration` + `card.token_label`); mer
 (`onBeforeValidate` / `onAfterValidate` / `onRedirection` — the last is web's `redirectionHandler`,
 threaded to every coordinator through the `RedirectionDelegate` seam on its host; a throwing hook
 surfaces as a typed `HookFailed` without moving the split or the session state); locale-aware
-overridable card-form texts + a
-`PurseTheme` mapped onto SecureFields' `VaultStyles`; CDN method icons (`PurseAssets`); typed
+overridable card-form texts (`CardFormTexts`, one `FieldTexts` per field: label / placeholder / help
+text / required and format errors, web's `hostedForm` translations as defaults) + a `PurseTheme` with
+web's scopes (`global` / `input` / `label` / `helperText`, `:focus` / `:invalid` / `:valid` variants)
+and web's fallback chain, applied to SecureFields' `VaultStyles` **and** to the SDK's own
+`PurseCardForm` (labels, help texts, error messages around the secure fields — what
+`PaymentElementUi` renders for a card); CDN method icons (`PurseAssets`); typed
 payment confirmation (`paymentStatus()` / `awaitPaymentOutcome()` over `sessionTransactions()`);
 and a hardened redirect WebView (progress, first-page watchdog, network-failure surfacing,
 process-death safety); BNPL loan simulation (`PrimaryMethod.simulable` off the `simulable` label,

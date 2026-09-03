@@ -667,25 +667,41 @@ val checkout = PurseHeadlessCheckout.init(
     options = PluginOptions(
         locale = "fr-FR",   // browser-data locale; card-form copy localizes via resources
         cardFormTexts = CardFormTexts(
-            cardNumberPlaceholder = "N° de carte",     // overrides win over values-fr/ resources
-            cvvPlaceholder = "CVV / CVC",
+            // One FieldTexts per secure field — label, placeholder, help text, and the two error
+            // messages. Every null falls back to the SDK's values-fr/ resources.
+            cardNumber = CardFormTexts.FieldTexts(label = "N° de carte", formatError = "Ce numéro est invalide."),
+            cvv = CardFormTexts.FieldTexts(label = "CVV / CVC", helperText = "3 chiffres au dos de la carte."),
         ),
         theme = PurseTheme(
+            // `global` is the base every scope falls back to (web's `global`).
+            global = PurseTheme.Text(color = "#1A1A1A", fontFamily = "sans-serif", fontSize = "14px"),
+            globalInvalid = PurseTheme.Text(color = "#B3261E"),        // labels, messages AND inputs turn red
             input = PurseTheme.FieldStyle(
-                color = "#1A1A1A",
                 placeholderColor = "#9AA0A6",
                 backgroundColor = "#FFFFFF",
                 fontSize = "16px",
             ),
             inputFocus = PurseTheme.FieldStyle(color = "#0B57D0"),
-            inputInvalid = PurseTheme.FieldStyle(color = "#B3261E"),
+            label = PurseTheme.Text(fontWeight = "600"),
+            helperText = PurseTheme.Text(fontSize = "12px", color = "#5F6368"),
+            gap = "12px",
         ),
     ),
 )
 ```
 
+The theme reaches the **input fields** (SecureFields' `VaultStyles`), the **labels**, the **help
+texts** and the **error messages** the SDK's card form renders around them (`PurseCardForm`, which
+is what `PaymentElementUi` shows for a card element). Resolution follows web's `Theme.build()`:
+each key is read from the scope variant, then the scope, then the global variant, then `global`,
+and anything you leave `null` keeps web's default (`#1f2933` text, `#ba2525` invalid, `#0f8613`
+valid, 14px, 8px gap). Values are CSS-like strings: `#rrggbb` / `#rrggbbaa` / `transparent`
+colours, `"14px"` sizes (read as sp), `"400"`/`"bold"` weights, generic font families.
+
 Without overrides the card form falls back to the SDK's localized resources (`values/`,
-`values-fr/`, …), following the device locale.
+`values-fr/`, …), following the device locale — the same copy as web's hosted form (`Card number`,
+`Expiration date`, `Security code`, `Cardholder name`, their placeholders, help texts and
+`… required.` / `Invalid ….` messages).
 
 ---
 

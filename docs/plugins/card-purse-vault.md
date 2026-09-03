@@ -11,7 +11,7 @@ fields themselves.
 |---|---|
 | Partner / method | **any** partner / `creditcard` whose `configurations.vault.vendor` is `purse` |
 | Family | **vault** — `PluginRegistry.registerVault(VaultVendor.PURSE)`, keyed by vault vendor, not `(partner, method)`, and resolved **first** (before generic/partner) |
-| Native SDK | `eu.purse.securefields` (`SecureFieldsAndroid`, `VaultForm`/`VaultField`) |
+| Native SDK | `eu.purse.securefields` (`SecureFieldsAndroid`, `VaultField`) wrapped by the SDK's `PurseCardForm` |
 | UI surface | **Compose-first** — `rememberCardCoordinator(...)`, no `onCreate` construction caveat |
 | Native step vs `/validate` | tokenize **before**, then `/init` and `/validate` back to back |
 | Gates `isPaymentFulfilled`? | **Yes** — the only plugin that does |
@@ -52,7 +52,7 @@ sequenceDiagram
     Co->>Ck: setFulfilled(item, false)
     Note over Co,Ck: a mounted-but-empty form means NOT payable
     Co->>SF: render()
-    App->>App: VaultForm(coordinator.sdk)
+    App->>App: PurseCardForm(coordinator)
 
     loop shopper types
         SF-->>Co: onFormValid(hasErrors) / onBrandDetected
@@ -159,8 +159,9 @@ fun CardPaymentForm(checkout: PurseHeadlessCheckout, method: PrimaryMethod, list
     val host = remember(method.id) { checkout.cardHost(method) }
     val coordinator = rememberCardCoordinator(host, listener)
 
-    // Full form; or VaultField(coordinator.sdk.cardNumber) etc. for a custom layout.
-    VaultForm(coordinator.sdk, modifier = Modifier.fillMaxWidth().height(220.dp))
+    // The SDK's form: labels, help texts, error messages and PluginOptions.theme around the secure
+    // fields. Or SecureFields' bare VaultForm(coordinator.sdk) / VaultField(...) for your own layout.
+    PurseCardForm(coordinator, Modifier.fillMaxWidth())
 
     // Hoist submit for your own Pay button; enable it off isPaymentFulfilled (or coordinator.formValid).
     LaunchedEffect(coordinator) { onSubmitReady { coordinator.submit() } }
@@ -180,7 +181,7 @@ fun SavedCardForm(checkout: PurseHeadlessCheckout, token: PaymentToken, listener
     val coordinator = rememberCardCoordinator(host, listener)
 
     if (coordinator.mode.rendersForm) {                                   // TOKEN_CVV: just the CVV field
-        VaultForm(coordinator.sdk, modifier = Modifier.fillMaxWidth().height(56.dp))
+        PurseCardForm(coordinator, Modifier.fillMaxWidth())
     }
     LaunchedEffect(coordinator) { onSubmitReady { coordinator.submit() } }
 }

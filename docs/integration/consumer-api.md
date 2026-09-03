@@ -467,9 +467,26 @@ shopper able to pick another method rather than showing them a failure screen.
 
 **Compose-first** — unlike `GooglePayCoordinator`/`KlarnaCoordinator` above (plain classes driving
 View-system widgets), the card plugin's interactive half is a `@Composable` function. Rendering it
-requires the SecureFields Android SDK's own Compose surface (`VaultForm`/`VaultField`) — your app
-needs a Compose entry point somewhere in its view hierarchy (this SDK's own demo is Compose
-throughout; a `ComposeView` embedded in an otherwise View-based layout works just as well).
+goes through the SDK's own `PurseCardForm(coordinator)` (or SecureFields' bare `VaultForm`/`VaultField`
+when you want no labels or messages) — your app needs a Compose entry point somewhere in its view
+hierarchy (this SDK's own demo is Compose throughout; a `ComposeView` embedded in an otherwise
+View-based layout works just as well).
+
+**`PurseCardForm(coordinator: CardCoordinator, modifier: Modifier = Modifier)`** — the card form
+web's hosted form renders: each secure field with its **label** above, its **help text** under it
+while focused, and its **error message** in place of the help text when the shopper leaves it empty
+(`requiredError`) or SecureFields rejects its content (`formatError`). It renders the four fields in
+`FRESH_CARD`, only the CVV in `TOKEN_CVV`, nothing in `TOKEN_NO_CVV`, and sizes itself — no fixed
+height needed. This is what `PaymentElementUi` shows for a card element.
+
+Copy comes from `PluginOptions.cardFormTexts` (`CardFormTexts`, one `CardFormTexts.FieldTexts` per
+field: `label`, `placeholder`, `helperText`, `requiredError`, `formatError`), every `null` falling
+back to the SDK's localized `purse_card_*` resources — web's `hostedForm` translations, in English and
+French. Styling comes from `PluginOptions.theme` (`PurseTheme`): the `input*` scopes reach
+SecureFields' `VaultStyles`, `label*` and `helperText*` reach the texts around them, `global*` is the
+base every scope falls back to and `gap` the spacing between fields. `PurseTheme.resolve()` applies
+web's `Theme.build()` order — scope variant → scope → global variant → global — over web's default
+theme, so a partial theme never leaves a hole. See recipe 16.
 
 One trap worth naming: `rememberCardCoordinator` keys its SecureFields instance on the `host` object,
 so build the host with `remember(...)` rather than inline —
@@ -502,7 +519,8 @@ Pay/Klarna) — call it from anywhere in your composition; its 3-D Secure redire
 
 | Member | Signature | Notes |
 |---|---|---|
-| `sdk` | `val sdk: SecureFieldsAndroid` | Render this with SecureFields' own `VaultForm(coordinator.sdk)` (full form, or just the CVV field in `TOKEN_CVV`) or `VaultField(coordinator.sdk.cardNumber)` etc. (custom layout, one field at a time) — only when `mode.rendersForm`. |
+| `sdk` | `val sdk: SecureFieldsAndroid` | The live SecureFields instance. Render it through `PurseCardForm(coordinator)` (labels, help texts, errors, theme), or with SecureFields' bare `VaultForm(coordinator.sdk)` / `VaultField(coordinator.sdk.cardNumber)` for your own layout — only when `mode.rendersForm`. |
+| `theme` | `val theme: PurseTheme.Resolved` | The merchant's `PluginOptions.theme` resolved over web's defaults — what `PurseCardForm` styles with, exposed for a custom layout that wants the same values. |
 | `mode` | `val mode: CardCoordinator.Mode` | `FRESH_CARD` (a `PrimaryMethod` host), `TOKEN_CVV` (a `PaymentToken` host whose `requiresCvv` is `true`: CVV-only form) or `TOKEN_NO_CVV` (payable as-is, nothing to render). `mode.rendersForm` is `false` only for the last. |
 | `formValid` | `var formValid: Boolean` (Compose state) | Whether the card form currently validates — `false` until every configured field is valid (always `true` in `TOKEN_NO_CVV`). Drive your "Pay" button's `enabled` off this, or off `isPaymentFulfilled`, which the coordinator keeps in step for you. |
 | `submit` | `fun submit()` | Tokenizes via SecureFields (the card, or just the CVV of a saved one), then runs `/init`+`/validate` through `host`; in `TOKEN_NO_CVV` it skips tokenization. Call once `formValid` is `true` and the shopper tapped "Pay". No-op while a prior tap's flow is still in progress, and a no-op (never an error — an unfilled form is not a failed payment) while the form isn't complete and valid. |
