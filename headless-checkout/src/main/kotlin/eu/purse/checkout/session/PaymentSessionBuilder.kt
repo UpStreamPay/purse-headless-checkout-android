@@ -4,7 +4,10 @@ import eu.purse.checkout.payment.item.MethodAvailability
 import eu.purse.checkout.payment.item.PaymentItem
 import eu.purse.checkout.payment.item.PaymentToken
 import eu.purse.checkout.payment.item.PrimaryMethod
+import eu.purse.checkout.payment.item.SavedSecondaryToken
 import eu.purse.checkout.payment.item.SecondaryMethod
+import eu.purse.checkout.payment.secondary.SecondaryConfigs
+import eu.purse.checkout.payment.secondary.SecondaryTakePolicy
 import eu.purse.core.payment.RegistrationMode
 import eu.purse.core.session.LegacyPaymentSession
 import java.math.BigDecimal
@@ -63,12 +66,20 @@ object PaymentSessionBuilder {
                 val disabled = MethodAvailability.buildTimeDisabledFor(configuration, primaryReach)
                     ?: MethodAvailability.disabledFor(configuration, isInformationRequest, primaryReach)
 
-                // Saved cards ride along their method — one PaymentToken per integrated_tokens[]
-                // row. Stripped from information-request sessions (web `payment/utils.ts`: the
-                // goal is data collection, not paying with saved cards).
+                // Saved instruments ride along their method — one item per integrated_tokens[]
+                // row: a PaymentToken (card-on-file, a primary) under a primary method, a
+                // SavedSecondaryToken (gift card on file) under a secondary one — web's
+                // `buildPrimaryPaymentToken` vs `buildSecondaryPaymentToken` split. Stripped from
+                // information-request sessions (web `payment/utils.ts`: the goal is data
+                // collection, not paying with saved instruments).
                 if (!isInformationRequest) {
+                    val takePolicy = SecondaryConfigs.forMethod(partner, method)?.takePolicy ?: SecondaryTakePolicy.NONE
                     entry.integratedTokens.forEach { token ->
-                        items += PaymentToken.from(token, partner, method, configuration, disabled)
+                        items += if (configuration.isSecondary) {
+                            SavedSecondaryToken.from(token, partner, method, configuration, disabled, takePolicy)
+                        } else {
+                            PaymentToken.from(token, partner, method, configuration, disabled)
+                        }
                     }
                 }
 
