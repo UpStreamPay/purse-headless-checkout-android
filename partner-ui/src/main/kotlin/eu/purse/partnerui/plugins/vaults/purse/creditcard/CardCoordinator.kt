@@ -81,7 +81,7 @@ fun rememberCardCoordinator(host: CardHost, listener: PaymentElementListener): C
         host.supportedBrands.map { Brand.fromString(it.wireValue) }
             .filter { it != Brand.UNKNOWN }
             .distinct()
-            .ifEmpty { listOf(Brand.VISA, Brand.MASTERCARD, Brand.CB) }
+            .ifEmpty { listOf(Brand.VISA, Brand.MASTERCARD, Brand.CARTE_BANCAIRE) }
     }
     // Placeholder copy: merchant overrides (PluginOptions.cardFormTexts) win; otherwise the SDK's
     // localized resources (values/, values-fr/, …) — web's HostedFormUIOptions-over-translations.
@@ -293,7 +293,7 @@ private fun Brand.toGatewayScheme(): String? = when (this) {
     Brand.VISA -> "VISA"
     Brand.MASTERCARD -> "MASTERCARD"
     Brand.AMEX -> "AMERICAN_EXPRESS"
-    Brand.CB -> "CARTE_BANCAIRE"
+    Brand.CARTE_BANCAIRE -> "CARTE_BANCAIRE"
     Brand.DISCOVER -> "DISCOVER"
     Brand.DINERS -> "DINERS_CLUB"
     Brand.JCB -> "JCB"
