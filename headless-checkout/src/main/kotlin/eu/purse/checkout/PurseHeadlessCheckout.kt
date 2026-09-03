@@ -260,7 +260,9 @@ class PurseHeadlessCheckout private constructor(
         // Web emits CREATE + SET_SESSION + READY across init/setSession; one construction here.
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_CREATE,
-            payload = monitoringPayload("sessionType" to "v2", "user_agent" to "android"),
+            // Web sends navigator.userAgent here; the platform itself travels on the message
+            // envelope (`platform: android`), so this stays a genuine user agent.
+            payload = monitoringPayload("sessionType" to "v2", "user_agent" to androidUserAgent()),
         )
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_SET_SESSION,
@@ -1584,6 +1586,13 @@ class PurseHeadlessCheckout private constructor(
         /** SDK version stamped onto every monitoring message — web's `version` extra. */
         const val VERSION = "0.1.0"
 
+        /**
+         * The process's HTTP user agent (`Dalvik/2.1.0 (Linux; U; Android 14; Pixel 8 Build/…)`) —
+         * what the runtime sends itself, available without a Context. Falls back to `"android"`.
+         */
+        internal fun androidUserAgent(): String =
+            System.getProperty("http.agent")?.takeIf { it.isNotBlank() } ?: "android"
+
         @Volatile
         private var backgroundFlushInstalled = false
 
@@ -1602,7 +1611,9 @@ class PurseHeadlessCheckout private constructor(
                 entityId = params.entityId,
                 paymentSessionId = sessionId,
                 version = VERSION,
-                wrapper = "android",
+                // `wrapper` keeps web's meaning — which product embeds the SDK (`direct` / `dropin`);
+                // a merchant integrating this SDK is `direct`. The platform is the envelope's own field.
+                wrapper = "direct",
             )
             val bus = CheckoutEventBus.getInstance()
             bus.setLogProcessor { batch -> logger.sendLogs(batch.map { it.toJson() }) }

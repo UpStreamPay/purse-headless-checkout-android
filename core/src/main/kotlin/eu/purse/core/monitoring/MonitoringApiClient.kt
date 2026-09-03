@@ -11,7 +11,8 @@ import java.util.concurrent.Executors
 /**
  * Ships monitoring event batches to `POST {root}?api-key=…` — the Kotlin port of web sdk's
  * `FetchMonitoringAPI` (`monitoring-api.ts`). Each event is wrapped in the same message envelope:
- * `{event, instanceId, entityId?, paymentSessionId?, walletSessionId?, version?, wrapper?, env}`.
+ * `{event, instanceId, entityId?, paymentSessionId?, walletSessionId?, version?, wrapper?, env, platform}`
+ * — web's envelope plus the `platform` the native vault SDKs already send.
  *
  * Fire-and-forget: sends happen on a dedicated daemon worker (the Android stand-in for
  * `navigator.sendBeacon`) and failures are logged nowhere louder than a swallowed exception — a
@@ -21,6 +22,13 @@ class MonitoringApiClient(
     private val apiKey: String,
     monitoringApiRoot: String,
     private val envWireValue: String,
+    /**
+     * Which SDK family emitted the batch — the same top-level `platform` the native SecureFields
+     * loggers stamp on `/widget/secure_fields` (`"android"` / `"ios"`; web sends `"web"`). This is
+     * the field to filter a platform on; `wrapper` keeps its web meaning (which product embeds the
+     * SDK: `direct` or `dropin`).
+     */
+    private val platform: String = PLATFORM_ANDROID,
 ) {
     private val root: String = monitoringApiRoot.trimEnd('/')
 
@@ -54,6 +62,7 @@ class MonitoringApiClient(
             extras.forEach { (key, value) -> message.put(key, value) }
             message.put("instanceId", instanceId)
             message.put("env", envWireValue)
+            message.put("platform", platform)
             body.put(message)
         }
         EXECUTOR.execute { runCatching { post(body.toString()) } }
@@ -78,6 +87,7 @@ class MonitoringApiClient(
     }
 
     companion object {
+        const val PLATFORM_ANDROID = "android"
         /** Process-scoped analog of web's `window.__PURSE_INSTANCE_ID__`. */
         val instanceId: String = UUID.randomUUID().toString()
 
