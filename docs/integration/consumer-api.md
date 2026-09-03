@@ -36,19 +36,44 @@ tests that want to register a plugin in isolation.
 ### `PurseHeadlessCheckout.init`
 
 ```kotlin
-fun init(widgetData: String, lockedEnvironment: PurseEnvironment? = null): PurseHeadlessCheckout
+fun init(
+    widgetData: String,
+    lockedEnvironment: PurseEnvironment? = null,
+    hooks: PurseCheckoutHooks? = null,
+    options: PluginOptions = PluginOptions(),
+): PurseHeadlessCheckout
 ```
 
 | Param | Meaning |
 |---|---|
 | `widgetData` | The base64-encoded `widget.data` string from the merchant backend's Client Session response. |
 | `lockedEnvironment` | Overrides whatever `widgetData` declares. **A release build must always pass `PurseEnvironment.PRODUCTION`** rather than trusting a session-declared environment. |
+| `hooks` | Merchant hooks around "create payment" — see [`PurseCheckoutHooks`](#pursecheckouthooks) below. |
+| `options` | Presentation preferences forwarded to every plugin (locale, theme, card-form texts). |
 
 **Throws:** `PurseSessionException.SessionMalformed` if `widgetData` can't be decoded, or the
 session is missing `id` / `expiration_date`.
 
 Call this once per checkout session. The returned `PurseHeadlessCheckout` instance is the object
 every other API in this document hangs off.
+
+### `PurseCheckoutHooks`
+
+Web's `PurseHeadlessCheckoutHooks` (`onBeforeValidate` / `onAfterValidate` / `redirectionHandler`):
+
+```kotlin
+class PurseCheckoutHooks(
+    val onBeforeValidate: (suspend (splits: List<PaymentSplit>) -> Unit)? = null,
+    val onAfterValidate: (suspend () -> Unit)? = null,
+    val onRedirection: (suspend (action: RedirectAction) -> Boolean)? = null,
+)
+```
+
+| Hook | When | If it throws |
+|---|---|---|
+| `onBeforeValidate` | After the item payloads are built, right before `POST /validate`. Skipped when a plugin auto-submits (web's `xpay` trigger). | The submit is **aborted before anything is sent**: `submitPayment` throws `PurseCheckoutException.HookFailed` (code `ON_BEFORE_VALIDATE_HOOK_FAILED`, your exception as `cause`), `sessionState` returns to `READY`, split and collected data untouched. |
+| `onAfterValidate` | After `/validate` answers, before plugin `postValidation` (so before any redirect). | Swallowed, like web — reported as a `HEADLESS_CHECKOUT_CLIENT_HOOK_ERROR` monitoring event. |
+| `onRedirection` | `/validate` asked for a redirect, resolved to a `RedirectAction` (`Get` / `PostForm` / `PostHtml`), before the SDK opens its in-app WebView. Return `true` to take it over (the SDK opens nothing; confirm the outcome yourself with `paymentStatus()`), `false` to let the SDK proceed. Consulted by every coordinator that can redirect. | **Nothing is opened**; the failure reaches the payment element's `onError` as `"onRedirection hook failed: …"` (typed internally as `HookFailed`, code `POST_VALIDATE_FAILED` — web has no dedicated code, its handler runs inside `postValidation`), the split stays intact and the shopper can submit again. |
 
 ---
 
@@ -565,13 +590,16 @@ suspend fun submitPayment(): ValidationResult
 ```
 
 Runs the plugin-driven `/validate` pipeline over the current split. Must be called once
-`isPaymentFulfilled` is `true`. Sets `sessionState` to `SUBMITTING`, then `SUBMITTED`/`ERROR`.
+`isPaymentFulfilled` is `true`. Sets `sessionState` to `SUBMITTING`, then `SUBMITTED`/`ERROR` —
+or back to `READY` when a merchant `onBeforeValidate` hook aborted it before anything was sent.
 
 **Throws:**
 - `PurseCheckoutException.PaymentNotFulfilled` — the split doesn't cover the amount, or no primary
   is set.
 - `PurseCheckoutException.ItemNotFulfilled` — an item in the split has a form that isn't complete and
   valid (see [§6](#form-completeness-gates-the-payment)).
+- `PurseCheckoutException.HookFailed` — your `onBeforeValidate` hook threw (code
+  `ON_BEFORE_VALIDATE_HOOK_FAILED`, your exception as `cause`); nothing was sent.
 - `PurseCheckoutException.NoPluginRegistered` — no `:partner-ui` plugin registered for the chosen
   primary's `(partner, method)`.
 - `PurseCheckoutException.ValidateFailed` — a client-side or API validation step failed.
@@ -629,6 +657,7 @@ interactive plugin.
 | `PurseCheckoutException.ItemNotFulfilled` | `submitPayment` | An item in the split has an incomplete or invalid form (web's `ELEMENT_NOT_FULFILLED`). |
 | `PurseCheckoutException.NoPluginRegistered` | `submitPayment` | No `:partner-ui` plugin for the chosen `(partner, method)`. |
 | `PurseCheckoutException.ValidateFailed` | `submitPayment` | Client-side or API validation step failed. |
+| `PurseCheckoutException.HookFailed` | `submitPayment` (`onBeforeValidate`), coordinators (`onRedirection`) | A merchant hook threw — `hook` names it, `cause` is the merchant's exception. `ON_BEFORE_VALIDATE_HOOK_FAILED` aborts the submit with nothing sent; `POST_VALIDATE_FAILED` (`onRedirection`) opens no redirect. Neither moves the split. |
 | `PurseCheckoutException.NoSecondaryConfig` | `getSecondaryToken` | No `SecondaryConfig` registered for this secondary method. |
 | `PurseCheckoutException.InvalidSecondaryCard` | `getSecondaryToken` | Client-side PAN/CVV validation failed. |
 | `PurseCheckoutException.SecondaryTokenizationFailed` | `getSecondaryToken` | `/init` unsuccessful, or the card carries no balance. |

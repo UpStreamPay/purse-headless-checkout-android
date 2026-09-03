@@ -238,7 +238,10 @@ checkout, re-exposed on `pluginEvents`); driven lifecycle hooks (`onSessionSet`,
 codes, batched to `/widget/headless_checkout`, flushed on app-background); wallet / saved cards
 (`wallet_session`, `paymentTokens`, pay-with-token, rename/delete/favorite, `SaveTokenMode`
 registration incl. `payment_preferences.registration` + `card.token_label`); merchant hooks
-(`onBeforeValidate` / `onAfterValidate`); locale-aware overridable card-form texts + a
+(`onBeforeValidate` / `onAfterValidate` / `onRedirection` — the last is web's `redirectionHandler`,
+threaded to every coordinator through the `RedirectionDelegate` seam on its host; a throwing hook
+surfaces as a typed `HookFailed` without moving the split or the session state); locale-aware
+overridable card-form texts + a
 `PurseTheme` mapped onto SecureFields' `VaultStyles`; CDN method icons (`PurseAssets`); typed
 payment confirmation (`paymentStatus()` / `awaitPaymentOutcome()` over `sessionTransactions()`);
 and a hardened redirect WebView (progress, first-page watchdog, network-failure surfacing,

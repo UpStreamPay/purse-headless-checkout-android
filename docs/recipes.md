@@ -568,26 +568,46 @@ backgrounds) to Purse's monitoring API — nothing to wire.
 
 ## 14. Hooks
 
-Run merchant logic around `/validate` — e.g. persist the split server-side before committing:
+Run merchant logic around `/validate` and take the redirect over — web's `onBeforeValidate` /
+`onAfterValidate` / `redirectionHandler`, same three points:
 
 ```kotlin
 val checkout = PurseHeadlessCheckout.init(
     widgetData,
     hooks = PurseCheckoutHooks(
         onBeforeValidate = { splits ->
-            // Throwing here ABORTS the submit (the exception propagates out of submitPayment).
+            // Throwing here ABORTS the submit: nothing is sent, submitPayment throws
+            // PurseCheckoutException.HookFailed (code ON_BEFORE_VALIDATE_HOOK_FAILED, your
+            // exception as the cause) and the checkout is back to READY, split untouched.
             backend.reserveStock(splits.map { it.source.id to it.amount })
         },
         onAfterValidate = {
-            // Runs after /validate answers, before any redirection. Errors are swallowed.
+            // Runs after /validate answers, before any redirection. Errors are swallowed
+            // (reported as a HEADLESS_CHECKOUT_CLIENT_HOOK_ERROR monitoring event).
             backend.notifyValidateDone()
+        },
+        onRedirection = { action ->
+            // Called with the resolved redirect BEFORE the SDK opens its in-app WebView.
+            // Return true to handle it yourself (the SDK then opens nothing), false to let
+            // the SDK proceed. Confirming the outcome on return is yours: paymentStatus().
+            when (action) {
+                is RedirectAction.Get -> { openInCustomTab(action.url); true }
+                is RedirectAction.PostForm, is RedirectAction.PostHtml -> false // WebView-only shapes
+            }
         },
     ),
 )
 ```
 
+A hook that throws never corrupts the checkout. `onBeforeValidate` aborts before the POST and the
+checkout stays submittable; `onRedirection` opens nothing and the failure reaches the payment
+element's `onError` (`"onRedirection hook failed: …"`) — the split is intact and the shopper can
+submit again. Both are also posted to monitoring (`HEADLESS_CHECKOUT_ON_BEFORE_VALIDATE_HOOK_FAILED`,
+`HEADLESS_CHECKOUT_CLIENT_HOOK_ERROR`).
+
 Express flows a plugin auto-submits (a wallet sheet approval) skip `onBeforeValidate`, exactly like
-web's `xpay` trigger.
+web's `xpay` trigger. `onRedirection` is consulted by **every** method that can redirect — card
+3-D Secure, Google Pay, PayPal's chained 3-D Secure, Klarna, and the generic redirection template.
 
 ---
 
