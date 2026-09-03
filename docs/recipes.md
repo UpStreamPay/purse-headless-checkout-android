@@ -809,7 +809,7 @@ lifecycleScope.launch {
     } catch (e: PurseCheckoutException) {
         when (e.code) {
             PurseErrorCode.METHOD_IS_NOT_SIMULABLE -> hideInstalments()   // shouldn't happen behind the flag
-            PurseErrorCode.INVALID_LOAN_SIMULATION -> showUnavailable()   // partner answered without a schedule
+            PurseErrorCode.INVALID_LOAN_SIMULATION -> showUnavailable()   // no schedule: partner refused or answered empty
             else -> throw e
         }
     }

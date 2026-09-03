@@ -325,8 +325,10 @@ returns no per-instalment dates.
 - `PurseCheckoutException.MethodNotSimulable` (`METHOD_IS_NOT_SIMULABLE`) — the method has no
   `simulable` label. No API call is made.
 - `PurseCheckoutException.LoanSimulationFailed` (`INVALID_LOAN_SIMULATION`) — the API answered
-  without a `plugin_result`.
-- `PaymentApiException` — network/transport failure.
+  without a schedule: no `plugin_result`, or an API-level refusal such as Riverty's
+  `409 EMPTY_SIMULATION` when the partner doesn't offer the method for this order. The API's own
+  code is on `cause` (`PaymentApiException.errorCode`). Same single code as web.
+- `PaymentApiException` — network/transport failure (no HTTP answer at all).
 
 ---
 
@@ -789,7 +791,7 @@ interactive plugin.
 | `PurseCheckoutException.InvalidSecondaryCard` | `getSecondaryToken` | Client-side PAN/CVV validation failed. |
 | `PurseCheckoutException.SecondaryTokenizationFailed` | `getSecondaryToken` | `/init` unsuccessful, or the card carries no balance. |
 | `PurseCheckoutException.MethodNotSimulable` | `simulateLoan` / `simulateLoans` | The method has no `simulable` label (`METHOD_IS_NOT_SIMULABLE`). |
-| `PurseCheckoutException.LoanSimulationFailed` | `simulateLoan` | The simulation API answered without schedule data (`INVALID_LOAN_SIMULATION`). |
+| `PurseCheckoutException.LoanSimulationFailed` | `simulateLoan` / `simulateLoans` | The simulation API answered without a schedule — no `plugin_result`, or a refusal like `EMPTY_SIMULATION` (`INVALID_LOAN_SIMULATION`; the API's code is on the cause). |
 | `PurseSessionException.SessionMalformed` | `PurseHeadlessCheckout.init` | `widget.data` couldn't be decoded, or is missing required fields. |
 | `PaymentApiException` | Any Payment API call | Network/transport failure, non-2xx/3xx status, or an unusable response body. |
 

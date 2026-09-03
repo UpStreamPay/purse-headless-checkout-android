@@ -1472,7 +1472,11 @@ class PurseHeadlessCheckout private constructor(
     suspend fun simulateLoans(method: PrimaryMethod, product: LoanProduct): List<LoanSimulation> {
         requireSimulable(method, product)
         return withContext(Dispatchers.IO) {
-            apiClient().getSimulationMulti(method.partner, method.method, product)
+            try {
+                apiClient().getSimulationMulti(method.partner, method.method, product)
+            } catch (e: PaymentApiException) {
+                throw e.asLoanSimulationFailureOrSelf()
+            }
         }
     }
 
@@ -1491,9 +1495,19 @@ class PurseHeadlessCheckout private constructor(
         )
     }
 
+    /**
+     * Web's `getSimulation` reads the JSON body whatever the HTTP status and throws
+     * `INVALID_LOAN_SIMULATION` whenever it holds no `plugin_result` — so a partner that answers
+     * `409 EMPTY_SIMULATION` (Riverty when the method isn't offered for this order) or any other
+     * API-level refusal surfaces under that one dedicated code, with the API's own `errorCode` kept
+     * on the cause. Only a transport failure (no status at all) stays a raw [PaymentApiException].
+     */
     private fun PaymentApiException.asLoanSimulationFailureOrSelf(): Exception =
-        if (errorCode == PaymentApiClient.INVALID_LOAN_SIMULATION) {
-            PurseCheckoutException.LoanSimulationFailed(message ?: "invalid loan simulation", this)
+        if (errorCode == PaymentApiClient.INVALID_LOAN_SIMULATION || status != null) {
+            PurseCheckoutException.LoanSimulationFailed(
+                message ?: "invalid loan simulation${errorCode?.let { " ($it)" } ?: ""}",
+                this,
+            )
         } else {
             this
         }

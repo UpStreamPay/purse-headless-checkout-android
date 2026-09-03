@@ -32,6 +32,7 @@ class LoanSimulationCheckoutTest {
     private var lastPath: String? = null
     private var lastBody: String? = null
     private var responseBody = "{}"
+    private var responseStatus = 200
 
     @Before
     fun startServer() {
@@ -40,7 +41,7 @@ class LoanSimulationCheckoutTest {
             lastPath = exchange.requestURI.path
             lastBody = exchange.requestBody.bufferedReader().readText()
             val bytes = responseBody.toByteArray()
-            exchange.sendResponseHeaders(200, bytes.size.toLong())
+            exchange.sendResponseHeaders(responseStatus, bytes.size.toLong())
             exchange.responseBody.use { it.write(bytes) }
         }
         server.start()
@@ -128,6 +129,54 @@ class LoanSimulationCheckoutTest {
 
         assertEquals(PurseErrorCode.INVALID_LOAN_SIMULATION, error.code)
         assertTrue(error.cause is PaymentApiException)
+    }
+
+    /**
+     * What the sandbox actually answers for Riverty 6x when the partner doesn't offer the method for
+     * the order (observed 2026-09-03): a 409 with `error: EMPTY_SIMULATION`. Web reads the body
+     * regardless of status and ends in `INVALID_LOAN_SIMULATION`; so do we, keeping the API's code.
+     */
+    @Test
+    fun `an API refusal such as 409 EMPTY_SIMULATION is INVALID_LOAN_SIMULATION with the API code on the cause`() {
+        responseStatus = 409
+        responseBody = """{"error":"EMPTY_SIMULATION","error_description":"The plugin did not managed to parse partner's API response and returned an empty result.","status":409}"""
+        val checkout = checkout()
+        val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
+
+        val error = assertThrows(PurseCheckoutException.LoanSimulationFailed::class.java) {
+            runBlocking { checkout.simulateLoan(paypal, product) }
+        }
+
+        assertEquals(PurseErrorCode.INVALID_LOAN_SIMULATION, error.code)
+        val cause = error.cause as PaymentApiException
+        assertEquals(409, cause.status)
+        assertEquals("EMPTY_SIMULATION", cause.errorCode)
+        assertTrue(error.message!!.contains("EMPTY_SIMULATION"))
+    }
+
+    @Test
+    fun `the multi endpoint's refusal is INVALID_LOAN_SIMULATION too`() {
+        responseStatus = 501
+        responseBody = """{"error":"NOT_IMPLEMENTED","error_description":"The multi simulation processing method is not implemented.","status":400}"""
+        val checkout = checkout()
+        val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
+
+        val error = assertThrows(PurseCheckoutException.LoanSimulationFailed::class.java) {
+            runBlocking { checkout.simulateLoans(paypal, product) }
+        }
+        assertEquals("NOT_IMPLEMENTED", (error.cause as PaymentApiException).errorCode)
+    }
+
+    @Test
+    fun `a transport failure stays a PaymentApiException`() {
+        val checkout = checkout()
+        val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
+        server.stop(0) // nothing listens any more → connection refused, no HTTP status
+
+        val error = assertThrows(PaymentApiException::class.java) {
+            runBlocking { checkout.simulateLoan(paypal, product) }
+        }
+        assertEquals(null, error.status)
     }
 
     @Test
