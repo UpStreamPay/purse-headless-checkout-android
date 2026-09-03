@@ -3,6 +3,7 @@ package eu.purse.checkout.payment.secondary
 import eu.purse.checkout.payment.split.SplitSource
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
+import eu.purse.core.payment.SaveTokenMode
 import java.math.BigDecimal
 
 /**
@@ -32,4 +33,19 @@ data class SecondaryToken(
     val takePolicy: SecondaryTakePolicy = SecondaryTakePolicy.NONE,
     /** Per-session draw cap for this instrument, if the method sets one. */
     val limit: BigDecimal? = null,
-) : SplitSource
+    /**
+     * The method's effective save-token policy — web's temporary secondary token `saveTokenMode`.
+     * Drives [canBeRegistered]; the checkout defaults the registration decision from it.
+     */
+    val saveTokenMode: SaveTokenMode = SaveTokenMode.NEVER,
+    /**
+     * `true` when this token was produced from a **saved** instrument (the session's
+     * `integrated_tokens`) rather than a card the shopper just typed — a saved card is never
+     * re-registered at `/validate`.
+     */
+    val isSaved: Boolean = false,
+) : SplitSource {
+
+    /** Whether the shopper can ask to keep this card for next time — web's `canBeRegistered`. */
+    val canBeRegistered: Boolean get() = !isSaved && saveTokenMode.canBeRegistered
+}
