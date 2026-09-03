@@ -30,6 +30,11 @@
     <string name="label_remaining">Left to pay</string>
     <string name="label_covered">Fully covered</string>
     <string name="section_express">Express checkout</string>
+    <string name="section_saved_cards">Saved cards</string>
+    <string name="saved_card_cvv_badge">CVC required</string>
+    <string name="saved_card_no_cvv_badge">no CVC</string>
+    <string name="helper_saved_card_cvv">Enter this card\'s security code to pay with it.</string>
+    <string name="helper_saved_card_no_cvv">No security code needed — tap Pay.</string>
     <string name="section_primary">Choose how to pay</string>
     <string name="section_secondary">Gift card</string>
     <string name="helper_giftcard">Test card 9250004781234567890, CVC 123.</string>

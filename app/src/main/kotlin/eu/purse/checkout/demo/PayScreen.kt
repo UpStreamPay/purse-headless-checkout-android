@@ -46,6 +46,7 @@ import com.paypal.android.paymentbuttons.PayPalButtonColor
 import com.paypal.android.paymentbuttons.PayPalButtonLabel
 import com.paypal.android.paymentbuttons.PaymentButtonShape
 import eu.purse.checkout.PurseHeadlessCheckout
+import eu.purse.checkout.payment.item.PaymentToken
 import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.checkout.payment.item.SecondaryMethod
 import eu.purse.checkout.payment.split.PaymentSplit
@@ -95,6 +96,12 @@ fun PayScreen(controller: DemoController) {
                 if (controller.paypalReady) {
                     PaypalButton(enabled = !controller.paypalBusy, onClick = controller::onPaypalClicked)
                 }
+            }
+
+            val savedCards by checkout.paymentTokens.collectAsState()
+            if (savedCards.isNotEmpty()) {
+                SectionTitle(stringResource(R.string.section_saved_cards))
+                savedCards.forEach { SavedCardRow(controller, it) }
             }
 
             val methods = controller.payableMethods
@@ -267,6 +274,43 @@ private fun PrimaryMethodRow(controller: DemoController, method: PrimaryMethod) 
                 else -> Unit
             }
         }
+    }
+}
+
+/**
+ * One saved card (`paymentTokens`). Selecting it commits it as the primary (`setPrimaryToken`) and
+ * mounts [SavedCardForm] — a CVV field when the PSP still wants one, a one-line notice otherwise.
+ * Tapping the open row again collapses it and clears the primary.
+ */
+@Composable
+private fun SavedCardRow(controller: DemoController, token: PaymentToken) {
+    val selected = controller.selectedToken?.id == token.id
+    DemoCard(
+        border = if (selected) BorderStroke(2.dp, MaterialTheme.colorScheme.primary) else null,
+    ) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .clickable { controller.selectToken(if (selected) null else token) },
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            RadioButton(selected = selected, onClick = null)
+            Column(Modifier.weight(1f).padding(start = 8.dp)) {
+                Text(
+                    text = if (token.favorite) "★ ${controller.label(token)}" else controller.label(token),
+                    style = MaterialTheme.typography.titleMedium,
+                )
+                Text(
+                    text = "${token.maskedPan} · ${token.brand} · " + stringResource(
+                        if (token.requiresCvv) R.string.saved_card_cvv_badge else R.string.saved_card_no_cvv_badge,
+                    ),
+                    style = monoStyle,
+                    color = LocalContentColor.current.copy(alpha = 0.7f),
+                )
+            }
+            Text(text = if (selected) "▾" else "▸", style = MaterialTheme.typography.bodyLarge)
+        }
+        AnimatedVisibility(selected) { SavedCardForm(controller, token) }
     }
 }
 
