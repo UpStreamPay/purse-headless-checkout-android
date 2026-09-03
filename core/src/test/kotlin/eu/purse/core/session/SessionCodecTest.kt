@@ -143,4 +143,39 @@ class SessionCodecTest {
         assertNull(params.paymentSession.vault)
         assertTrue(params.paymentSession.protocols.isEmpty())
     }
+
+    @Test
+    fun `decode parses a secondary integrated token with its uniqueness token and pin code`() {
+        val session = """
+            {
+              "id": "session-789",
+              "amount": 10,
+              "currency_code": "EUR",
+              "expiration_date": "2026-07-17T12:00:00Z",
+              "protocols": {
+                "illicado": {
+                  "giftcard": {
+                    "configurations": { "stable": true, "labels": ["secondary"], "settings": {} },
+                    "integrated_tokens": [
+                      {
+                        "id": "gc-1", "value": "gc-value-1",
+                        "uniqueness_token": "9250004781234567890", "pin_code": "123",
+                        "expiration_date": "2027-01-01T00:00:00Z", "favorite": false,
+                        "description": { "display_token": "Illicado •••• 7890" }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+        """.trimIndent()
+
+        val params = SessionCodec.decode(TestSessions.widgetData(paymentSessionJson = session))
+        val token = params.paymentSession.protocols[Partner.Illicado]!![Method.GiftCard]!!.integratedTokens.single()
+
+        assertEquals("gc-1", token.id)
+        assertEquals("9250004781234567890", token.uniquenessToken)
+        assertEquals("123", token.pinCode)
+        assertEquals("Illicado •••• 7890", token.displayToken)
+    }
 }

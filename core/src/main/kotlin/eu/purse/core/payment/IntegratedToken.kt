@@ -10,6 +10,11 @@ data class IntegratedToken(
     /** The opaque value `/validate` pays with (`payment_data.token`). */
     val value: String,
     val uniquenessToken: String?,
+    /**
+     * `pin_code` — the saved instrument's security code, when the partner stores one (gift cards).
+     * Together with [uniquenessToken] it is what re-initialises a saved secondary token's balance.
+     */
+    val pinCode: String? = null,
     /** ISO expiration of the underlying card, as the session carries it. */
     val expirationDate: String?,
     val favorite: Boolean,

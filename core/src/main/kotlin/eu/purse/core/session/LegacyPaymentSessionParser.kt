@@ -124,6 +124,7 @@ internal object LegacyPaymentSessionParser {
                 id = id,
                 value = tokenJson.optStringOrNull("value") ?: continue,
                 uniquenessToken = tokenJson.optStringOrNull("uniqueness_token"),
+                pinCode = tokenJson.optStringOrNull("pin_code"),
                 expirationDate = tokenJson.optStringOrNull("expiration_date"),
                 favorite = tokenJson.optBoolean("favorite", false),
                 name = tokenJson.optStringOrNull("name"),
