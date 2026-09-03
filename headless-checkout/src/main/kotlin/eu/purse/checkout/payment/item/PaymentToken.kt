@@ -6,6 +6,8 @@ import eu.purse.core.payment.Method
 import eu.purse.core.payment.MethodConfiguration
 import eu.purse.core.payment.Partner
 import eu.purse.core.payment.TokenSource
+import eu.purse.core.vault.CardBrand
+import eu.purse.partnerui.PayToken
 
 /**
  * A saved card (card-on-file) offered by the session — the Kotlin analog of web's
@@ -50,6 +52,28 @@ data class PaymentToken(
     val paysWithoutCvv: Boolean
         get() = configuration.settings.payTokenNoCvv ||
             (networkTokenAvailable && configuration.settings.networkToken)
+
+    /**
+     * Whether paying with this token still asks the shopper for the CVV — the inverse of
+     * [paysWithoutCvv]. When `true`, selecting the token ([eu.purse.checkout.PurseHeadlessCheckout.setPrimaryToken])
+     * arms the fulfillment gate exactly like mounting a fresh card form does: `isPaymentFulfilled`
+     * stays `false` until the CVV-only SecureFields form reports valid (web's `cvvOnly` hosted
+     * fields). Only the `purse` vault renders that form on Android.
+     */
+    val requiresCvv: Boolean get() = !paysWithoutCvv
+
+    /**
+     * The `:partner-ui` view of this token — what `PartnerUiContext.token` carries into the card
+     * plugin (web's `Token` attribute on the element): the opaque value, the card metadata
+     * `patchItemPayloadWithToken` reads, and the CVV requirement.
+     */
+    fun toPayToken(): PayToken = PayToken(
+        value = value,
+        expirationDate = expirationDate,
+        holderName = holderName.ifBlank { null },
+        selectedNetwork = CardBrand.fromWire(brand).takeIf { it != CardBrand.UNKNOWN }?.wireValue,
+        requiresCvv = requiresCvv,
+    )
 
     companion object {
         internal fun from(

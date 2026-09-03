@@ -10,7 +10,8 @@ import java.util.Base64
  */
 internal object CheckoutTestSessions {
 
-    private val samplePaymentSessionJson = """
+    /** The fixture's raw `payment_session` — tests derive variants from it via string replacement. */
+    val samplePaymentSessionJson = """
         {
           "id": "session-123",
           "amount": 4.80,

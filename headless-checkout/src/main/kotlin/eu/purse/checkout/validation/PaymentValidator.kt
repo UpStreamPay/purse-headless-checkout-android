@@ -19,10 +19,8 @@ import eu.purse.core.payload.ItemPayload
 import eu.purse.core.payload.ValidateItemPayload
 import eu.purse.core.payload.ValidationResult
 import eu.purse.core.session.LegacyPaymentSession
-import eu.purse.core.vault.CardBrand
 import eu.purse.partnerui.PartnerUiContext
 import eu.purse.partnerui.PartnerUiPlugin
-import eu.purse.partnerui.PayToken
 import eu.purse.partnerui.PluginRegistry
 
 /**
@@ -103,13 +101,7 @@ class PaymentValidator(private val api: PaymentApiClient) {
                         amount = split.amount,
                         api = api,
                         collected = collectedByMethod[source.id] ?: emptyMap(),
-                        token = PayToken(
-                            value = source.value,
-                            expirationDate = source.expirationDate,
-                            holderName = source.holderName.ifBlank { null },
-                            selectedNetwork = CardBrand.fromWire(source.brand)
-                                .takeIf { it != CardBrand.UNKNOWN }?.wireValue,
-                        ),
+                        token = source.toPayToken(),
                     )
                     if (!plugin.validateUi(context)) {
                         throw PurseCheckoutException.ValidateFailed("client-side validation failed for ${source.id}")

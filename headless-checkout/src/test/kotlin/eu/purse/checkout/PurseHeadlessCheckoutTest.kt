@@ -438,13 +438,78 @@ class PurseHeadlessCheckoutTest {
         assertEquals(3, checkout.primaryMethods.size)
     }
 
-    @Test
-    fun `a saved token can be the primary and fulfills the payment`() {
-        val checkout = checkout()
+    /** The fixture's card method with the merchant's `pay_token_no_cvv` gate switched on. */
+    private fun noCvvWidgetData(): String = CheckoutTestSessions.widgetData(
+        CheckoutTestSessions.samplePaymentSessionJson.replace(
+            "\"save_token\": true, \"save_token_mode\": \"PREFER\"",
+            "\"save_token\": true, \"save_token_mode\": \"PREFER\", \"merchant_specifics\": { \"pay_token_no_cvv\": true }",
+        ),
+    )
 
-        checkout.setPrimaryToken(checkout.paymentTokens.value.single())
+    @Test
+    fun `a saved token that still needs its CVV is the primary but not fulfilled until the CVV form validates`() {
+        val checkout = checkout()
+        val token = checkout.paymentTokens.value.single()
+        // network_token.available is true on the fixture, but neither pay_token_no_cvv nor the
+        // network_token setting is — so the PSP still wants the CVV.
+        assertTrue(token.requiresCvv)
+
+        checkout.setPrimaryToken(token)
+
+        assertEquals(token.id, checkout.amountSplit.value.single().source.id)
+        assertFalse("the split is covered, but the CVV hasn't been collected", checkout.isPaymentFulfilled.value)
+        val refused = assertThrows(PurseCheckoutException.ItemNotFulfilled::class.java) {
+            runBlocking { checkout.submitPayment() }
+        }
+        assertTrue(refused.message!!.contains(token.id))
+
+        // The CVV-only form reports valid (what CardCoordinator does on SecureFields' onFormValid).
+        checkout.setFulfilled(token, true)
+        assertTrue(checkout.isPaymentFulfilled.value)
+
+        // …and invalid again (the shopper cleared the field, or the form unmounted).
+        checkout.setFulfilled(token, false)
+        assertFalse(checkout.isPaymentFulfilled.value)
+    }
+
+    @Test
+    fun `a saved token behind the no-CVV gate is the primary and fulfills the payment at once`() {
+        val checkout = checkout(noCvvWidgetData())
+        val token = checkout.paymentTokens.value.single()
+        assertTrue(token.paysWithoutCvv)
+        assertFalse(token.requiresCvv)
+
+        checkout.setPrimaryToken(token)
 
         assertTrue(checkout.isPaymentFulfilled.value)
+    }
+
+    @Test
+    fun `the card host for a saved token carries the token and its CVV requirement into the plugin`() {
+        val checkout = checkout()
+        val token = checkout.paymentTokens.value.single()
+
+        val host = checkout.cardHost(token)
+        val context = host.buildContext()
+
+        assertEquals("tok-value-1", context.token?.value)
+        assertEquals("VISA", context.token?.selectedNetwork)
+        assertEquals("J DOE", context.token?.holderName)
+        assertTrue(context.token?.requiresCvv == true)
+        // Brands come from the token's method vault, same as for the fresh-card host.
+        assertEquals(checkout.cardHost(checkout.primaryMethods.single { it.method == Method.CreditCard }).supportedBrands, host.supportedBrands)
+
+        val noCvvHost = checkout(noCvvWidgetData()).let { it.cardHost(it.paymentTokens.value.single()) }
+        assertTrue(noCvvHost.buildContext().token?.requiresCvv == false)
+    }
+
+    @Test
+    fun `only a card method or a saved card can host a card form`() {
+        val checkout = checkout()
+
+        assertThrows(IllegalArgumentException::class.java) {
+            checkout.cardHost(checkout.secondaryMethods.single())
+        }
     }
 
     @Test

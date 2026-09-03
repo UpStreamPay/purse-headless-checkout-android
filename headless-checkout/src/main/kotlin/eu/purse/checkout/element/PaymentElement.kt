@@ -11,6 +11,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.viewinterop.AndroidView
 import eu.purse.checkout.PurseHeadlessCheckout
+import eu.purse.checkout.payment.item.PaymentItem
+import eu.purse.checkout.payment.item.PaymentToken
 import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PluginRegistry
@@ -30,15 +32,18 @@ import eu.purse.securefields.VaultForm
 
 /**
  * One rendered payment method — the Kotlin analog of web's `getPaymentElement`: whatever a method
- * needs on screen (a card form, a wallet button, Klarna's widget, nothing at all for a redirection
- * method), behind one shape. Obtain it with [rememberPaymentElement], place it with
- * [PaymentElementUi], and submit form-driven methods with [submit].
+ * needs on screen (a card form, a wallet button, Klarna's widget, a CVV field for a saved card,
+ * nothing at all for a redirection method or a saved card that pays without a CVV), behind one
+ * shape. Obtain it with [rememberPaymentElement], place it with [PaymentElementUi], and submit
+ * form-driven methods with [submit].
  */
 class PaymentElement internal constructor(
-    val method: PrimaryMethod,
+    /** The [PrimaryMethod] this element renders, or the saved [PaymentToken] it pays with. */
+    val item: PaymentItem,
     /**
-     * Whether this method has anything to render — web's `hasUI()`. `false` for
-     * redirection-template methods, whose hosted page *is* the payment step.
+     * Whether this element has anything to render — web's `hasUI()`. `false` for
+     * redirection-template methods, whose hosted page *is* the payment step, and for a saved card
+     * behind the no-CVV gates (`PaymentToken.paysWithoutCvv`).
      */
     val hasUi: Boolean,
     /**
@@ -108,17 +113,7 @@ fun rememberPaymentElement(
     }
 
     return when (plugin) {
-        is CardPlugin -> {
-            val host = remember(method.id) { checkout.cardHost(method) }
-            val coordinator = rememberCardCoordinator(host, wrapped)
-            remember(coordinator) {
-                PaymentElement(
-                    method, hasUi = true, selfSubmitting = false, readyState,
-                    onSubmit = { coordinator.submit() },
-                    ui = { modifier -> VaultForm(coordinator.sdk, modifier) },
-                )
-            }
-        }
+        is CardPlugin -> rememberCardElement(checkout, method, readyState, wrapped)
 
         is GooglePayPlugin -> {
             val coordinator = rememberGooglePayCoordinator(wrapped)
@@ -192,6 +187,77 @@ fun rememberPaymentElement(
                 ui = { },
             )
         }
+    }
+}
+
+/**
+ * Build the [PaymentElement] that pays with a saved card [token] — web's `getPaymentElement` on a
+ * `PurseHeadlessCheckoutPrimaryToken`. What it renders follows the token's CVV requirement:
+ *
+ * - `token.requiresCvv` → a **CVV-only** card form ([PaymentElement.hasUi] `true`); the payment is
+ *   not fulfilled until it validates, exactly like a fresh card form;
+ * - otherwise → **nothing** ([PaymentElement.hasUi] `false`), and [PaymentElement.submit] goes
+ *   straight to `/init`+`/validate`.
+ *
+ * Select the token with [PurseHeadlessCheckout.setPrimaryToken] as you would call `setPrimary`
+ * for a method; the element does not select it for you.
+ *
+ * ```kotlin
+ * val element = rememberPaymentElement(checkout, token, listener)
+ * if (element.hasUi) PaymentElementUi(element, Modifier.fillMaxWidth().height(56.dp))
+ * Button(onClick = { element.submit() }, enabled = element.ready) { Text("Pay") }
+ * ```
+ */
+@Composable
+fun rememberPaymentElement(
+    checkout: PurseHeadlessCheckout,
+    token: PaymentToken,
+    listener: PaymentElementListener = NOOP_LISTENER,
+): PaymentElement {
+    val readyState = remember(token.id) { mutableStateOf(false) }
+    val wrapped = remember(token.id, listener) {
+        object : PaymentElementListener by listener {
+            override fun onReady(ready: Boolean) {
+                readyState.value = ready
+                listener.onReady(ready)
+            }
+        }
+    }
+    val plugin = remember(token.id) {
+        PluginRegistry.getPlugin(token.partner, token.method, checkout.session.source)
+    }
+    return when (plugin) {
+        is CardPlugin -> rememberCardElement(checkout, token, readyState, wrapped)
+        else -> remember(token.id) {
+            PaymentElement(
+                token, hasUi = false, selfSubmitting = false, readyState,
+                onSubmit = { wrapped.onError("no card plugin registered for saved token ${token.id}") },
+                ui = { },
+            )
+        }
+    }
+}
+
+/**
+ * The card element behind both overloads — a fresh card ([PrimaryMethod]) or a saved one
+ * ([PaymentToken]); `CardCoordinator.Mode` (decided by the host's token) picks the full form, the
+ * CVV-only form, or no form.
+ */
+@Composable
+private fun rememberCardElement(
+    checkout: PurseHeadlessCheckout,
+    item: PaymentItem,
+    readyState: MutableState<Boolean>,
+    listener: PaymentElementListener,
+): PaymentElement {
+    val host = remember(item.id) { checkout.cardHost(item) }
+    val coordinator = rememberCardCoordinator(host, listener)
+    return remember(coordinator) {
+        PaymentElement(
+            item, hasUi = coordinator.mode.rendersForm, selfSubmitting = false, readyState,
+            onSubmit = { coordinator.submit() },
+            ui = { modifier -> if (coordinator.mode.rendersForm) VaultForm(coordinator.sdk, modifier) },
+        )
     }
 }
 

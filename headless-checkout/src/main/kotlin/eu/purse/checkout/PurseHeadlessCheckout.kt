@@ -313,12 +313,24 @@ class PurseHeadlessCheckout private constructor(
 
     // --- saved cards (wallet) ---------------------------------------------------------------------
 
-    /** Pay with a saved card — web's `token.setAsPrimarySource()`. */
+    /**
+     * Pay with a saved card — web's `token.setAsPrimarySource()`.
+     *
+     * A token that still needs its CVV ([PaymentToken.requiresCvv]) is **not** payable as it
+     * stands: selecting it arms the same per-item fulfillment gate a fresh card form arms at mount,
+     * so [isPaymentFulfilled] stays `false` — and [submitPayment] throws
+     * [PurseCheckoutException.ItemNotFulfilled] — until the CVV-only form rendered for it (the card
+     * element, or `rememberCardCoordinator(cardHost(token), …)`) reports valid through
+     * [setFulfilled]. A token behind the no-CVV gates is payable immediately, as before.
+     */
     fun setPrimaryToken(token: PaymentToken) {
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_PRIMARY_TOKEN_SET_AS_PRIMARY,
             payload = monitoringPayload("partner" to token.partner.wireValue, "method" to token.method.wireValue),
         )
+        // Armed at selection rather than at form mount so a host that never renders the CVV form
+        // cannot submit a token the PSP wants a CVV for; a mounted form then owns the flag.
+        if (token.requiresCvv) fulfilledByMethod.putIfAbsent(token.id, false)
         splitter.setPrimary(token)
         refresh()
     }
@@ -605,6 +617,9 @@ class PurseHeadlessCheckout private constructor(
         collected = collectedByMethod[item.id] ?: emptyMap(),
         options = options,
         register = (item as? PrimaryMethod)?.let { registrationOf(it).registered } ?: false,
+        // A saved card rides into the plugin as web's `token` attribute (and decides whether the
+        // card element renders a CVV-only form, a full one, or none).
+        token = (item as? PaymentToken)?.toPayToken(),
         dispatchEvent = { event -> onPluginEvent(item, event) },
     )
 
@@ -825,15 +840,24 @@ class PurseHeadlessCheckout private constructor(
 
     /**
      * The [CardHost] for [item] — everything `:partner-ui`'s `CardCoordinator` needs from this
-     * checkout, without that module depending on `:headless-checkout` directly. [item] (not the
-     * generic [PaymentItem]) because [CardHost.supportedBrands] needs [PrimaryMethod.supportedBrands].
+     * checkout, without that module depending on `:headless-checkout` directly. [item] is either
+     * the card [PrimaryMethod] (a fresh card: the full form) or one of its saved [PaymentToken]s
+     * (a CVV-only form when [PaymentToken.requiresCvv], no form otherwise — the token reaches the
+     * plugin as `PartnerUiContext.token`).
+     *
+     * @throws IllegalArgumentException for a secondary method or any other item that cannot pay
+     * as a card.
      */
-    fun cardHost(item: PrimaryMethod): CardHost {
+    fun cardHost(item: PaymentItem): CardHost {
+        require(item is PrimaryMethod || item is PaymentToken) { "${item.id} cannot host a card form" }
         trackPlugin(item)
         return object : CardHost {
             override val environment get() = params.environment
             override val vaultTenantId get() = session.vaultsConfiguration?.purse?.tenantId
-            override val supportedBrands get() = item.supportedBrands
+            override val supportedBrands get() = when (item) {
+                is PrimaryMethod -> item.supportedBrands
+                else -> item.configuration.vault?.supportedBrands ?: emptyList()
+            }
             override val redirectionReturnUrl get() = session.source.redirection
             override fun buildContext() = pluginContext(item)
             override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
