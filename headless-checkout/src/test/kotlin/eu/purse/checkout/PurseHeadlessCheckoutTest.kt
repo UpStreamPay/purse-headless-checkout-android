@@ -858,4 +858,122 @@ class PurseHeadlessCheckoutTest {
             assertEquals("gift one", item.getJSONObject("payment_data").getJSONObject("card").getString("token_label"))
         }
     }
+
+    // --- session refresh (setSession) ---------------------------------------------------------------
+
+    /**
+     * A second session: new id and amount, the card method **unchanged**, PayPal's configuration
+     * **changed** (a different client id), Google Pay gone, and expiring at [expiration].
+     */
+    private fun refreshedSessionJson(
+        id: String = "session-456",
+        amount: String = "9.99",
+        expiration: String = "2999-01-01T00:00:00Z",
+    ): String {
+        val session = org.json.JSONObject(CheckoutTestSessions.samplePaymentSessionJson)
+        session.put("id", id).put("amount", BigDecimal(amount)).put("expiration_date", expiration)
+        val protocols = session.getJSONObject("protocols")
+        protocols.getJSONObject("paypal").getJSONObject("wallet").getJSONObject("configurations")
+            .getJSONObject("settings").getJSONObject("merchant_specifics").put("client_id", "paypal-client-NEW")
+        protocols.remove("adyen")
+        return session.toString()
+    }
+
+    @Test
+    fun `setSession with the same session id is ignored`() = runBlocking {
+        val checkout = checkout()
+        val card = checkout.primaryMethods.single { it.method == Method.CreditCard }
+        checkout.setPrimary(card)
+
+        checkout.setSession(CheckoutTestSessions.widgetData())
+
+        assertEquals("session-123", checkout.currentSessionId)
+        assertEquals(card.id, checkout.amountSplit.value.single().source.id)
+        assertEquals(0, checkout.generationOf(card))
+    }
+
+    @Test
+    fun `setSession keeps an unchanged primary (selection, collected data, registration) and rebuilds the rest`() = runBlocking {
+        val checkout = checkout()
+        val card = checkout.primaryMethods.single { it.method == Method.CreditCard }
+        val paypal = checkout.primaryMethods.single { it.method == Method.Wallet }
+        checkout.setPrimary(card)
+        checkout.setCollected(card, mapOf("cardVaultToken" to "vault-1"))
+        checkout.setCollected(paypal, mapOf("orderId" to "order-1"))
+        checkout.register(card, registered = true, name = "holiday card")
+        assertEquals(3, checkout.primaryMethods.size)
+
+        checkout.setSession(CheckoutTestSessions.widgetData(refreshedSessionJson()))
+
+        // The new session is the one in force, everywhere.
+        assertEquals("session-456", checkout.currentSessionId)
+        assertEquals("session-456", checkout.paymentSession.value.id)
+        assertEquals(SessionState.READY, checkout.sessionState.value)
+        assertEquals(2, checkout.primaryMethods.size) // Google Pay disappeared
+        // The amount is the new session's, and the unchanged card is still the primary covering it
+        // (remainingAmountToPay is what the primary covers — nothing else chips in here).
+        assertEquals(0, BigDecimal("9.99").compareTo(checkout.remainingAmountToPay.value))
+        assertTrue(checkout.isPaymentFulfilled.value)
+        val split = checkout.amountSplit.value.single()
+        assertEquals(card.id, split.source.id)
+        assertEquals(0, BigDecimal("9.99").compareTo(split.amount))
+        // Survivor: collected data, registration decision and generation all intact.
+        val newCard = checkout.primaryMethods.single { it.method == Method.CreditCard }
+        assertEquals("vault-1", checkout.pluginContext(newCard).collected["cardVaultToken"])
+        assertEquals(RegistrationState(registered = true, name = "holiday card"), checkout.registrationOf(newCard))
+        assertEquals(0, checkout.generationOf(newCard))
+        // Changed method: collected data dropped, generation bumped so its UI rebuilds.
+        val newPaypal = checkout.primaryMethods.single { it.method == Method.Wallet }
+        assertTrue(checkout.pluginContext(newPaypal).collected.isEmpty())
+        assertEquals(1, checkout.generationOf(newPaypal))
+        // Gone method: its generation is bumped too, for anything still holding it.
+        assertEquals(1, checkout.itemGenerations.value["adyen-googlepay"])
+        // The saved card rides along its unchanged method.
+        assertEquals(listOf("tok-1"), checkout.paymentTokens.value.map { it.id })
+    }
+
+    @Test
+    fun `setSession drops applied gift cards, which were tokenized against the old session`() = runBlocking {
+        val checkout = checkout()
+        val giftCard = checkout.secondaryMethods.single()
+        checkout.applySecondary(
+            SecondaryToken(
+                id = "illicado-giftcard-7890", partner = giftCard.partner, method = giftCard.method,
+                pan = "9250004781234567890", cvv = "123", name = "gift", balance = BigDecimal("2.00"),
+            ),
+        )
+        assertEquals(0, BigDecimal("2.80").compareTo(checkout.remainingAmountToPay.value))
+
+        checkout.setSession(CheckoutTestSessions.widgetData(refreshedSessionJson()))
+
+        assertTrue(checkout.appliedSecondaries.isEmpty())
+        assertEquals(0, BigDecimal("9.99").compareTo(checkout.remainingAmountToPay.value))
+        assertFalse(checkout.isPaymentFulfilled.value)
+    }
+
+    @Test
+    fun `setSession recovers an expired checkout with a fresh session`() = runBlocking {
+        val expired = refreshedSessionJson(id = "session-old", expiration = "2000-01-01T00:00:00Z")
+        val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(expired))
+        assertEquals(SessionState.EXPIRED, checkout.sessionState.value)
+
+        checkout.setSession(CheckoutTestSessions.widgetData(refreshedSessionJson()))
+
+        assertEquals(SessionState.READY, checkout.sessionState.value)
+        assertEquals("session-456", checkout.currentSessionId)
+    }
+
+    @Test
+    fun `setSession refuses a session that is already expired`() = runBlocking {
+        val checkout = checkout()
+        val stale = CheckoutTestSessions.widgetData(refreshedSessionJson(expiration = "2000-01-01T00:00:00Z"))
+
+        val error = assertThrows(PurseCheckoutException.SessionExpired::class.java) {
+            runBlocking { checkout.setSession(stale) }
+        }
+        assertEquals(PurseErrorCode.EXPIRED_SESSION, error.code)
+        // Nothing moved.
+        assertEquals("session-123", checkout.currentSessionId)
+        assertEquals(SessionState.READY, checkout.sessionState.value)
+    }
 }

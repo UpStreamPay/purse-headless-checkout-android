@@ -2,6 +2,8 @@ package eu.purse.checkout.element
 
 import android.widget.FrameLayout
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.State
@@ -99,8 +101,13 @@ fun rememberPaymentElement(
     listener: PaymentElementListener = NOOP_LISTENER,
     klarnaReturnUrl: String? = null,
 ): PaymentElement {
-    val readyState = remember(method.id) { mutableStateOf(false) }
-    val wrapped = remember(method.id, listener) {
+    // Keyed on the item's generation too: `setSession` bumps it for a method whose configuration
+    // changed (or that disappeared), so its element rebuilds — while an unchanged method keeps its
+    // element, its coordinator and whatever the shopper already typed.
+    val generations by checkout.itemGenerations.collectAsState()
+    val elementKey = remember(method.id, generations[method.id]) { method.id to (generations[method.id] ?: 0) }
+    val readyState = remember(elementKey) { mutableStateOf(false) }
+    val wrapped = remember(elementKey, listener) {
         object : PaymentElementListener by listener {
             override fun onReady(ready: Boolean) {
                 readyState.value = ready
@@ -108,12 +115,12 @@ fun rememberPaymentElement(
             }
         }
     }
-    val plugin = remember(method.id) {
+    val plugin = remember(elementKey) {
         PluginRegistry.getPlugin(method.partner, method.method, checkout.session.source)
     }
 
     return when (plugin) {
-        is CardPlugin -> rememberCardElement(checkout, method, readyState, wrapped)
+        is CardPlugin -> rememberCardElement(checkout, method, elementKey, readyState, wrapped)
 
         is GooglePayPlugin -> {
             val coordinator = rememberGooglePayCoordinator(wrapped)
@@ -143,7 +150,7 @@ fun rememberPaymentElement(
             val coordinator = rememberKlarnaCoordinator(wrapped)
             val packageName = LocalContext.current.packageName
             val returnUrl = klarnaReturnUrl ?: "$packageName.klarna://return"
-            val containerAttached: MutableState<Boolean> = remember(method.id) { mutableStateOf(false) }
+            val containerAttached: MutableState<Boolean> = remember(elementKey) { mutableStateOf(false) }
             // Klarna inflates its widget into a real ViewGroup — prepare only once the
             // AndroidView-provided container exists (i.e. once the element's UI is placed).
             LaunchedEffect(coordinator, containerAttached.value) {
@@ -180,7 +187,7 @@ fun rememberPaymentElement(
             }
         }
 
-        else -> remember(method.id) {
+        else -> remember(elementKey) {
             PaymentElement(
                 method, hasUi = false, selfSubmitting = false, readyState,
                 onSubmit = { wrapped.onError("no plugin registered for ${method.id}") },
@@ -214,8 +221,10 @@ fun rememberPaymentElement(
     token: PaymentToken,
     listener: PaymentElementListener = NOOP_LISTENER,
 ): PaymentElement {
-    val readyState = remember(token.id) { mutableStateOf(false) }
-    val wrapped = remember(token.id, listener) {
+    val generations by checkout.itemGenerations.collectAsState()
+    val elementKey = remember(token.id, generations[token.id]) { token.id to (generations[token.id] ?: 0) }
+    val readyState = remember(elementKey) { mutableStateOf(false) }
+    val wrapped = remember(elementKey, listener) {
         object : PaymentElementListener by listener {
             override fun onReady(ready: Boolean) {
                 readyState.value = ready
@@ -223,12 +232,12 @@ fun rememberPaymentElement(
             }
         }
     }
-    val plugin = remember(token.id) {
+    val plugin = remember(elementKey) {
         PluginRegistry.getPlugin(token.partner, token.method, checkout.session.source)
     }
     return when (plugin) {
-        is CardPlugin -> rememberCardElement(checkout, token, readyState, wrapped)
-        else -> remember(token.id) {
+        is CardPlugin -> rememberCardElement(checkout, token, elementKey, readyState, wrapped)
+        else -> remember(elementKey) {
             PaymentElement(
                 token, hasUi = false, selfSubmitting = false, readyState,
                 onSubmit = { wrapped.onError("no card plugin registered for saved token ${token.id}") },
@@ -247,10 +256,13 @@ fun rememberPaymentElement(
 private fun rememberCardElement(
     checkout: PurseHeadlessCheckout,
     item: PaymentItem,
+    elementKey: Pair<String, Int>,
     readyState: MutableState<Boolean>,
     listener: PaymentElementListener,
 ): PaymentElement {
-    val host = remember(item.id) { checkout.cardHost(item) }
+    // The host is what rememberCardCoordinator keys its SecureFields instance on: a new generation
+    // means a new host, hence a fresh form; the same generation keeps the form and its input.
+    val host = remember(elementKey) { checkout.cardHost(item) }
     val coordinator = rememberCardCoordinator(host, listener)
     return remember(coordinator) {
         PaymentElement(

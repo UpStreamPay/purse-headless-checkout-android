@@ -33,6 +33,10 @@ sealed class PurseCheckoutException(
             PurseErrorCode.ELEMENT_NOT_FULFILLED,
         )
 
+    /** `setSession` was handed a session that is already expired — web's `EXPIRED_SESSION`. */
+    class SessionExpired(sessionId: String) :
+        PurseCheckoutException("session $sessionId is expired", PurseErrorCode.EXPIRED_SESSION)
+
     /** No `:partner-ui` plugin is registered for a `(partner, method)` in the current split. */
     class NoPluginRegistered(message: String) :
         PurseCheckoutException(message, PurseErrorCode.METHOD_NOT_IMPLEMENTED)

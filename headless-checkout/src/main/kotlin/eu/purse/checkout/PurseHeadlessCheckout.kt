@@ -1,5 +1,6 @@
 package eu.purse.checkout
 
+import android.util.Log
 import eu.purse.checkout.payment.item.DisabledState
 import eu.purse.checkout.payment.item.MethodAvailability
 import eu.purse.checkout.payment.item.PaymentItem
@@ -25,6 +26,9 @@ import eu.purse.core.payload.ItemPayload
 import eu.purse.core.payload.ValidationResult
 import eu.purse.core.payment.LoanProduct
 import eu.purse.core.payment.LoanSimulation
+import eu.purse.core.payment.Partner
+import eu.purse.core.payment.Method
+import eu.purse.core.session.LegacyPaymentSession
 import eu.purse.core.session.PurseSessionParams
 import eu.purse.core.session.SessionCodec
 import eu.purse.core.assets.PurseAssets
@@ -53,6 +57,7 @@ import eu.purse.core.monitoring.MonitoringApiClient
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
@@ -87,16 +92,32 @@ import java.time.Instant
  * from a coroutine scope. The Payment API is blocking, so [submitPayment] is `suspend`.
  */
 class PurseHeadlessCheckout private constructor(
-    val params: PurseSessionParams,
-    val session: PaymentSession,
-    /** Resolved Payment API root; calls go to `{root}/{entityId}/sessions/{sessionId}/…`. */
-    val paymentApiRoot: String,
+    initialParams: PurseSessionParams,
+    initialSession: PaymentSession,
+    initialPaymentApiRoot: String,
     private val hooks: PurseCheckoutHooks?,
     /** Presentation preferences (locale, theme, text overrides) forwarded to every plugin. */
     val options: PluginOptions,
     private val datetimeChecker: ServerDatetimeChecker,
     private val watchdogIntervalMs: Long,
+    /** The build-locked environment [init] was given, re-applied by [setSession]. */
+    private val lockedEnvironment: PurseEnvironment?,
 ) {
+    /** The decoded widget data behind [session]; replaced by [setSession]. */
+    var params: PurseSessionParams = initialParams
+        private set
+
+    /**
+     * The session this checkout currently pays — replaced in place by [setSession] (web's
+     * `setSession`), so hold the checkout, not the session. Observe replacements on [paymentSession].
+     */
+    var session: PaymentSession = initialSession
+        private set
+
+    /** Resolved Payment API root; calls go to `{root}/{entityId}/sessions/{sessionId}/…`. */
+    var paymentApiRoot: String = initialPaymentApiRoot
+        private set
+
     private val bus = CheckoutEventBus.getInstance()
 
     /** Owns the expiry watchdog (and later background work); cancelled by [teardown]. */
@@ -138,6 +159,23 @@ class PurseHeadlessCheckout private constructor(
         if (session.expirationDate.isBefore(Instant.now())) SessionState.EXPIRED else SessionState.READY,
     )
     val sessionState: StateFlow<SessionState> = _sessionState.asStateFlow()
+
+    /** The current [PaymentSession]; emits again whenever [setSession] swaps it. */
+    private val _paymentSession = MutableStateFlow(initialSession)
+    val paymentSession: StateFlow<PaymentSession> = _paymentSession.asStateFlow()
+
+    /**
+     * Per-item generation counters, bumped by [setSession] for every item that did **not** survive
+     * the refresh (its configuration changed or it disappeared). Anything remembered per item —
+     * a `PaymentElement`, a coordinator, a form — should be keyed on `(item.id, generation)` so a
+     * changed method rebuilds its UI while an unchanged one keeps it, and whatever the shopper typed.
+     * `rememberPaymentElement` does this for you.
+     */
+    private val _itemGenerations = MutableStateFlow<Map<String, Int>>(emptyMap())
+    val itemGenerations: StateFlow<Map<String, Int>> = _itemGenerations.asStateFlow()
+
+    /** The current generation of [item] — see [itemGenerations]. */
+    fun generationOf(item: PaymentItem): Int = _itemGenerations.value[item.id] ?: 0
 
     private val _paymentMethods = MutableStateFlow(visibleMethods())
     val paymentMethods: StateFlow<List<PaymentItem>> = _paymentMethods.asStateFlow()
@@ -235,33 +273,7 @@ class PurseHeadlessCheckout private constructor(
         )
         bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_READY)
 
-        // Expiry watchdog — web's `onExpires` (5s poll against the server-offset-corrected clock,
-        // `server-datetime-checker.ts`). The one-shot clock sync happens on the watchdog's thread
-        // so init stays synchronous and network-free.
-        if (_sessionState.value == SessionState.READY) {
-            scope.launch(Dispatchers.IO) {
-                delay(watchdogIntervalMs)
-                datetimeChecker.sync()
-                while (isActive) {
-                    if (datetimeChecker.isExpiredForServer(session.expirationDate)) {
-                        _sessionState.value = SessionState.EXPIRED
-                        bus.post(
-                            CheckoutEventCode.HEADLESS_CHECKOUT_EXPIRED_SESSION,
-                            EventLevel.WARNING,
-                            monitoringPayload("paymentSessionId" to session.id),
-                        )
-                        break
-                    }
-                    delay(watchdogIntervalMs)
-                }
-            }
-        } else if (_sessionState.value == SessionState.EXPIRED) {
-            bus.post(
-                CheckoutEventCode.HEADLESS_CHECKOUT_EXPIRED_SESSION,
-                EventLevel.WARNING,
-                monitoringPayload("paymentSessionId" to session.id),
-            )
-        }
+        startExpiryWatchdog()
 
         // Wallet session — fetch the shopper's token list once (web's `setWalletSession`); it only
         // gates management operations and syncs names/favorites, so a failure is reported but never
@@ -286,9 +298,57 @@ class PurseHeadlessCheckout private constructor(
             }
         }
 
-        // Eligibility pre-check — web's `getEligibilityCheck` at session build
-        // (`item-factory/primaries.ts:118`): a plugin that rejects the current client/session gets
-        // its method deactivated with the filtered PLUGIN_INCOMPATIBLE code before it is rendered.
+        runEligibilityChecks()
+
+        // Saved gift cards carry no balance in the session — re-`/init` each one now (web's
+        // `buildSecondaryPaymentToken` fires the same call as the token is built).
+        resolveSavedSecondaryBalances()
+    }
+
+
+    /** The running expiry watchdog, so [setSession] can restart it against the new expiry. */
+    private var watchdogJob: Job? = null
+
+    /**
+     * Expiry watchdog — web's `onExpires` (5s poll against the server-offset-corrected clock,
+     * `server-datetime-checker.ts`). The one-shot clock sync happens on the watchdog's thread so
+     * construction stays synchronous and network-free.
+     */
+    private fun startExpiryWatchdog() {
+        watchdogJob?.cancel()
+        watchdogJob = null
+        if (_sessionState.value == SessionState.READY) {
+            watchdogJob = scope.launch(Dispatchers.IO) {
+                delay(watchdogIntervalMs)
+                datetimeChecker.sync()
+                while (isActive) {
+                    if (datetimeChecker.isExpiredForServer(session.expirationDate)) {
+                        _sessionState.value = SessionState.EXPIRED
+                        bus.post(
+                            CheckoutEventCode.HEADLESS_CHECKOUT_EXPIRED_SESSION,
+                            EventLevel.WARNING,
+                            monitoringPayload("paymentSessionId" to session.id),
+                        )
+                        break
+                    }
+                    delay(watchdogIntervalMs)
+                }
+            }
+        } else if (_sessionState.value == SessionState.EXPIRED) {
+            bus.post(
+                CheckoutEventCode.HEADLESS_CHECKOUT_EXPIRED_SESSION,
+                EventLevel.WARNING,
+                monitoringPayload("paymentSessionId" to session.id),
+            )
+        }
+    }
+
+    /**
+     * Eligibility pre-check — web's `getEligibilityCheck` at session build
+     * (`item-factory/primaries.ts:118`): a plugin that rejects the current client/session gets its
+     * method deactivated with the filtered PLUGIN_INCOMPATIBLE code before it is rendered.
+     */
+    private fun runEligibilityChecks() {
         meansOfPayment.forEach { item ->
             val plugin = PluginRegistry.getPlugin(item.partner, item.method, session.source) ?: return@forEach
             scope.launch {
@@ -299,10 +359,133 @@ class PurseHeadlessCheckout private constructor(
                 }
             }
         }
+    }
 
-        // Saved gift cards carry no balance in the session — re-`/init` each one now (web's
-        // `buildSecondaryPaymentToken` fires the same call as the token is built).
+    // --- session refresh (SDK-12216 / US-24) ----------------------------------------------------------
+
+    /**
+     * Hand this checkout a **new session** without rebuilding it — web's `setSession`. Use it when
+     * the cart changed (the merchant backend minted a new Client Session for the new amount) or the
+     * current session expired ([sessionState] is `EXPIRED`) and a fresh one was issued.
+     *
+     * What survives, mirroring web's `payment.setSession`: a **primary method whose configuration is
+     * unchanged** between the two sessions (`protocols[partner][method]` deep-equal) keeps its
+     * collected data, its form-fulfilment gate, its save-token decision and its live plugin — and,
+     * beyond web, its place as the split's primary when it was selected. Everything else is torn
+     * down: methods that changed or disappeared lose their plugin (`destroyClient`) and get a new
+     * [itemGenerations] generation so any UI remembered for them rebuilds; applied gift cards and
+     * their registrations are dropped (they were tokenized against the old session); saved cards and
+     * saved gift cards are rebuilt from the new session. The amount is the new session's; the
+     * watchdog restarts against its expiry; [sessionState] returns to `READY`.
+     *
+     * Same session id → ignored (a warning is logged), as on web.
+     *
+     * @throws PurseCheckoutException.SessionExpired when the new session is already expired.
+     * @throws IllegalStateException while a payment is being submitted.
+     * @throws eu.purse.core.session.PurseSessionException.SessionMalformed if [widgetData] can't be decoded.
+     */
+    suspend fun setSession(widgetData: String) {
+        check(_sessionState.value != SessionState.SUBMITTING) {
+            "cannot replace the session while a payment is being submitted"
+        }
+        val (newParams, newSession, newRoot) = resolve(widgetData, lockedEnvironment)
+        if (newSession.id == session.id) {
+            Log.w("PurseHeadlessCheckout", "setSession: attempting to set the same payment session again, ignoring.")
+            return
+        }
+        withContext(Dispatchers.IO) { runCatching { datetimeChecker.sync() } }
+        if (datetimeChecker.isExpiredForServer(newSession.expirationDate)) {
+            bus.post(
+                CheckoutEventCode.HEADLESS_CHECKOUT_EXPIRED_SESSION,
+                EventLevel.WARNING,
+                monitoringPayload("paymentSessionId" to newSession.id),
+            )
+            throw PurseCheckoutException.SessionExpired(newSession.id)
+        }
+        applySession(newParams, newSession, newRoot)
+    }
+
+    private fun applySession(newParams: PurseSessionParams, newSession: PaymentSession, newRoot: String) {
+        val previous = session
+        val previousItems = meansOfPayment
+        // A primary method survives (keeps its plugin and any in-progress input) only when its own
+        // configuration is unchanged — web's `hasSameMethodConfiguration`. Tokens ride along their
+        // method: a saved card survives when its method does and the new session still lists it.
+        val survivingMethodIds = previousItems
+            .filterIsInstance<PrimaryMethod>()
+            .filter { previous.source.sameMethodConfiguration(newSession.source, it.partner, it.method) }
+            .map { it.id }
+            .toSet()
+        val survivingTokenIds = previousItems
+            .filterIsInstance<PaymentToken>()
+            .filter { "${it.partner.wireValue}-${it.method.wireValue}" in survivingMethodIds }
+            .filter { token -> newSession.meansOfPayment.any { it is PaymentToken && it.id == token.id } }
+            .map { it.id }
+            .toSet()
+        val survivors = survivingMethodIds + survivingTokenIds
+        val previousPrimaryId = splitter.primaryMethod?.id
+
+        // Tear down what does not survive.
+        val dropped = activePlugins.filterKeys { it !in survivors }
+        dropped.forEach { (id, tracked) ->
+            activePlugins.remove(id)
+            val (item, plugin) = tracked
+            scope.launch { runCatching { plugin.destroyClient(pluginContext(item)) } }
+        }
+        collectedByMethod.keys.retainAll(survivors)
+        fulfilledByMethod.keys.retainAll(survivors)
+        registrationByMethod.keys.retainAll(survivors)
+        registrationBySecondaryToken.clear()
+        val generations = _itemGenerations.value.toMutableMap()
+        previousItems.map { it.id }.filter { it !in survivors }.forEach { id ->
+            generations[id] = (generations[id] ?: 0) + 1
+        }
+        _itemGenerations.value = generations
+
+        // Swap the session and rebuild the list from it.
+        params = newParams
+        session = newSession
+        paymentApiRoot = newRoot
+        meansOfPayment = newSession.meansOfPayment
+        splitter.reset(newSession.amount)
+        // Beyond web (which resets the whole split): an unchanged, still-selectable primary stays
+        // selected — the shopper's choice is "input still valid" in the AC's sense.
+        if (previousPrimaryId != null && previousPrimaryId in survivors) {
+            (meansOfPayment.firstOrNull { it.id == previousPrimaryId && it.disabled == null } as? PrimarySource)
+                ?.let { splitter.setPrimary(it) }
+        }
+        _paymentSession.value = newSession
+        _sessionState.value =
+            if (newSession.expirationDate.isBefore(Instant.now())) SessionState.EXPIRED else SessionState.READY
+
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_SET_SESSION,
+            payload = monitoringPayload(
+                "paymentSessionId" to newSession.id,
+                "previousPaymentSessionId" to previous.id,
+                "sessionType" to "v2",
+                "amount" to newSession.amount.toPlainString(),
+                "nb_methods" to newSession.meansOfPayment.size,
+                "nb_surviving_methods" to survivingMethodIds.size,
+            ),
+        )
+
+        refresh()
+        _savedSecondaryTokens.value = visibleSavedSecondaryTokens()
+        syncWalletTokens(walletTokens)
+        startExpiryWatchdog()
+        runEligibilityChecks()
         resolveSavedSecondaryBalances()
+    }
+
+    /** Web's `hasSameMethodConfiguration`: the two sessions describe `(partner, method)` identically. */
+    private fun LegacyPaymentSession.sameMethodConfiguration(
+        other: LegacyPaymentSession,
+        partner: Partner,
+        method: Method,
+    ): Boolean {
+        val mine = protocols[partner]?.get(method) ?: return false
+        return mine == other.protocols[partner]?.get(method)
     }
 
     val currency: String get() = session.currency
@@ -1347,6 +1530,24 @@ class PurseHeadlessCheckout private constructor(
             datetimeChecker: ServerDatetimeChecker?,
             watchdogIntervalMs: Long = WATCHDOG_INTERVAL_MS,
         ): PurseHeadlessCheckout {
+            val (params, session, apiRoot) = resolve(widgetData, lockedEnvironment)
+            val checker = datetimeChecker ?: ServerDatetimeChecker(
+                fetchServerTime = {
+                    DatetimeApiClient(params.apiKey, params.environment.datetimeApiRoot).datetime()
+                },
+            )
+            // Monitoring — only against a real checker (i.e. never from unit tests): route the
+            // event bus's batches to the monitoring API with this session's context attached.
+            if (datetimeChecker == null) {
+                installMonitoring(params, sessionId = params.paymentSession.id)
+            }
+            return PurseHeadlessCheckout(
+                params, session, apiRoot, hooks, options, checker, watchdogIntervalMs, lockedEnvironment,
+            )
+        }
+
+        /** Decoded params, built session and Payment API root for [widgetData] — shared by [init] and [setSession]. */
+        private fun resolve(widgetData: String, lockedEnvironment: PurseEnvironment?): Triple<PurseSessionParams, PaymentSession, String> {
             val decoded = SessionCodec.decode(widgetData)
             val params = if (lockedEnvironment != null && lockedEnvironment != decoded.environment) {
                 decoded.copy(environment = lockedEnvironment)
@@ -1360,18 +1561,7 @@ class PurseHeadlessCheckout private constructor(
             } else {
                 params.apiUrl.ifBlank { params.environment.paymentApiRoot }
             }
-            val session = PaymentSessionBuilder.build(params.paymentSession)
-            val checker = datetimeChecker ?: ServerDatetimeChecker(
-                fetchServerTime = {
-                    DatetimeApiClient(params.apiKey, params.environment.datetimeApiRoot).datetime()
-                },
-            )
-            // Monitoring — only against a real checker (i.e. never from unit tests): route the
-            // event bus's batches to the monitoring API with this session's context attached.
-            if (datetimeChecker == null) {
-                installMonitoring(params, sessionId = params.paymentSession.id)
-            }
-            return PurseHeadlessCheckout(params, session, apiRoot, hooks, options, checker, watchdogIntervalMs)
+            return Triple(params, PaymentSessionBuilder.build(params.paymentSession), apiRoot)
         }
 
         /** Web's `ServerDatetimeChecker.WATCHDOG_DURATION`. */
