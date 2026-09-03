@@ -52,34 +52,30 @@ data class PluginOptions(
 )
 
 /**
- * Overridable copy for the card form. `null` falls back to the SDK's localized resources
- * (`purse_card_*` strings) — web falls back to its own translation table the same way.
+ * Overridable copy for the card form — the card subset of web's `HostedFormUIOptions`
+ * (`panInputLabel`, `panPlaceholder`, `panRequiredError`, `panFormatError`, `panTooltipText`, …),
+ * one [FieldTexts] per secure field. `null` falls back to the SDK's localized resources
+ * (`purse_card_*` strings, `values/` + `values-fr/`) — web falls back to its translation table the
+ * same way.
  */
 data class CardFormTexts(
-    val cardNumberPlaceholder: String? = null,
-    val expDatePlaceholder: String? = null,
-    val cvvPlaceholder: String? = null,
-    val holderNamePlaceholder: String? = null,
-)
-
-/**
- * Styling for the partner-rendered card fields — the Android analog of web's `PartnerUITheme`
- * input scope, shaped to what SecureFields' `VaultStyles` can apply (CSS-like string values, e.g.
- * `"16px"`, `"#1a1a1a"`). Pseudo-variants mirror web's `:focus` / `:invalid`.
- */
-data class PurseTheme(
-    val input: FieldStyle? = null,
-    val inputFocus: FieldStyle? = null,
-    val inputInvalid: FieldStyle? = null,
+    val cardNumber: FieldTexts = FieldTexts(),
+    val expDate: FieldTexts = FieldTexts(),
+    val cvv: FieldTexts = FieldTexts(),
+    val holderName: FieldTexts = FieldTexts(),
 ) {
-    data class FieldStyle(
-        val color: String? = null,
-        val placeholderColor: String? = null,
-        val backgroundColor: String? = null,
-        val fontFamily: String? = null,
-        val fontSize: String? = null,
-        val lineHeight: String? = null,
-        val fontWeight: String? = null,
+    /**
+     * The five texts a secure field can show: its [label] above the field, the [placeholder]
+     * inside it, the [helperText] under it (web's tooltip text), and the two messages that replace
+     * the helper text when the field is invalid — [requiredError] for an empty field the shopper
+     * left, [formatError] for content SecureFields rejects.
+     */
+    data class FieldTexts(
+        val label: String? = null,
+        val placeholder: String? = null,
+        val helperText: String? = null,
+        val requiredError: String? = null,
+        val formatError: String? = null,
     )
 }
 

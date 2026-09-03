@@ -15,6 +15,7 @@ import eu.purse.core.environment.PurseEnvironment
 import eu.purse.partnerui.PayToken
 import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PluginEvent
+import eu.purse.partnerui.CardFormTexts
 import eu.purse.partnerui.PurseTheme
 import eu.purse.partnerui.R
 import eu.purse.partnerui.redirect.RedirectAction
@@ -99,20 +100,14 @@ fun rememberCardCoordinator(host: CardHost, listener: PaymentElementListener): C
                 .ifEmpty { listOf(Brand.VISA, Brand.MASTERCARD, Brand.CARTE_BANCAIRE) }
         }
     }
-    // Placeholder copy: merchant overrides (PluginOptions.cardFormTexts) win; otherwise the SDK's
+    // Field copy: merchant overrides (PluginOptions.cardFormTexts) win; otherwise the SDK's
     // localized resources (values/, values-fr/, …) — web's HostedFormUIOptions-over-translations.
     val options = remember(host) { host.buildContext().options }
-    val texts = options.cardFormTexts
-    val cardNumberPlaceholder =
-        texts.cardNumberPlaceholder ?: stringResource(R.string.purse_card_number_placeholder)
-    val expDatePlaceholder =
-        texts.expDatePlaceholder ?: stringResource(R.string.purse_card_exp_date_placeholder)
-    val cvvPlaceholder = texts.cvvPlaceholder ?: stringResource(R.string.purse_card_cvv_placeholder)
-    val holderNamePlaceholder =
-        texts.holderNamePlaceholder ?: stringResource(R.string.purse_card_holder_name_placeholder)
-    val config = remember(
-        brands, mode, cardNumberPlaceholder, expDatePlaceholder, cvvPlaceholder, holderNamePlaceholder, options.theme,
-    ) {
+    val texts = rememberCardTexts(options.cardFormTexts)
+    // Web's Theme.build(): merchant values over the default theme, then the scope → global
+    // fallback chain, resolved once so the form and SecureFields read the same values.
+    val theme = remember(options.theme) { (options.theme ?: PurseTheme()).resolve() }
+    val config = remember(brands, mode, texts, theme) {
         SecureFieldsConfig(
             brands = brands,
             // No `view` targets — SecureFields builds its own composited form (`sdk.formView`) for
@@ -120,19 +115,19 @@ fun rememberCardCoordinator(host: CardHost, listener: PaymentElementListener): C
             // `VaultFieldView` targets.
             fields = when (mode) {
                 CardCoordinator.Mode.FRESH_CARD -> SecureFieldsFieldsConfig(
-                    cardNumber = VaultFieldConfig(placeholder = cardNumberPlaceholder),
-                    expDate = VaultFieldConfig(placeholder = expDatePlaceholder),
-                    cvv = VaultFieldConfig(placeholder = cvvPlaceholder),
-                    holderName = VaultFieldConfig(placeholder = holderNamePlaceholder),
+                    cardNumber = VaultFieldConfig(placeholder = texts.cardNumber.placeholder),
+                    expDate = VaultFieldConfig(placeholder = texts.expDate.placeholder),
+                    cvv = VaultFieldConfig(placeholder = texts.cvv.placeholder),
+                    holderName = VaultFieldConfig(placeholder = texts.holderName.placeholder),
                 )
                 // CVV-only (web's `cvvOnly` hosted fields): `cvv` is SecureFields' one mandatory
                 // field, and with no card-number field mounted its tokenizer omits the `card` object
                 // entirely — which is what the Vault reads as a CVV-only submission.
                 CardCoordinator.Mode.TOKEN_CVV,
                 CardCoordinator.Mode.TOKEN_NO_CVV,
-                -> SecureFieldsFieldsConfig(cvv = VaultFieldConfig(placeholder = cvvPlaceholder))
+                -> SecureFieldsFieldsConfig(cvv = VaultFieldConfig(placeholder = texts.cvv.placeholder))
             },
-            styles = options.theme?.toVaultStyles(),
+            styles = theme.toVaultStyles(),
         )
     }
     val sdk = rememberSecureFields(
@@ -143,7 +138,7 @@ fun rememberCardCoordinator(host: CardHost, listener: PaymentElementListener): C
     )
 
     val coordinator = remember(sdk, host, partnerWireValue) {
-        CardCoordinator(sdk, host, partnerWireValue, mode, payToken, scope, redirectLauncher, listener)
+        CardCoordinator(sdk, host, partnerWireValue, mode, payToken, theme, texts, scope, redirectLauncher, listener)
     }
 
     DisposableEffect(sdk, coordinator) {
@@ -207,6 +202,10 @@ class CardCoordinator internal constructor(
     /** Which of the three card flows this coordinator drives — decided by the host's token. */
     val mode: Mode,
     private val payToken: PayToken?,
+    /** The merchant's [PurseTheme] resolved over the defaults — what [PurseCardForm] styles with. */
+    val theme: PurseTheme.Resolved,
+    /** Field copy with every override applied and every gap filled from resources. */
+    internal val texts: ResolvedCardTexts,
     private val scope: CoroutineScope,
     private val redirectLauncher: ManagedActivityResultLauncher<RedirectAction, RedirectionCheckoutResult>,
     private val listener: PaymentElementListener,
@@ -412,15 +411,56 @@ private fun Brand.toGatewayScheme(): String? = when (this) {
     Brand.UNKNOWN -> null
 }
 
-/** The SDK's [PurseTheme] (input scope + pseudo-variants) → SecureFields' [VaultStyles]. */
-private fun PurseTheme.toVaultStyles(): VaultStyles = (input ?: PurseTheme.FieldStyle()).toVaultStyles(
-    focus = inputFocus?.toVaultStyles(),
-    invalid = inputInvalid?.toVaultStyles(),
+/**
+ * Resolve [CardFormTexts] against the SDK's localized `purse_card_*` resources — one string per
+ * field per role, merchant override first.
+ */
+@Composable
+private fun rememberCardTexts(texts: CardFormTexts): ResolvedCardTexts {
+    @Composable
+    fun field(
+        t: CardFormTexts.FieldTexts,
+        label: Int, placeholder: Int, helper: Int, required: Int, invalid: Int,
+    ) = ResolvedFieldTexts(
+        label = t.label ?: stringResource(label),
+        placeholder = t.placeholder ?: stringResource(placeholder),
+        helperText = t.helperText ?: stringResource(helper).ifBlank { null },
+        requiredError = t.requiredError ?: stringResource(required),
+        formatError = t.formatError ?: stringResource(invalid),
+    )
+    val cardNumber = field(
+        texts.cardNumber, R.string.purse_card_number_label, R.string.purse_card_number_placeholder,
+        R.string.purse_card_number_helper, R.string.purse_card_number_required, R.string.purse_card_number_invalid,
+    )
+    val expDate = field(
+        texts.expDate, R.string.purse_card_exp_date_label, R.string.purse_card_exp_date_placeholder,
+        R.string.purse_card_exp_date_helper, R.string.purse_card_exp_date_required, R.string.purse_card_exp_date_invalid,
+    )
+    val cvv = field(
+        texts.cvv, R.string.purse_card_cvv_label, R.string.purse_card_cvv_placeholder,
+        R.string.purse_card_cvv_helper, R.string.purse_card_cvv_required, R.string.purse_card_cvv_invalid,
+    )
+    val holderName = field(
+        texts.holderName, R.string.purse_card_holder_name_label, R.string.purse_card_holder_name_placeholder,
+        R.string.purse_card_holder_name_helper, R.string.purse_card_holder_name_required, R.string.purse_card_holder_name_invalid,
+    )
+    return remember(cardNumber, expDate, cvv, holderName) { ResolvedCardTexts(cardNumber, expDate, cvv, holderName) }
+}
+
+/**
+ * The resolved [PurseTheme] `input` scope and its variants → SecureFields' [VaultStyles]. Only the
+ * keys `VaultStyles` knows travel; web's border/outline/padding keys have no SecureFields analog.
+ */
+private fun PurseTheme.Resolved.toVaultStyles(): VaultStyles = input.toVaultStyles(
+    focus = inputFocus.toVaultStyles(),
+    invalid = inputInvalid.toVaultStyles(),
+    valid = inputValid.toVaultStyles(),
 )
 
 private fun PurseTheme.FieldStyle.toVaultStyles(
     focus: VaultStyles? = null,
     invalid: VaultStyles? = null,
+    valid: VaultStyles? = null,
 ): VaultStyles = VaultStyles(
     fontFamily = fontFamily,
     fontSize = fontSize,
@@ -431,6 +471,7 @@ private fun PurseTheme.FieldStyle.toVaultStyles(
     backgroundColor = backgroundColor,
     focus = focus,
     invalid = invalid,
+    valid = valid,
 )
 
 /** Purse's [PurseEnvironment] (Payment API) → SecureFields' own [VaultEnvironment] (vault gateway)

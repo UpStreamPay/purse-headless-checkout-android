@@ -1,7 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="purse_card_number_placeholder">Numéro de carte</string>
-    <string name="purse_card_exp_date_placeholder">MM / AA</string>
-    <string name="purse_card_cvv_placeholder">Cryptogramme</string>
-    <string name="purse_card_holder_name_placeholder">Nom sur la carte</string>
+    <string name="purse_card_number_label">Numéro de carte</string>
+    <string name="purse_card_number_placeholder">1234 5678 9012 3456</string>
+    <string name="purse_card_number_helper">Nous ne conservons qu\'un jeton sécurisé, jamais votre numéro complet.</string>
+    <string name="purse_card_number_required">Numéro de carte requis.</string>
+    <string name="purse_card_number_invalid">Numéro de carte invalide.</string>
+
+    <string name="purse_card_exp_date_label">Date d\'expiration</string>
+    <string name="purse_card_exp_date_placeholder">MM/AA</string>
+    <string name="purse_card_exp_date_helper">Mois et année d\'expiration de la carte (MM/AA).</string>
+    <string name="purse_card_exp_date_required">Date d\'expiration requise.</string>
+    <string name="purse_card_exp_date_invalid">Date d\'expiration invalide.</string>
+
+    <string name="purse_card_cvv_label">Cryptogramme</string>
+    <string name="purse_card_cvv_placeholder">123</string>
+    <string name="purse_card_cvv_helper">Code à 3–4 chiffres au dos (ou à l\'avant pour Amex).</string>
+    <string name="purse_card_cvv_required">Cryptogramme requis.</string>
+    <string name="purse_card_cvv_invalid">Cryptogramme invalide.</string>
+
+    <string name="purse_card_holder_name_label">Titulaire de la carte</string>
+    <string name="purse_card_holder_name_placeholder">J. Dupont</string>
+    <string name="purse_card_holder_name_helper"></string>
+    <string name="purse_card_holder_name_required">Entrez le nom du titulaire comme il apparaît sur la carte.</string>
+    <string name="purse_card_holder_name_invalid">Titulaire invalide.</string>
 </resources>
