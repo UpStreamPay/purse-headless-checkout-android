@@ -506,6 +506,79 @@ class PurseHeadlessCheckoutTest {
         assertTrue(noCvvHost.buildContext().token?.requiresCvv == false)
     }
 
+    /** The fixture plus a vaulted PayPal account under `paypal.wallet` — no card, no vault, hence no CVV concept. */
+    private fun paypalTokenSessionJson(): String {
+        val session = org.json.JSONObject(CheckoutTestSessions.samplePaymentSessionJson)
+        session.getJSONObject("protocols").getJSONObject("paypal").getJSONObject("wallet").put(
+            "integrated_tokens",
+            org.json.JSONArray().put(
+                org.json.JSONObject(
+                    """
+                    {
+                      "id": "pp-1", "value": "pp-value-1", "favorite": false, "name": "my paypal",
+                      "source": "MERCHANT", "created_at": "2026-03-01T00:00:00Z",
+                      "description": { "display_token": "buyer@example.com" }
+                    }
+                    """,
+                ),
+            ),
+        )
+        return session.toString()
+    }
+
+    @Test
+    fun `a saved PayPal token has no CVV to collect and is payable the moment it is selected`() {
+        val checkout = checkout(CheckoutTestSessions.widgetData(paypalTokenSessionJson()))
+        val paypal = checkout.paymentTokens.value.single { it.id == "pp-1" }
+
+        assertEquals(Partner.Paypal, paypal.partner)
+        assertEquals("buyer@example.com", paypal.label)
+        assertFalse("paypal/wallet carries no vault — not a card-on-file", paypal.isVaultedCard)
+        assertFalse("a CVV is a card-form concept: nothing to collect on a PayPal token", paypal.requiresCvv)
+        assertTrue(paypal.paysWithoutCvv)
+        // The card-on-file next to it keeps asking for its CVV — the rule only bypasses non-card tokens.
+        assertTrue(checkout.paymentTokens.value.single { it.id == "tok-1" }.requiresCvv)
+        assertEquals(3, checkout.primaryMethods.size)
+
+        checkout.setPrimaryToken(paypal)
+
+        assertEquals("pp-1", checkout.amountSplit.value.single().source.id)
+        assertTrue("no CVV gate armed for a PayPal token", checkout.isPaymentFulfilled.value)
+        // The PayPal host hands the token to the plugin, CVV-free.
+        val context = checkout.paypalHost(paypal).buildContext()
+        assertEquals("pp-value-1", context.token?.value)
+        assertFalse(context.token!!.requiresCvv)
+    }
+
+    @Test
+    fun `paying with a saved PayPal token inits then validates with the token and the init step id`() {
+        FakePaymentApi().use { api ->
+            api.respond("init", """{ "status": { "state": "SUCCESS" }, "step_id": 31, "plugin_result": { "logs": {} } }""")
+            api.respond("validate", """{"global_status":"SUCCESS","results":[]}""")
+            val checkout = checkout(CheckoutTestSessions.widgetData(paypalTokenSessionJson(), api.apiRoot))
+            val paypal = checkout.paymentTokens.value.single { it.id == "pp-1" }
+            checkout.setPrimaryToken(paypal)
+
+            runBlocking { checkout.submitPayment() }
+
+            // The plugin ran the pay-now /init itself — web's token-mode initSession.
+            val init = api.initRequests().single().json
+            assertEquals("paypal", init.getString("partner"))
+            assertEquals("wallet", init.getString("method"))
+            assertFalse(init.getJSONObject("payment_preferences").getBoolean("registration"))
+
+            // …and /validate carries the token plus that init's step id, no card block, no CVV token.
+            val item = org.json.JSONArray(api.requests.single { it.path.endsWith("/validate") }.body).getJSONObject(0)
+            assertEquals("paypal", item.getString("partner"))
+            assertEquals("wallet", item.getString("method"))
+            assertEquals(31, item.getInt("step_id"))
+            val paymentData = item.getJSONObject("payment_data")
+            assertEquals("pp-value-1", paymentData.getString("token"))
+            assertFalse("no card behind a PayPal token", paymentData.has("card"))
+            assertFalse(paymentData.has("vault_vendor_token_id"))
+        }
+    }
+
     @Test
     fun `only a card method or a saved card can host a card form`() {
         val checkout = checkout()

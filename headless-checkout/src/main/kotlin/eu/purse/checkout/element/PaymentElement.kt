@@ -44,8 +44,9 @@ class PaymentElement internal constructor(
     val item: PaymentItem,
     /**
      * Whether this element has anything to render — web's `hasUI()`. `false` for
-     * redirection-template methods, whose hosted page *is* the payment step, and for a saved card
-     * behind the no-CVV gates (`PaymentToken.paysWithoutCvv`).
+     * redirection-template methods, whose hosted page *is* the payment step, for a saved card
+     * behind the no-CVV gates (`PaymentToken.paysWithoutCvv`), and for a saved PayPal token, which
+     * has neither a form nor a button (the buyer approved when they vaulted it).
      */
     val hasUi: Boolean,
     /**
@@ -198,13 +199,18 @@ fun rememberPaymentElement(
 }
 
 /**
- * Build the [PaymentElement] that pays with a saved card [token] — web's `getPaymentElement` on a
- * `PurseHeadlessCheckoutPrimaryToken`. What it renders follows the token's CVV requirement:
+ * Build the [PaymentElement] that pays with a saved [token] — web's `getPaymentElement` on a
+ * `PurseHeadlessCheckoutPrimaryToken`. What it renders follows the token's plugin and CVV
+ * requirement:
  *
- * - `token.requiresCvv` → a **CVV-only** card form ([PaymentElement.hasUi] `true`); the payment is
- *   not fulfilled until it validates, exactly like a fresh card form;
- * - otherwise → **nothing** ([PaymentElement.hasUi] `false`), and [PaymentElement.submit] goes
- *   straight to `/init`+`/validate`.
+ * - a card-on-file with `token.requiresCvv` → a **CVV-only** card form ([PaymentElement.hasUi]
+ *   `true`); the payment is not fulfilled until it validates, exactly like a fresh card form;
+ * - a card-on-file behind the no-CVV gates → **nothing** ([PaymentElement.hasUi] `false`), and
+ *   [PaymentElement.submit] goes straight to `/init`+`/validate`;
+ * - a saved **PayPal** (or a token under the redirection template) → **nothing** either: no CVV
+ *   exists for it (`token.requiresCvv` is always `false`), no approval to launch, and
+ *   [PaymentElement.submit] runs `/init`+`/validate` — then follows a chained 3-D Secure hop like
+ *   the pay-now flow would. Web's paypal plugin with a `token` renders an empty template.
  *
  * Select the token with [PurseHeadlessCheckout.setPrimaryToken] as you would call `setPrimary`
  * for a method; the element does not select it for you.
@@ -237,10 +243,39 @@ fun rememberPaymentElement(
     }
     return when (plugin) {
         is CardPlugin -> rememberCardElement(checkout, token, elementKey, readyState, wrapped)
+
+        // A saved PayPal: no button, no approval — `submit()` captures at once, the plugin's own
+        // `preValidation` running the `/init` (see PaypalPlugin). `prepare` reports ready straight away.
+        is PaypalPlugin -> {
+            val coordinator = rememberPaypalCoordinator(wrapped)
+            LaunchedEffect(coordinator, token.id) { coordinator.prepare(checkout.paypalHost(token)) }
+            remember(coordinator) {
+                PaymentElement(
+                    token, hasUi = false, selfSubmitting = false, readyState,
+                    onSubmit = { coordinator.submit() },
+                    ui = { },
+                )
+            }
+        }
+
+        // A token under the redirection template: same shape as its method — `/init` at prepare,
+        // the token patched into `/validate` by RedirectionPlugin.preValidation.
+        is RedirectionPlugin -> {
+            val coordinator = rememberRedirectionCoordinator(wrapped)
+            LaunchedEffect(coordinator, token.id) { coordinator.prepare(checkout.redirectionHost(token)) }
+            remember(coordinator) {
+                PaymentElement(
+                    token, hasUi = false, selfSubmitting = false, readyState,
+                    onSubmit = { coordinator.submit() },
+                    ui = { },
+                )
+            }
+        }
+
         else -> remember(elementKey) {
             PaymentElement(
                 token, hasUi = false, selfSubmitting = false, readyState,
-                onSubmit = { wrapped.onError("no card plugin registered for saved token ${token.id}") },
+                onSubmit = { wrapped.onError("no plugin registered for saved token ${token.id}") },
                 ui = { },
             )
         }

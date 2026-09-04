@@ -33,6 +33,13 @@ import kotlinx.coroutines.withContext
  * 4. if `/validate` returns a redirection — launches the 3-D Secure Activity, then reports that the
  *    shopper returned (not the payment outcome — see [onRedirectReturn]'s doc).
  *
+ * Prepared with a **saved PayPal token** (`PurseHeadlessCheckout.paypalHost(token)`, so
+ * `buildContext().token` is set), [submit] skips steps 2–3: there is no order to approve, the
+ * plugin's own `preValidation` runs the `/init` and patches the token in, and the coordinator goes
+ * straight to the capture — keeping step 4's chained-3DS handling, which web's token mode gets from
+ * the same `postValidation`. Nothing is rendered for a token (web's `getTemplateForUI` returns an
+ * empty template): the host's own Pay button calls [submit].
+ *
  * Knows nothing about `:headless-checkout` — [PaypalHost] is the seam (see its doc).
  *
  * **Construct this in the host Activity's `onCreate`** — it registers `ActivityResult` launchers,
@@ -113,11 +120,21 @@ class PaypalCoordinator private constructor(
     /**
      * `POST /init`, then launch PayPal's approval. Call when the branded button is tapped. A no-op
      * while a previous tap's flow is still in progress — see [submitting].
+     *
+     * For a **saved token** host there is no approval to launch: this goes straight to the capture
+     * (`/validate`, whose plugin-side `preValidation` does the `/init`), so call it from your own
+     * Pay button once the token is the split's primary (`setPrimaryToken`).
      */
     fun submit() {
         if (submitting) return
         val host = host ?: return listener.onError("call prepare() first")
         submitting = true
+        val tokenContext = host.buildContext()
+        partnerWireValue = tokenContext.partner.wireValue
+        if (tokenContext.token != null) {
+            capture(host)
+            return
+        }
         activity.lifecycleScope.launch {
             try {
                 val context = host.buildContext()

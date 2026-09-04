@@ -113,6 +113,20 @@ class PaypalMapperTest {
     }
 
     @Test
+    fun `ensureInitSucceeded accepts a successful init that carries no order_id`() {
+        // The saved-token /init creates no order for the buyer to approve — only its status matters.
+        PaypalMapper.ensureInitSucceeded(
+            JSONObject("""{ "status": { "state": "SUCCESS" }, "step_id": 5, "plugin_result": { "logs": {} } }"""),
+        )
+        PaypalMapper.ensureInitSucceeded(JSONObject("""{ "step_id": 5 }"""))
+    }
+
+    @Test(expected = PaymentApiException::class)
+    fun `ensureInitSucceeded throws when init is not successful`() {
+        PaypalMapper.ensureInitSucceeded(JSONObject("""{ "status": { "state": "FAILED", "description": "nope" } }"""))
+    }
+
+    @Test
     fun `isApprovalUrl catches the approval URL a real validate response echoed back`() {
         // Verbatim from a device run: /validate answered global_status=SUCCESS *and* this URL — the
         // very order the buyer had just approved. Following it re-opened PayPal and booked a second

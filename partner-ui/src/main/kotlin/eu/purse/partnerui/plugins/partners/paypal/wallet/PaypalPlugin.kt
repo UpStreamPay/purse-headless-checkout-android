@@ -25,6 +25,15 @@ import eu.purse.partnerui.PartnerUiPlugin
  * approval Activity, the chained-3DS redirect) lives in [PaypalCoordinator]; the `step_id` reaches
  * this plugin through `PartnerUiContext.collected`, the same seam Google Pay uses for its sheet
  * token.
+ *
+ * **A saved PayPal token** (`PartnerUiContext.token`, one of the method's `integrated_tokens[]`)
+ * skips the browser switch entirely — the buyer approved when they vaulted it. Web's paypal plugin
+ * with a `token` attribute renders nothing (`getTemplateForUI` → empty, headless `hasUI()` →
+ * `false`), `/init`s on session set and, in `preValidation`, patches the item with the token
+ * (`patchItemPayloadWithToken`). Here [preValidation] does the `/init` itself, right before
+ * building the item, the way the card plugin does for a card-on-file: one call, and a host that
+ * calls `submitPayment()` directly (no coordinator, no element) still sends a complete item. No
+ * CVV is ever involved — a CVV is a card-form concept, and there is no card form behind PayPal.
  */
 class PaypalPlugin(override val partner: Partner) : PartnerUiPlugin {
 
@@ -49,13 +58,32 @@ class PaypalPlugin(override val partner: Partner) : PartnerUiPlugin {
      * sent: PayPal's approval is recorded against the order on PayPal's side, and the backend
      * re-reads it from the `step_id`, so the `orderId`/`payerId` the SDK hands back are kept for
      * diagnostics only (see [COLLECTED_ORDER_ID]).
+     *
+     * With a saved token ([PartnerUiContext.token]) there was no approval step to collect from:
+     * this `POST /init`s now (same body as the pay-now init — web's token-mode `initSession`),
+     * takes the `step_id` off the answer, and sends `payment_data.token` (web's
+     * `patchItemPayloadWithToken`; no `card` block since a PayPal token has no expiry or scheme).
+     * Suspend/blocking in that case — the validator already runs it off the main thread.
      */
-    override suspend fun preValidation(context: PartnerUiContext): ValidateItemPayload = ItemPayload(
-        partner = partner,
-        method = method,
-        amount = context.amount,
-        stepId = context.collected[COLLECTED_STEP_ID] as? Int,
-    )
+    override suspend fun preValidation(context: PartnerUiContext): ValidateItemPayload {
+        val token = context.token
+            ?: return ItemPayload(
+                partner = partner,
+                method = method,
+                amount = context.amount,
+                stepId = context.collected[COLLECTED_STEP_ID] as? Int,
+            )
+
+        val initResponse = context.api.init(PaypalMapper.buildInitPayload(context.amount, partner.wireValue))
+        PaypalMapper.ensureInitSucceeded(initResponse)
+        return ItemPayload(
+            partner = partner,
+            method = method,
+            amount = context.amount,
+            stepId = PaypalMapper.extractStepId(initResponse),
+            paymentData = token.patchPaymentData(),
+        )
+    }
 
     companion object {
         /** Key [PaypalCoordinator] uses in `setCollected` for the `/init` step id. */

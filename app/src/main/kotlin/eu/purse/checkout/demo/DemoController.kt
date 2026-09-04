@@ -16,12 +16,14 @@ import eu.purse.checkout.payment.item.SavedSecondaryToken
 import eu.purse.checkout.payment.item.SecondaryMethod
 import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.core.payment.Method
+import eu.purse.core.payment.Partner
 import eu.purse.core.vault.VaultVendor
 import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayCoordinator
 import eu.purse.partnerui.plugins.generics.redirection.RedirectionCoordinator
 import eu.purse.partnerui.plugins.generics.redirection.RedirectionPlugin
 import eu.purse.partnerui.plugins.partners.klarna.KlarnaCoordinator
+import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.plugins.partners.paypal.wallet.PaypalCoordinator
 import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardCoordinator
 import eu.purse.partnerui.redirect.RedirectionResolver
@@ -129,9 +131,11 @@ class DemoController(private val activity: ComponentActivity) {
         private set
 
     /**
-     * The selected saved card (`paymentTokens`), mutually exclusive with [selectedPrimary] — both
-     * occupy the split's single primary slot. Its row mounts [SavedCardForm]: a CVV field when the
-     * PSP still wants one (`token.requiresCvv`), nothing otherwise.
+     * The selected saved token (`paymentTokens`), mutually exclusive with [selectedPrimary] — both
+     * occupy the split's single primary slot. A card-on-file's row mounts [SavedCardForm]: a CVV
+     * field when the PSP still wants one (`token.requiresCvv`), nothing otherwise. A saved PayPal
+     * account (`token.isVaultedCard == false`) has no CVV at all — its row is a notice plus the
+     * shared Pay button.
      */
     var selectedToken by mutableStateOf<PaymentToken?>(null)
         private set
@@ -470,9 +474,10 @@ class DemoController(private val activity: ComponentActivity) {
     }
 
     /**
-     * Select a saved card (or `null` to collapse it) — `setPrimaryToken` is the token analog of
+     * Select a saved token (or `null` to collapse it) — `setPrimaryToken` is the token analog of
      * `setPrimary`, and the SDK arms the CVV gate itself when the PSP wants one: the shared "Pay"
-     * button stays off until the row's CVV field validates, exactly like the full card form.
+     * button stays off until the row's CVV field validates, exactly like the full card form. A token
+     * with no card behind it (a saved PayPal) has no gate to arm and is payable at once.
      */
     fun selectToken(token: PaymentToken?) {
         val co = checkout ?: return
@@ -486,8 +491,32 @@ class DemoController(private val activity: ComponentActivity) {
         if (token != null) co.setPrimaryToken(token) else co.clearPrimarySplit()
     }
 
-    /** What a saved-card row shows: the shopper's label, or the SDK's display token. */
+    /** What a saved-token row shows: the shopper's label, or the SDK's display token. */
     fun label(token: PaymentToken): String = token.name.ifBlank { token.label }
+
+    /** The partner behind a saved token, as a display name — "Paypal" for a vaulted PayPal account. */
+    fun partnerLabel(token: PaymentToken): String =
+        if (token.partner == Partner.Paypal) PAYPAL else token.partner.wireValue.replaceFirstChar { it.uppercase() }
+
+    /**
+     * Callbacks for a saved **non-card** token's element (a vaulted PayPal account — see
+     * `SavedWalletTokenForm`). `onReady` fires from `prepare`, immediately: there is no form and no
+     * approval to wait for. Results land here like every other method's, labelled by partner.
+     */
+    fun savedTokenListener(token: PaymentToken): PaymentElementListener {
+        val label = partnerLabel(token)
+        return object : PaymentElementListener {
+            override fun onReady(ready: Boolean) {
+                primaryReady = ready
+            }
+
+            override fun onResult(summary: String, globalStatus: String?) = succeed(label, summary, globalStatus)
+            override fun onRequiresAction() = announceAction(label)
+            override fun onPaymentId(paymentId: String) = notePaymentId(label, paymentId)
+            override fun onCanceled() = cancel(label)
+            override fun onError(message: String?) = fail(label, message, submitting)
+        }
+    }
 
     /** Redirection is checked first, matching [PluginRegistry]'s own priority — a method configured to
      * redirect is driven by the template even when its `method` has a dedicated plugin. */
@@ -560,7 +589,8 @@ class DemoController(private val activity: ComponentActivity) {
         val selected = selectedPrimary
         submitting = true
         when {
-            // A saved card goes through the card coordinator too (CVV-only or no form) — it owns
+            // A saved token goes through its own row's submit — the card coordinator for a
+            // card-on-file (CVV-only or no form), the token element for a saved PayPal — which owns
             // the /validate call and the 3-D Secure follow-up either way.
             selectedToken != null -> cardSubmit?.let { it() } ?: run { submitting = false }
             selected == null -> submitSecondariesOnly(co)
@@ -918,9 +948,13 @@ class DemoController(private val activity: ComponentActivity) {
         appendLine("payment methods (${co.paymentMethods.value.size}):")
         co.paymentMethods.value.forEach { appendLine("  ${describe(it)}") }
         appendLine()
-        appendLine("saved cards (${co.paymentTokens.value.size}):")
+        appendLine("saved tokens (${co.paymentTokens.value.size}):")
         co.paymentTokens.value.forEach { token ->
-            val cvv = if (token.requiresCvv) "cvv required" else "no cvv"
+            val cvv = when {
+                !token.isVaultedCard -> "${partnerLabel(token)} account, no cvv"
+                token.requiresCvv -> "cvv required"
+                else -> "no cvv"
+            }
             appendLine("  ${token.id}  ${label(token)} ${token.maskedPan} ($cvv)${if (token.favorite) " ★" else ""}")
         }
         appendLine()

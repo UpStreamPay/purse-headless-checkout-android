@@ -35,6 +35,8 @@
     <string name="saved_card_no_cvv_badge">no CVC</string>
     <string name="helper_saved_card_cvv">Enter this card\'s security code to pay with it.</string>
     <string name="helper_saved_card_no_cvv">No security code needed — tap Pay.</string>
+    <string name="saved_wallet_token_badge">saved account · no CVC</string>
+    <string name="helper_saved_wallet_token">Your saved %1$s account pays without a security code — tap Pay.</string>
     <string name="section_primary">Choose how to pay</string>
     <string name="section_secondary">Gift card</string>
     <string name="helper_giftcard">Test card 9250004781234567890, CVC 123.</string>
@@ -58,6 +60,14 @@
     <string name="method_klarna">Klarna</string>
     <string name="method_card">Card</string>
     <string name="method_redirection">Redirect to the payment page</string>
+    <string name="simulation_title">Your payment schedule</string>
+    <string name="simulation_loading">Computing your instalments…</string>
+    <string name="simulation_instalment">Instalment %1$d</string>
+    <string name="simulation_today">today</string>
+    <string name="simulation_cost">Cost of credit</string>
+    <string name="simulation_total">Total</string>
+    <string name="simulation_aprc">APR %1$s %%</string>
+    <string name="simulation_unavailable">No instalment schedule available for this amount.</string>
     <string name="helper_redirection">No form to fill in — tapping Pay opens this provider\'s own page, then brings you back.</string>
     <string name="redirection_preparing">Preparing…</string>
     <string name="redirection_ready">Ready — tap Pay to continue.</string>

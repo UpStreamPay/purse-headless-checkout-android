@@ -87,15 +87,7 @@ class RedirectionPlugin(
      */
     override suspend fun preValidation(context: PartnerUiContext): ValidateItemPayload {
         val browser = context.collected[COLLECTED_BROWSER] as? JSONObject
-        val paymentData = JSONObject()
-        context.token?.let { token ->
-            paymentData.put("token", token.value)
-            token.holderName?.let { paymentData.put("holder", it) }
-            val card = JSONObject()
-            token.wireExpiryDate()?.let { card.put("expiry_date", it) }
-            token.selectedNetwork?.let { card.put("selected_network", it) }
-            if (card.length() > 0) paymentData.put("card", card)
-        }
+        val paymentData = context.token?.patchPaymentData() ?: JSONObject()
 
         return ItemPayload(
             partner = partner,

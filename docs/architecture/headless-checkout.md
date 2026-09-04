@@ -309,9 +309,22 @@ mounted), and the resulting `vault_vendor_token_id` rides alongside `payment_dat
 (`pay_token_no_cvv` / network token) runs in `Mode.TOKEN_NO_CVV`: no form, payable at selection.
 `rememberPaymentElement(checkout, token)` wraps both behind the element shape.
 
+Since then: **saved PayPal accounts** — a PayPal `integrated_tokens[]` row surfaces as a
+`PaymentToken` too, and a CVV being a card-form concept, `PaymentToken.isVaultedCard` (the method's
+`vault.vendor ≠ none`, i.e. `PluginRegistry`'s vault step resolves a card plugin) now gates the whole
+CVV question: a non-card token's `requiresCvv` is always `false`, `setPrimaryToken` arms no gate, and
+it is payable at selection — web's `hasUI()` returns `false` for a paypal or redirection-template
+token before any no-CVV gate is consulted. `PaypalPlugin.preValidation` with a `token` runs the
+pay-now `/init` itself and sends `payment_data.token` + the init's `step_id` (web's token-mode
+`initSession` + `patchItemPayloadWithToken`); `PaypalCoordinator.submit` on a `paypalHost(token)`
+skips the approval and captures straight away; `rememberPaymentElement(checkout, token)` resolves the
+paypal (and redirection) plugin for a token with `hasUi = false`. `PayToken.patchPaymentData` is the
+one shared `patchItemPayloadWithToken` the card, redirection and PayPal plugins now all use.
+
 ## Deferred (intentionally not built yet)
 
-PayPal BNPL ("Pay Later") and PayPal vaulting (the wallet pay-now plugin ships; see
+PayPal BNPL ("Pay Later") and PayPal vaulting — *creating* a PayPal token (registration); paying with
+an already-vaulted one ships (the wallet pay-now plugin ships too; see
 [docs/plugins/paypal.md](../plugins/paypal.md)), Apple Pay (same shape as Google Pay), the
 `adyen`/`stripe` Google
 Pay gateway builders beyond the `default` fallback, the `ancv-connect`

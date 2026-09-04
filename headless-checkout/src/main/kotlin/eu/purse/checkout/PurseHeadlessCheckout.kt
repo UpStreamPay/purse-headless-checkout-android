@@ -527,7 +527,9 @@ class PurseHeadlessCheckout private constructor(
      * so [isPaymentFulfilled] stays `false` — and [submitPayment] throws
      * [PurseCheckoutException.ItemNotFulfilled] — until the CVV-only form rendered for it (the card
      * element, or `rememberCardCoordinator(cardHost(token), …)`) reports valid through
-     * [setFulfilled]. A token behind the no-CVV gates is payable immediately, as before.
+     * [setFulfilled]. A token behind the no-CVV gates is payable immediately, as before — and so is
+     * a token with no card form behind it at all (a saved PayPal: [PaymentToken.isVaultedCard]
+     * `false`), for which no CVV exists.
      */
     fun setPrimaryToken(token: PaymentToken) {
         bus.post(
@@ -1219,7 +1221,10 @@ class PurseHeadlessCheckout private constructor(
 
     /**
      * The [PaypalHost] for [item] — everything `:partner-ui`'s `PaypalCoordinator` needs from this
-     * checkout, without that module depending on `:headless-checkout` directly.
+     * checkout, without that module depending on `:headless-checkout` directly. [item] is PayPal's
+     * [PrimaryMethod] (the pay-now flow: `/init`, approval, capture) or one of its saved
+     * [PaymentToken]s (no approval — the coordinator's `submit` captures straight away, the token
+     * reaching the plugin as `PartnerUiContext.token`).
      *
      * Note [PaypalHost.redirectionReturnUrl] is *not* PayPal's approval return — the PayPal SDK
      * supplies that itself, client-side. It only covers a chained 3-D Secure step after `/validate`,

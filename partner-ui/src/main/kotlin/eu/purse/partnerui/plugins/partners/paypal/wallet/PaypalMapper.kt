@@ -16,7 +16,9 @@ import java.math.BigDecimal
  * [PaypalCheckoutActivity]).
  *
  * Pay-now only: registration / vaulting (web's `createBillingAgreement` / `createVaultSetupToken`)
- * is out of scope, so `payment_preferences.registration` is always `false`.
+ * is out of scope, so `payment_preferences.registration` is always `false`. Paying with an
+ * **already-vaulted** PayPal token reuses the same `/init` body (web's token-mode `initSession`
+ * posts exactly this), followed by [PaypalPlugin.preValidation]'s token-patched `/validate` item.
  */
 object PaypalMapper {
 
@@ -45,12 +47,7 @@ object PaypalMapper {
      * a recoverable empty result.
      */
     fun parseInit(initData: JSONObject): String {
-        val status = initData.optJSONObject("status")
-        val state = status?.optString("state").orEmpty()
-        if (state.isNotEmpty() && state != "SUCCESS") {
-            val description = status?.optString("description").orEmpty()
-            throw PaymentApiException("paypal init not successful (state=$state) $description".trim())
-        }
+        ensureInitSucceeded(initData)
 
         val pluginResult = initData.optJSONObject("plugin_result")
         return pluginResult?.optJSONObject("logs")?.optStringOrNull("order_id")
@@ -59,6 +56,23 @@ object PaypalMapper {
             ?: throw PaymentApiException(
                 "paypal init returned no order_id; response=${initData.toString().take(800)}",
             )
+    }
+
+    /**
+     * Fail on a `/init` whose `status.state` is anything but `SUCCESS` — the status half of
+     * [parseInit], on its own for the **saved-token** `/init`, which creates no order for the buyer
+     * to approve (web's token-mode `initSession` reads only `plugin_result.logs` off it) and so
+     * carries no `order_id` to parse.
+     *
+     * @throws PaymentApiException when the init reports a non-success state.
+     */
+    fun ensureInitSucceeded(initData: JSONObject) {
+        val status = initData.optJSONObject("status")
+        val state = status?.optString("state").orEmpty()
+        if (state.isNotEmpty() && state != "SUCCESS") {
+            val description = status?.optString("description").orEmpty()
+            throw PaymentApiException("paypal init not successful (state=$state) $description".trim())
+        }
     }
 
     /**

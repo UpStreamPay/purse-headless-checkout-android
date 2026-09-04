@@ -174,8 +174,14 @@ Four concrete subtypes:
 - `saveTokenMode: SaveTokenMode` / `canBeRegistered: Boolean` — whether a gift card typed for this
   method can be kept for the next session (see `registerSecondary`).
 
-**`PaymentToken`** — a saved *card* (card-on-file) under a primary method; can be the split's
-primary. Exposed on `paymentTokens`, never on `paymentMethods` — see §7.
+**`PaymentToken`** — a saved instrument under a primary method — a *card-on-file*, or a vaulted
+*PayPal account*; can be the split's primary. Exposed on `paymentTokens`, never on `paymentMethods`
+— see §7.
+- `isVaultedCard: Boolean` — the method captures card data through a vault (`vault.vendor ≠ none`),
+  so the token is a card-on-file whose plugin can render a CVV form. `false` for a saved PayPal.
+- `requiresCvv` / `paysWithoutCvv` — whether paying still asks for the CVV. Only ever `true` for a
+  card-on-file outside the no-CVV gates (`pay_token_no_cvv`, network token); a CVV is a card-form
+  concept, so a PayPal token always pays without one and is payable the moment it's selected.
 
 **`SavedSecondaryToken`** — a saved *gift card / voucher* under a secondary method (web's
 `type: 'token'` secondary). Exposed on `savedSecondaryTokens`, never on `paymentMethods`.

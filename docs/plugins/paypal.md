@@ -228,6 +228,31 @@ so leave the shopper able to retry or pick another method.
 | PayPal's checkout re-opens straight after approving, and a duplicate transaction appears | The `/validate` approval-URL echo is being followed — specificity 4. Fixed; if it recurs, check `PaypalMapper.isApprovalUrl` against the URL in the `PaypalCoordinator` log line. |
 | The button never appears | The session doesn't offer `paypal`/`wallet`, or it's in `redirection` mode and shows as a row instead (specificity 6) |
 
+## Saved PayPal account (token)
+
+A PayPal `integrated_tokens[]` row (the buyer vaulted their account in an earlier session) surfaces
+as a `PaymentToken` on `paymentTokens`, next to the cards-on-file. Web's paypal plugin with a
+`token` attribute renders an empty template and headless `hasUI()` answers `false` for it — there
+is nothing to approve (the buyer did that when vaulting) and **no CVV**: a CVV is a card-form
+concept, and `PaymentToken.isVaultedCard` is `false` for PayPal, so `requiresCvv` is always `false`
+and `setPrimaryToken` makes the payment fulfilled at once.
+
+```
+setPrimaryToken(token) ──▶ submit ──▶ /init (pay-now body) ──▶ step_id ──▶ /validate { payment_data.token, step_id }
+```
+
+- `PaypalPlugin.preValidation` with a `context.token` does the `/init` itself (web runs it on
+  session set) — `PaypalMapper.ensureInitSucceeded` checks the status without demanding an
+  `order_id`, since no order is created — then patches the item with `PayToken.patchPaymentData`
+  (web's `patchItemPayloadWithToken`; a PayPal token carries no `card` block). Calling
+  `checkout.submitPayment()` directly therefore sends a complete item, coordinator or not.
+- `PaypalCoordinator.submit()` prepared with `paypalHost(token)` skips the approval and goes
+  straight to the capture, keeping the chained-3DS handling of the pay-now flow.
+- `rememberPaymentElement(checkout, token)` gives the element shape: `hasUi = false`,
+  `ready = true` from `prepare`, `submit()` as above.
+
+Creating such a token — registration / vaulting — is **not** built, see below.
+
 ## Not built
 
 - **BNPL / Pay Later** (`Method.Bnpl`). The SDK has `PayPalWebCheckoutFundingSource.PAY_LATER`, but
@@ -241,9 +266,9 @@ so leave the shopper able to retry or pick another method.
 
 | File | Role |
 |---|---|
-| `PaypalPlugin.kt` | `buildRequest` (`/init`), `preValidation` (`step_id` only), the `COLLECTED_*` keys |
-| `PaypalMapper.kt` | `/init` body, `order_id` + `step_id` parsing, the session's `client_id` |
-| `PaypalCoordinator.kt` | `/init` on tap, approval launch, capture, chained redirect |
+| `PaypalPlugin.kt` | `buildRequest` (`/init`), `preValidation` (`step_id` only — or, with a saved token, its own `/init` + `payment_data.token`), the `COLLECTED_*` keys |
+| `PaypalMapper.kt` | `/init` body, `order_id` + `step_id` parsing, `ensureInitSucceeded` (token init), the session's `client_id` |
+| `PaypalCoordinator.kt` | `/init` on tap, approval launch, capture, chained redirect; straight to capture for a saved token |
 | `PaypalCheckoutActivity.kt` / `PaypalCheckoutContract.kt` | The self-contained browser switch and its `ActivityResultContract` |
 | `PaypalHost.kt` / `PaypalConfig.kt` / `PaypalRequest.kt` | Seam + value types |
 

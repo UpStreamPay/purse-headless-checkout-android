@@ -7,14 +7,19 @@ import eu.purse.core.payment.MethodConfiguration
 import eu.purse.core.payment.Partner
 import eu.purse.core.payment.TokenSource
 import eu.purse.core.vault.CardBrand
+import eu.purse.core.vault.VaultVendor
 import eu.purse.partnerui.PayToken
 
 /**
- * A saved card (card-on-file) offered by the session — the Kotlin analog of web's
- * `PurseHeadlessCheckoutPrimaryToken` (`types/headless-checkout.ts`), built from a method's
- * `integrated_tokens[]`. Selectable as the split's primary via
- * [eu.purse.checkout.PurseHeadlessCheckout.setPrimaryToken]; managed (rename / delete / favorite)
- * through the checkout's wallet operations when a `wallet_session` is attached.
+ * A saved instrument offered by the session under a primary method — a card-on-file, or a vaulted
+ * PayPal account — the Kotlin analog of web's `PurseHeadlessCheckoutPrimaryToken`
+ * (`types/headless-checkout.ts`), built from a method's `integrated_tokens[]`. Selectable as the
+ * split's primary via [eu.purse.checkout.PurseHeadlessCheckout.setPrimaryToken]; managed (rename /
+ * delete / favorite) through the checkout's wallet operations when a `wallet_session` is attached.
+ *
+ * The card-shaped display fields ([brand], [holderName], [maskedPan], [expirationDate]) are empty
+ * for a token whose method has no card behind it; [label] (`description.display_token`) is what
+ * every token carries.
  */
 data class PaymentToken(
     /** The token's own id (not `partner-method`) — matches the wallet API's token ids. */
@@ -45,12 +50,25 @@ data class PaymentToken(
     override fun withDisabled(disabled: DisabledState?) = copy(disabled = disabled)
 
     /**
-     * Whether this token pays without collecting the CVV — web's no-CVV gates
-     * (`plugins/utils/noCVV.ts`): the merchant's `pay_token_no_cvv` setting, or an available
-     * network token when the experience enables them.
+     * Whether this token's method captures card data through a vault (`configurations.vault.vendor`
+     * other than `none`) — i.e. the token is a **card-on-file**, and its plugin (the vault step of
+     * `PluginRegistry.getPlugin`) is the one that can put a CVV form on screen. `false` for a saved
+     * PayPal (`paypal`/`wallet` carries no `vault`) or a token under a redirection template: web's
+     * `hasUI()` answers `false` for those tokens before any CVV gate is even consulted, and neither
+     * the paypal nor the redirection plugin ever collects a CVV.
+     */
+    val isVaultedCard: Boolean
+        get() = configuration.vault?.vendor?.let { it != VaultVendor.NONE } == true
+
+    /**
+     * Whether this token pays without collecting the CVV. `true` outright when no card form exists
+     * for it ([isVaultedCard] `false` — a PayPal token, say: a CVV is a card-form concept). For a
+     * card-on-file, web's no-CVV gates (`plugins/utils/noCVV.ts`): the merchant's `pay_token_no_cvv`
+     * setting, or an available network token when the experience enables them.
      */
     val paysWithoutCvv: Boolean
-        get() = configuration.settings.payTokenNoCvv ||
+        get() = !isVaultedCard ||
+            configuration.settings.payTokenNoCvv ||
             (networkTokenAvailable && configuration.settings.networkToken)
 
     /**
@@ -58,7 +76,8 @@ data class PaymentToken(
      * [paysWithoutCvv]. When `true`, selecting the token ([eu.purse.checkout.PurseHeadlessCheckout.setPrimaryToken])
      * arms the fulfillment gate exactly like mounting a fresh card form does: `isPaymentFulfilled`
      * stays `false` until the CVV-only SecureFields form reports valid (web's `cvvOnly` hosted
-     * fields). Only the `purse` vault renders that form on Android.
+     * fields). Only the `purse` vault renders that form on Android. Never `true` for a token that
+     * isn't a card-on-file ([isVaultedCard]).
      */
     val requiresCvv: Boolean get() = !paysWithoutCvv
 

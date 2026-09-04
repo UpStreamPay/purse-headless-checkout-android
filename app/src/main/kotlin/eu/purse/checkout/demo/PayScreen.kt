@@ -47,6 +47,7 @@ import com.paypal.android.paymentbuttons.PayPalButtonColor
 import com.paypal.android.paymentbuttons.PayPalButtonLabel
 import com.paypal.android.paymentbuttons.PaymentButtonShape
 import eu.purse.checkout.PurseHeadlessCheckout
+import eu.purse.checkout.element.rememberPaymentElement
 import eu.purse.checkout.payment.item.PaymentToken
 import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.checkout.payment.item.SavedSecondaryToken
@@ -286,20 +287,27 @@ private fun PrimaryMethodRow(controller: DemoController, method: PrimaryMethod) 
             Text(text = if (selected) "▾" else "▸", style = MaterialTheme.typography.bodyLarge)
         }
         AnimatedVisibility(selected) {
-            // Redirection first, matching the controller's own dispatch and PluginRegistry's priority.
-            when {
-                controller.isRedirection(method) -> RedirectionNotice(controller, method)
-                method.method == Method.Installments -> KlarnaWidget(controller, method)
-                method.method == Method.CreditCard -> CardPaymentForm(controller, method)
-                else -> Unit
+            Column(Modifier.fillMaxWidth()) {
+                // Redirection first, matching the controller's own dispatch and PluginRegistry's priority.
+                when {
+                    controller.isRedirection(method) -> RedirectionNotice(controller, method)
+                    method.method == Method.Installments -> KlarnaWidget(controller, method)
+                    method.method == Method.CreditCard -> CardPaymentForm(controller, method)
+                    else -> Unit
+                }
+                // A BNPL partner flagged `simulable` quotes its schedule up front. The SDK hands over
+                // the data (`simulateLoan`); this demo — the host — decides how it looks, exactly as
+                // the web dropin's SimulationPreview does next to its RedirectionText.
+                if (method.simulable) controller.checkout?.let { SimulationPreview(it, method) }
             }
         }
     }
 }
 
 /**
- * One saved card (`paymentTokens`). Selecting it commits it as the primary (`setPrimaryToken`) and
- * mounts [SavedCardForm] — a CVV field when the PSP still wants one, a one-line notice otherwise.
+ * One saved token (`paymentTokens`). Selecting it commits it as the primary (`setPrimaryToken`) and
+ * mounts [SavedCardForm] for a card-on-file — a CVV field when the PSP still wants one, a one-line
+ * notice otherwise — or [SavedWalletTokenForm] for a saved PayPal account, which has no CVV at all.
  * Tapping the open row again collapses it and clears the primary.
  */
 @Composable
@@ -321,16 +329,46 @@ private fun SavedCardRow(controller: DemoController, token: PaymentToken) {
                     style = MaterialTheme.typography.titleMedium,
                 )
                 Text(
-                    text = "${token.maskedPan} · ${token.brand} · " + stringResource(
-                        if (token.requiresCvv) R.string.saved_card_cvv_badge else R.string.saved_card_no_cvv_badge,
-                    ),
+                    text = if (token.isVaultedCard) {
+                        "${token.maskedPan} · ${token.brand} · " + stringResource(
+                            if (token.requiresCvv) R.string.saved_card_cvv_badge else R.string.saved_card_no_cvv_badge,
+                        )
+                    } else {
+                        "${controller.partnerLabel(token)} · " + stringResource(R.string.saved_wallet_token_badge)
+                    },
                     style = monoStyle,
                     color = LocalContentColor.current.copy(alpha = 0.7f),
                 )
             }
             Text(text = if (selected) "▾" else "▸", style = MaterialTheme.typography.bodyLarge)
         }
-        AnimatedVisibility(selected) { SavedCardForm(controller, token) }
+        AnimatedVisibility(selected) {
+            if (token.isVaultedCard) SavedCardForm(controller, token) else SavedWalletTokenForm(controller, token)
+        }
+    }
+}
+
+/**
+ * A saved token with no card behind it — a vaulted PayPal account. There is no CVV (a card-form
+ * concept) and no approval to launch (the buyer approved when they vaulted it), so the row is a
+ * notice, and the shared "Pay" button drives the token element's `submit()`: `/init` + `/validate`
+ * through the PayPal plugin, then a chained 3-D Secure hop if the PSP asks for one. `element.hasUi`
+ * is `false` and `element.ready` is `true` from the first frame.
+ */
+@Composable
+private fun SavedWalletTokenForm(controller: DemoController, token: PaymentToken) {
+    val checkout = controller.checkout ?: return
+    val listener = remember(token.id) { controller.savedTokenListener(token) }
+    val element = rememberPaymentElement(checkout, token, listener)
+
+    LaunchedEffect(element) { controller.onCardSubmitReady { element.submit() } }
+
+    Column(Modifier.fillMaxWidth().padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(
+            text = stringResource(R.string.helper_saved_wallet_token, controller.partnerLabel(token)),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
     }
 }
 

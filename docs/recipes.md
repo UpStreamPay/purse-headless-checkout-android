@@ -500,10 +500,11 @@ SecondaryConfigs.register(Partner.Other("acme"), Method.Other("voucher"), AcmeVo
 
 ---
 
-## 11. Saved cards (wallet)
+## 11. Saved cards and saved PayPal accounts (wallet)
 
 When the session carries `integrated_tokens` they surface on `paymentTokens` (never mixed into
-`paymentMethods`), each with display metadata:
+`paymentMethods`), each with display metadata. A token is a card-on-file when `isVaultedCard`, a
+vaulted PayPal account otherwise (its card fields are empty; `label` carries the display token):
 
 ```kotlin
 lifecycleScope.launch {
@@ -514,7 +515,7 @@ lifecycleScope.launch {
                     label = token.name.ifBlank { token.label },  // "my visa" / "VISA •••• 4242"
                     maskedPan = token.maskedPan,
                     favorite = token.favorite,
-                    needsCvv = token.requiresCvv,   // inverse of the pay_token_no_cvv / network-token gates
+                    needsCvv = token.requiresCvv,   // card-on-file outside the pay_token_no_cvv / network-token gates; never for PayPal
                 )
             },
         )
@@ -553,6 +554,19 @@ selected; `element.ready` is `true` immediately and `element.hasUi` is `false`.
 
 Lower level: `rememberCardCoordinator(remember(token.id) { checkout.cardHost(token) }, listener)` —
 the coordinator's `mode` (`TOKEN_CVV` / `TOKEN_NO_CVV`) tells you whether to place `VaultForm(coordinator.sdk)`.
+
+**Pay with a saved PayPal account** — the very same recipe, and nothing to render: a CVV is a
+card-form concept, so `token.requiresCvv` is always `false` for a PayPal token (`isVaultedCard` is
+`false`), `element.hasUi` is `false`, `element.ready` is `true` at once, and `setPrimaryToken` makes
+the payment fulfilled immediately. There is no approval step either — the buyer approved when they
+vaulted the account (web's paypal plugin with a `token` renders an empty template). `element.submit()`
+runs `/init` (the pay-now body) then `/validate` with `payment_data.token` and the init's `step_id`,
+following a chained 3-D Secure hop if the PSP asks for one. Skipping the element and calling
+`checkout.submitPayment()` yourself sends the same item: the PayPal plugin's `preValidation` does the
+`/init`, so no coordinator is required.
+
+Lower level: `rememberPaypalCoordinator(listener)` prepared with `checkout.paypalHost(token)` — its
+`submit()` goes straight to the capture.
 
 **Save a fresh card** — driven by the method's `save_token_mode`:
 
@@ -822,6 +836,14 @@ to let the shopper pick between 3×, 4×, 10×… The list skips unusable candid
 Like web, a schedule carries counts and amounts but **no per-instalment dates** — the API doesn't
 return them. Simulation is a quote only: paying still goes through the normal `setPrimary` +
 `submitPayment` path.
+
+The SDK stops at the data — rendering the schedule is the host app's job, as it is on web (the
+dropin's `SimulationPreview.svelte` sits on top of headless-checkout's `method.simulateLoan`). The
+demo's `app/…/demo/SimulationPreview.kt` is a complete Compose reference: mounted from the method's
+row when `method.simulable`, it re-quotes when `remainingAmountToPay` moves, shows a loader while
+the call is in flight, the first instalment "today" then one line per instalment (the last one at
+`finalInstallmentAmount`), the cost, the total, the APR and the legal text, and a one-line
+"unavailable" notice on `INVALID_LOAN_SIMULATION`.
 
 ---
 

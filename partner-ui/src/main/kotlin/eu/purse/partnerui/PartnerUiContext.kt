@@ -4,6 +4,7 @@ import eu.purse.core.api.PaymentApiClient
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
 import eu.purse.core.session.LegacyPaymentSession
+import org.json.JSONObject
 import java.math.BigDecimal
 
 /**
@@ -97,9 +98,29 @@ data class PayToken(
      * network token when the experience enables them). When `true`, the card plugin renders a
      * CVV-only SecureFields form and `/validate` carries the resulting `vault_vendor_token_id`
      * alongside the saved `token`; when `false`, no form is involved at all.
+     *
+     * Only a **card** plugin ever reads it: a CVV is a card-form concept, so a token whose method
+     * renders no card form (a PayPal wallet token, a redirection-template token) is always built
+     * with `false` — web's `hasUI()` returns `false` for those tokens before any CVV gate is asked.
      */
     val requiresCvv: Boolean = false,
 ) {
+    /**
+     * Patch [paymentData] with this token the way web's `patchItemPayloadWithToken` does: the
+     * opaque [value] as `payment_data.token`, the holder alongside, and the card metadata under
+     * `card` (`expiry_date`, `selected_network`) — only when the token carries any, so a PayPal
+     * token (no card behind it) patches `token` alone. Returns [paymentData] for chaining.
+     */
+    fun patchPaymentData(paymentData: JSONObject = JSONObject()): JSONObject {
+        paymentData.put("token", value)
+        holderName?.let { paymentData.put("holder", it) }
+        val card = JSONObject()
+        wireExpiryDate()?.let { card.put("expiry_date", it) }
+        selectedNetwork?.let { card.put("selected_network", it) }
+        if (card.length() > 0) paymentData.put("card", card)
+        return paymentData
+    }
+
     /**
      * `expiry_date` as the Payment API expects it — web's `formatUTCToExpiration` (`yyyy-MM-dd`),
      * or `null` when the ISO value can't be read.
