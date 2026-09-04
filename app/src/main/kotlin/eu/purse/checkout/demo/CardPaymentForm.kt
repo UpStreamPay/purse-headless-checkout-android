@@ -34,7 +34,7 @@ import eu.purse.partnerui.plugins.vaults.purse.creditcard.PurseCardForm
 @Composable
 fun CardPaymentForm(controller: DemoController, method: PrimaryMethod) {
     val checkout = controller.checkout ?: return
-    val host = remember(method.id) { checkout.cardHost(method) }
+    val host = remember(method.id) { checkout.host(method) }
     val coordinator = rememberCardCoordinator(host, controller.cardListener)
 
     LaunchedEffect(coordinator) { controller.onCardSubmitReady { coordinator.submit() } }
@@ -57,7 +57,7 @@ fun CardPaymentForm(controller: DemoController, method: PrimaryMethod) {
 @Composable
 fun SavedCardForm(controller: DemoController, token: PaymentToken) {
     val checkout = controller.checkout ?: return
-    val host = remember(token.id) { checkout.cardHost(token) }
+    val host = remember(token.id) { checkout.host(token) }
     val coordinator = rememberCardCoordinator(host, controller.cardListener)
 
     LaunchedEffect(coordinator) { controller.onCardSubmitReady { coordinator.submit() } }

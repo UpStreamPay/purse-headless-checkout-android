@@ -125,7 +125,7 @@ fun rememberPaymentElement(
 
         is GooglePayPlugin -> {
             val coordinator = rememberGooglePayCoordinator(wrapped)
-            LaunchedEffect(coordinator, method.id) { coordinator.prepare(checkout.googlePayHost(method)) }
+            LaunchedEffect(coordinator, method.id) { coordinator.prepare(checkout.host(method)) }
             remember(coordinator) {
                 PaymentElement(
                     method, hasUi = true, selfSubmitting = true, readyState,
@@ -137,7 +137,7 @@ fun rememberPaymentElement(
 
         is PaypalPlugin -> {
             val coordinator = rememberPaypalCoordinator(wrapped)
-            LaunchedEffect(coordinator, method.id) { coordinator.prepare(checkout.paypalHost(method)) }
+            LaunchedEffect(coordinator, method.id) { coordinator.prepare(checkout.host(method)) }
             remember(coordinator) {
                 PaymentElement(
                     method, hasUi = true, selfSubmitting = true, readyState,
@@ -155,7 +155,7 @@ fun rememberPaymentElement(
             // Klarna inflates its widget into a real ViewGroup — prepare only once the
             // AndroidView-provided container exists (i.e. once the element's UI is placed).
             LaunchedEffect(coordinator, containerAttached.value) {
-                if (containerAttached.value) coordinator.prepare(checkout.klarnaHost(method, returnUrl))
+                if (containerAttached.value) coordinator.prepare(checkout.host(method), returnUrl)
             }
             remember(coordinator) {
                 PaymentElement(
@@ -178,7 +178,7 @@ fun rememberPaymentElement(
 
         is RedirectionPlugin -> {
             val coordinator = rememberRedirectionCoordinator(wrapped)
-            LaunchedEffect(coordinator, method.id) { coordinator.prepare(checkout.redirectionHost(method)) }
+            LaunchedEffect(coordinator, method.id) { coordinator.prepare(checkout.host(method)) }
             remember(coordinator) {
                 PaymentElement(
                     method, hasUi = false, selfSubmitting = false, readyState,
@@ -248,7 +248,7 @@ fun rememberPaymentElement(
         // `preValidation` running the `/init` (see PaypalPlugin). `prepare` reports ready straight away.
         is PaypalPlugin -> {
             val coordinator = rememberPaypalCoordinator(wrapped)
-            LaunchedEffect(coordinator, token.id) { coordinator.prepare(checkout.paypalHost(token)) }
+            LaunchedEffect(coordinator, token.id) { coordinator.prepare(checkout.host(token)) }
             remember(coordinator) {
                 PaymentElement(
                     token, hasUi = false, selfSubmitting = false, readyState,
@@ -262,7 +262,7 @@ fun rememberPaymentElement(
         // the token patched into `/validate` by RedirectionPlugin.preValidation.
         is RedirectionPlugin -> {
             val coordinator = rememberRedirectionCoordinator(wrapped)
-            LaunchedEffect(coordinator, token.id) { coordinator.prepare(checkout.redirectionHost(token)) }
+            LaunchedEffect(coordinator, token.id) { coordinator.prepare(checkout.host(token)) }
             remember(coordinator) {
                 PaymentElement(
                     token, hasUi = false, selfSubmitting = false, readyState,
@@ -297,7 +297,7 @@ private fun rememberCardElement(
 ): PaymentElement {
     // The host is what rememberCardCoordinator keys its SecureFields instance on: a new generation
     // means a new host, hence a fresh form; the same generation keeps the form and its input.
-    val host = remember(elementKey) { checkout.cardHost(item) }
+    val host = remember(elementKey) { checkout.host(item) }
     val coordinator = rememberCardCoordinator(host, listener)
     return remember(coordinator) {
         PaymentElement(

@@ -6,6 +6,7 @@ import androidx.lifecycle.lifecycleScope
 import eu.purse.core.payload.ValidationResult
 import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PluginEvent
+import eu.purse.partnerui.PluginHost
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.partnerui.redirect.RedirectionCheckoutResult
 import eu.purse.partnerui.redirect.RedirectDispatcher
@@ -24,12 +25,12 @@ import kotlinx.coroutines.withContext
  *    rendered: this template has no form and no vendor widget, which is why [Listener.onReady] fires
  *    as soon as `/init` returns (web dispatches its `ready` **and** `fulfilled` events at the very
  *    same point, for the same reason).
- * 2. [submit] — one [RedirectionHost.submitPayment] call, then follow whatever redirect the
+ * 2. [submit] — one [PluginHost.submitPayment] call, then follow whatever redirect the
  *    `/validate` response carries. For every other plugin that redirect is an *extra* 3-D Secure hop
  *    after a native step; here it is the payment step itself, so a response with no redirect at all
  *    is worth surfacing loudly (see [resolveOutcome]).
  *
- * Knows nothing about `:headless-checkout` — [RedirectionHost] is the seam (see its doc).
+ * Knows nothing about `:headless-checkout` — [PluginHost] is the seam (see its doc).
  *
  * **Construct this in the host Activity's `onCreate`** — it registers an `ActivityResult` launcher,
  * which must happen before the Activity is STARTED. The host is supplied later, per payment, via
@@ -66,7 +67,7 @@ class RedirectionCoordinator private constructor(
         }
     }
 
-    private var host: RedirectionHost? = null
+    private var host: PluginHost? = null
     private var request: RedirectionRequest? = null
 
     /** Report a lifecycle event to the headless host (which deactivates/reacts, web-parity). */
@@ -83,7 +84,7 @@ class RedirectionCoordinator private constructor(
      * unselected redirection row should do no `/init` at all — it costs a network round-trip and
      * consumes a step against the session).
      */
-    fun prepare(host: RedirectionHost) {
+    fun prepare(host: PluginHost) {
         this.host = host
         submitting = false
         request = null
@@ -142,7 +143,7 @@ class RedirectionCoordinator private constructor(
      * `SUCCESS` for an amount that needed no interaction — but it is logged and carried into the
      * summary, because it's the first thing to check when a redirection method silently does nothing.
      */
-    private suspend fun resolveOutcome(result: ValidationResult, request: RedirectionRequest, host: RedirectionHost) {
+    private suspend fun resolveOutcome(result: ValidationResult, request: RedirectionRequest, host: PluginHost) {
         submitting = false
         Log.d(
             TAG,

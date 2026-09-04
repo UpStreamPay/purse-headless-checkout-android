@@ -36,12 +36,8 @@ import eu.purse.partnerui.PartnerUiContext
 import eu.purse.partnerui.PartnerUiPlugin
 import eu.purse.partnerui.PluginOptions
 import eu.purse.partnerui.PluginEvent
+import eu.purse.partnerui.PluginHost
 import eu.purse.partnerui.PluginRegistry
-import eu.purse.partnerui.plugins.generics.googlepay.GooglePayHost
-import eu.purse.partnerui.plugins.generics.redirection.RedirectionHost
-import eu.purse.partnerui.plugins.partners.klarna.KlarnaHost
-import eu.purse.partnerui.plugins.partners.paypal.wallet.PaypalHost
-import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardHost
 import eu.purse.partnerui.redirect.RedirectAction
 import eu.purse.checkout.confirmation.PaymentSessionStatus
 import eu.purse.checkout.monitoring.CheckoutEventBus
@@ -526,7 +522,7 @@ class PurseHeadlessCheckout private constructor(
      * stands: selecting it arms the same per-item fulfillment gate a fresh card form arms at mount,
      * so [isPaymentFulfilled] stays `false` — and [submitPayment] throws
      * [PurseCheckoutException.ItemNotFulfilled] — until the CVV-only form rendered for it (the card
-     * element, or `rememberCardCoordinator(cardHost(token), …)`) reports valid through
+     * element, or `rememberCardCoordinator(host(token), …)`) reports valid through
      * [setFulfilled]. A token behind the no-CVV gates is payable immediately, as before — and so is
      * a token with no card form behind it at all (a saved PayPal: [PaymentToken.isVaultedCard]
      * `false`), for which no CVV exists.
@@ -1177,109 +1173,22 @@ class PurseHeadlessCheckout private constructor(
     }
 
     /**
-     * The [GooglePayHost] for [item] — everything `:partner-ui`'s `GooglePayCoordinator` needs from
-     * this checkout, without that module depending on `:headless-checkout` directly.
+     * The [PluginHost] a coordinator drives [item] through — everything `:partner-ui` needs from
+     * this checkout without depending on `:headless-checkout`. [item] is a [PrimaryMethod] or one
+     * of its saved [PaymentToken]s (the token reaches the plugin as `PartnerUiContext.token`).
+     * Asking for a host also gives the plugin web's `onSessionSet`.
+     *
+     * @throws IllegalArgumentException for a secondary method or a saved gift card.
      */
-    fun googlePayHost(item: PaymentItem): GooglePayHost {
+    fun host(item: PaymentItem): PluginHost {
+        require(item is PrimaryMethod || item is PaymentToken) { "${item.id} cannot be driven by a plugin coordinator" }
         trackPlugin(item)
-        return object : GooglePayHost {
+        return object : PluginHost {
             override val environment get() = params.environment
             override val redirectionReturnUrl get() = session.source.redirection
             override fun buildContext() = pluginContext(item)
             override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
             override fun setAsPrimary() = makePrimary(item)
-            override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
-            override suspend fun delegateRedirection(action: RedirectAction) =
-                this@PurseHeadlessCheckout.delegateRedirection(action)
-        }
-    }
-
-    /**
-     * The [KlarnaHost] for [item] — everything `:partner-ui`'s `KlarnaCoordinator` needs from this
-     * checkout, without that module depending on `:headless-checkout` directly. [returnUrl] falls back
-     * to the session's own configured return URL (like Google Pay's redirect return) since Klarna's
-     * `KlarnaPaymentView` needs one regardless of whether the session declared its own.
-     */
-    fun klarnaHost(item: PaymentItem, klarnaReturnUrl: String): KlarnaHost {
-        trackPlugin(item)
-        return object : KlarnaHost {
-            override val returnUrl get() = klarnaReturnUrl
-            override fun buildContext() = pluginContext(item)
-            override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
-            override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
-            override suspend fun delegateRedirection(action: RedirectAction) =
-                this@PurseHeadlessCheckout.delegateRedirection(action)
-        }
-    }
-
-    /**
-     * The [PaypalHost] for [item] — everything `:partner-ui`'s `PaypalCoordinator` needs from this
-     * checkout, without that module depending on `:headless-checkout` directly. [item] is PayPal's
-     * [PrimaryMethod] (the pay-now flow: `/init`, approval, capture) or one of its saved
-     * [PaymentToken]s (no approval — the coordinator's `submit` captures straight away, the token
-     * reaching the plugin as `PartnerUiContext.token`).
-     *
-     * Note [PaypalHost.redirectionReturnUrl] is *not* PayPal's approval return — the PayPal SDK
-     * supplies that itself, client-side. It only covers a chained 3-D Secure step after `/validate`,
-     * exactly as it does for Google Pay.
-     */
-    fun paypalHost(item: PaymentItem): PaypalHost {
-        trackPlugin(item)
-        return object : PaypalHost {
-            override val environment get() = params.environment
-            override val redirectionReturnUrl get() = session.source.redirection
-            override fun buildContext() = pluginContext(item)
-            override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
-            override fun setAsPrimary() = makePrimary(item)
-            override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
-            override suspend fun delegateRedirection(action: RedirectAction) =
-                this@PurseHeadlessCheckout.delegateRedirection(action)
-        }
-    }
-
-    /**
-     * The [RedirectionHost] for [item] — everything `:partner-ui`'s `RedirectionCoordinator` needs
-     * from this checkout, without that module depending on `:headless-checkout` directly.
-     *
-     * Unlike the three hosts above, this one is not tied to a single partner or method: it serves any
-     * item whose configuration resolves to the generic `redirection` template (see
-     * `PluginRegistry.getPlugin`). Ask for one per item — the coordinator rebinds on each `prepare`.
-     */
-    fun redirectionHost(item: PaymentItem): RedirectionHost {
-        trackPlugin(item)
-        return object : RedirectionHost {
-            override val redirectionReturnUrl get() = session.source.redirection
-            override fun buildContext() = pluginContext(item)
-            override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
-            override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
-            override suspend fun delegateRedirection(action: RedirectAction) =
-                this@PurseHeadlessCheckout.delegateRedirection(action)
-        }
-    }
-
-    /**
-     * The [CardHost] for [item] — everything `:partner-ui`'s `CardCoordinator` needs from this
-     * checkout, without that module depending on `:headless-checkout` directly. [item] is either
-     * the card [PrimaryMethod] (a fresh card: the full form) or one of its saved [PaymentToken]s
-     * (a CVV-only form when [PaymentToken.requiresCvv], no form otherwise — the token reaches the
-     * plugin as `PartnerUiContext.token`).
-     *
-     * @throws IllegalArgumentException for a secondary method or any other item that cannot pay
-     * as a card.
-     */
-    fun cardHost(item: PaymentItem): CardHost {
-        require(item is PrimaryMethod || item is PaymentToken) { "${item.id} cannot host a card form" }
-        trackPlugin(item)
-        return object : CardHost {
-            override val environment get() = params.environment
-            override val vaultTenantId get() = session.vaultsConfiguration?.purse?.tenantId
-            override val supportedBrands get() = when (item) {
-                is PrimaryMethod -> item.supportedBrands
-                else -> item.configuration.vault?.supportedBrands ?: emptyList()
-            }
-            override val redirectionReturnUrl get() = session.source.redirection
-            override fun buildContext() = pluginContext(item)
-            override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
             override fun setFulfilled(fulfilled: Boolean) = setFulfilled(item, fulfilled)
             override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
             override suspend fun delegateRedirection(action: RedirectAction) =

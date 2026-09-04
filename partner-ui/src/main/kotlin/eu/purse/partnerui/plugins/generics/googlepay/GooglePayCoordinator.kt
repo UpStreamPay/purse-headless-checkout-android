@@ -11,6 +11,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PluginEvent
+import eu.purse.partnerui.PluginHost
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.partnerui.redirect.RedirectionCheckoutResult
 import eu.purse.partnerui.redirect.RedirectDispatcher
@@ -30,12 +31,12 @@ import kotlin.coroutines.resumeWithException
  *
  * 1. [prepare] — `plugin.buildRequest` (`/init` + Worldline refine) then `isReadyToPay`.
  * 2. [launchSheet] — shows the Google Pay sheet.
- * 3. on the sheet result — hands the token/network to the [GooglePayHost] ([GooglePayHost.setCollected])
- *    and calls [GooglePayHost.submitPayment] (which validates all splits together).
+ * 3. on the sheet result — hands the token/network to the [PluginHost] ([PluginHost.setCollected])
+ *    and calls [PluginHost.submitPayment] (which validates all splits together).
  * 4. if `/validate` returns a redirection — launches the 3-D Secure Activity, then reports that the
  *    shopper returned (not the payment outcome — see [onRedirectReturn]'s doc).
  *
- * Knows nothing about `:headless-checkout` — [GooglePayHost] is the seam (see its doc).
+ * Knows nothing about `:headless-checkout` — [PluginHost] is the seam (see its doc).
  *
  * **Construct this in the host Activity's `onCreate`** — it registers `ActivityResult` launchers,
  * which must happen before the Activity is STARTED. The host is supplied later, per payment, via
@@ -77,7 +78,7 @@ class GooglePayCoordinator private constructor(
         }
     }
 
-    private var host: GooglePayHost? = null
+    private var host: PluginHost? = null
     private var client: GooglePayClient? = null
 
     /**
@@ -116,7 +117,7 @@ class GooglePayCoordinator private constructor(
      * [submitting], so a coordinator reused across sessions (as the demo does) isn't left permanently
      * blocked after a prior session's successful submit.
      */
-    fun prepare(host: GooglePayHost) {
+    fun prepare(host: PluginHost) {
         this.host = host
         submitting = false
         isReady = false
@@ -193,7 +194,7 @@ class GooglePayCoordinator private constructor(
         }
     }
 
-    private fun submit(host: GooglePayHost) {
+    private fun submit(host: PluginHost) {
         activity.lifecycleScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { host.submitPayment() }

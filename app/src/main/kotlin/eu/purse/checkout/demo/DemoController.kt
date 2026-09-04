@@ -370,12 +370,12 @@ class DemoController(private val activity: ComponentActivity) {
         captureAmount = co.session.amount.toPlainString()
         // Google Pay is prepared immediately — it's an xpay, never gated behind selecting a row.
         googlePayItem = co.primaryMethods.firstOrNull { it.method == Method.GooglePay }
-        googlePayItem?.let { googlePay.prepare(co.googlePayHost(it)) }
+        googlePayItem?.let { googlePay.prepare(co.host(it)) }
         // PayPal is an xpay too. Its prepare does no network work at all — the /init that creates the
         // PayPal order waits for the tap, so merely showing the button never leaves an orphan order.
         // Excluded when the session routes it to the redirection template, which is a row, not an xpay.
         paypalItem = co.primaryMethods.firstOrNull { it.method == Method.Wallet && !isRedirection(it) }
-        paypalItem?.let { paypal.prepare(co.paypalHost(it)) }
+        paypalItem?.let { paypal.prepare(co.host(it)) }
     }
 
     fun goToPay() {
@@ -404,9 +404,9 @@ class DemoController(private val activity: ComponentActivity) {
                 sessionDetails = summarize(co)
                 captureAmount = co.session.amount.toPlainString()
                 googlePayItem = co.primaryMethods.firstOrNull { it.method == Method.GooglePay }
-                googlePayItem?.let { googlePay.prepare(co.googlePayHost(it)) }
+                googlePayItem?.let { googlePay.prepare(co.host(it)) }
                 paypalItem = co.primaryMethods.firstOrNull { it.method == Method.Wallet && !isRedirection(it) }
-                paypalItem?.let { paypal.prepare(co.paypalHost(it)) }
+                paypalItem?.let { paypal.prepare(co.host(it)) }
                 log("session refreshed → ${co.currentSessionId} (${co.session.amount} ${co.currency})")
             } catch (e: Exception) {
                 log("session refresh failed: ${e.message}")
@@ -534,7 +534,7 @@ class DemoController(private val activity: ComponentActivity) {
     /** Prepares Klarna's widget for [method] — called when its row is selected, not before. */
     fun prepareKlarna(method: PrimaryMethod) {
         val co = checkout ?: return
-        klarna.prepare(co.klarnaHost(method, "${activity.packageName}.klarna://return"))
+        klarna.prepare(co.host(method), "${activity.packageName}.klarna://return")
     }
 
     /**
@@ -544,7 +544,7 @@ class DemoController(private val activity: ComponentActivity) {
      */
     fun prepareRedirection(method: PrimaryMethod) {
         val co = checkout ?: return
-        redirection.prepare(co.redirectionHost(method))
+        redirection.prepare(co.host(method))
     }
 
     /** The card form's live `submit`, once its coordinator exists (see [CardPaymentForm]). */

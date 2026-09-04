@@ -15,6 +15,7 @@ import eu.purse.core.environment.PurseEnvironment
 import eu.purse.partnerui.PayToken
 import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PluginEvent
+import eu.purse.partnerui.PluginHost
 import eu.purse.partnerui.CardFormTexts
 import eu.purse.partnerui.PurseTheme
 import eu.purse.partnerui.R
@@ -66,13 +67,15 @@ import kotlinx.coroutines.withContext
  * [CardCoordinator.formValid] is `true`.
  *
  * That last condition is enforced, not just advised: mounting a form reports the item unfulfilled
- * through [CardHost.setFulfilled], so `PurseHeadlessCheckout.isPaymentFulfilled` is `false` — and
+ * through [PluginHost.setFulfilled], so `PurseHeadlessCheckout.isPaymentFulfilled` is `false` — and
  * `submitPayment` throws `ItemNotFulfilled` — until the form is complete and valid.
  */
 @Composable
-fun rememberCardCoordinator(host: CardHost, listener: PaymentElementListener): CardCoordinator {
+fun rememberCardCoordinator(host: PluginHost, listener: PaymentElementListener): CardCoordinator {
     val scope = rememberCoroutineScope()
     val partnerWireValue = remember(host) { host.buildContext().partner.wireValue }
+    val supportedBrands = remember(host) { host.buildContext().configuration?.vault?.supportedBrands.orEmpty() }
+    val vaultTenantId = remember(host) { host.buildContext().vaultTenantId }
     // The saved card this host pays with, if any — decides the mode (see CardCoordinator.Mode).
     val payToken = remember(host) { host.buildContext().token }
     val mode = remember(payToken) { CardCoordinator.Mode.of(payToken) }
@@ -88,13 +91,13 @@ fun rememberCardCoordinator(host: CardHost, listener: PaymentElementListener): C
         }
     }
 
-    val brands = remember(host.supportedBrands, payToken) {
+    val brands = remember(supportedBrands, payToken) {
         // A saved card's own scheme first (the CVV-only form has no PAN to detect a brand from);
         // otherwise the session's supported_brands (CardBrand) → SecureFields' Brand, with a sane
         // default when the session names none.
         val tokenBrand = payToken?.selectedNetwork?.let { Brand.fromString(it) }?.takeIf { it != Brand.UNKNOWN }
         listOfNotNull(tokenBrand).ifEmpty {
-            host.supportedBrands.map { Brand.fromString(it.wireValue) }
+            supportedBrands.map { Brand.fromString(it.wireValue) }
                 .filter { it != Brand.UNKNOWN }
                 .distinct()
                 .ifEmpty { listOf(Brand.VISA, Brand.MASTERCARD, Brand.CARTE_BANCAIRE) }
@@ -133,7 +136,7 @@ fun rememberCardCoordinator(host: CardHost, listener: PaymentElementListener): C
     val sdk = rememberSecureFields(
         config = config,
         environment = host.environment.toVaultEnvironment(),
-        tenantId = host.vaultTenantId.orEmpty(),
+        tenantId = vaultTenantId.orEmpty(),
         monitoringEnabled = false,
     )
 
@@ -197,7 +200,7 @@ fun rememberCardCoordinator(host: CardHost, listener: PaymentElementListener): C
  */
 class CardCoordinator internal constructor(
     val sdk: SecureFieldsAndroid,
-    private val host: CardHost,
+    private val host: PluginHost,
     private val partnerWireValue: String,
     /** Which of the three card flows this coordinator drives — decided by the host's token. */
     val mode: Mode,
@@ -251,7 +254,7 @@ class CardCoordinator internal constructor(
     /**
      * The SecureFields form's current validity — `false` until every configured field is valid, so
      * an untouched form never reads as payable. Mirrored into the checkout's own
-     * `isPaymentFulfilled` via [CardHost.setFulfilled]. Always `true` in [Mode.TOKEN_NO_CVV],
+     * `isPaymentFulfilled` via [PluginHost.setFulfilled]. Always `true` in [Mode.TOKEN_NO_CVV],
      * where there is no form to validate.
      */
     var formValid: Boolean by mutableStateOf(!mode.rendersForm)

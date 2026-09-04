@@ -11,6 +11,7 @@ import com.klarna.mobile.sdk.api.payments.KlarnaPaymentsSDKError
 import eu.purse.core.payload.ValidationResult
 import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PluginEvent
+import eu.purse.partnerui.PluginHost
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.partnerui.redirect.RedirectionCheckoutResult
 import eu.purse.partnerui.redirect.RedirectDispatcher
@@ -38,7 +39,7 @@ import kotlin.coroutines.resumeWithException
  *    checkout order-review page) that throws for any other `purchase_country`; every market this
  *    plugin targets renders fully off `load()` alone. Also stashes an `authorize()` callback (see
  *    [authorizeWidget]) into `PartnerUiContext.collected`, alongside the `/init` step id.
- * 2. [submit] — a single [KlarnaHost.submitPayment] call now does everything: [KlarnaPlugin]'s own
+ * 2. [submit] — a single [PluginHost.submitPayment] call now does everything: [KlarnaPlugin]'s own
  *    `postValidation` calls the stashed [authorizeWidget] callback *after* `/validate` succeeds —
  *    unlike Google Pay (sheet runs *before* `/validate`), Klarna's own reference flow (web's
  *    `klarna_installments` plugin) only opens its payment step once `/validate` itself returns
@@ -48,7 +49,7 @@ import kotlin.coroutines.resumeWithException
  * 3. [authorizeWidget] suspends until `onAuthorized`/`onFinalized` resolves it — [submit] never
  *    touches the widget directly once `/validate` is in flight.
  *
- * Knows nothing about `:headless-checkout` — [KlarnaHost] is the seam (see its doc).
+ * Knows nothing about `:headless-checkout` — [PluginHost] is the seam (see its doc).
  *
  * **Construct this in the host Activity's `onCreate`** — it registers an `ActivityResult` launcher,
  * which must happen before the Activity is STARTED. [container] is the `ViewGroup` the widget renders
@@ -96,7 +97,7 @@ class KlarnaCoordinator private constructor(
         }
     }
 
-    private var host: KlarnaHost? = null
+    private var host: PluginHost? = null
     private var view: KlarnaPaymentView? = null
     private var partnerWireValue: String? = null
 
@@ -185,7 +186,11 @@ class KlarnaCoordinator private constructor(
      * is initialized — this is also the reset point for [submitting], mirroring
      * `GooglePayCoordinator.prepare`.
      */
-    fun prepare(host: KlarnaHost) {
+    /**
+     * @param returnUrl the deep link `KlarnaPaymentView.returnURL` carries back into the Activity
+     * hosting the widget (`"{packageName}.klarna://return"`), declared by the host app's manifest.
+     */
+    fun prepare(host: PluginHost, returnUrl: String) {
         this.host = host
         submitting = false
         activity.lifecycleScope.launch {
@@ -198,7 +203,7 @@ class KlarnaCoordinator private constructor(
 
                 val container = checkNotNull(container) { "KlarnaCoordinator needs a container before prepare()" }
                 val paymentView = KlarnaPaymentView(activity, KlarnaMapper.PAYMENT_METHOD_CATEGORY, callback)
-                paymentView.returnURL = host.returnUrl
+                paymentView.returnURL = returnUrl
                 container.removeAllViews()
                 // MATCH_PARENT width / WRAP_CONTENT height — exactly Klarna's own documented sample
                 // (see "Render payment view" at the native-view doc). The SDK resizes the widget to
@@ -264,7 +269,7 @@ class KlarnaCoordinator private constructor(
         }
     }
 
-    private suspend fun resolveOutcome(result: ValidationResult, host: KlarnaHost) {
+    private suspend fun resolveOutcome(result: ValidationResult, host: PluginHost) {
         submitting = false
         Log.d(TAG, "validate response: global_status=${result.globalStatus} redirection=${result.raw.optJSONObject("redirection")}")
         RedirectionResolver.extractWidgetConfirmationPaymentId(
@@ -276,8 +281,8 @@ class KlarnaCoordinator private constructor(
             validateResponse = result.raw,
             partnerWireValue = partnerWireValue.orEmpty(),
             methodWireValue = KlarnaMapper.METHOD,
-            sessionReturnUrl = host.returnUrl,
-        )?.withReturnUrlPrefix(host.returnUrl)
+            sessionReturnUrl = host.redirectionReturnUrl,
+        )?.withReturnUrlPrefix(host.redirectionReturnUrl)
         if (action != null) {
             // The merchant's onRedirection hook goes first (web's redirectionHandler); the SDK's
             // WebView only opens when it declines.

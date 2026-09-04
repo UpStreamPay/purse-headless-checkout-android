@@ -9,6 +9,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.setValue
 import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PluginEvent
+import eu.purse.partnerui.PluginHost
 import eu.purse.partnerui.redirect.RedirectAction
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.partnerui.redirect.RedirectionCheckoutResult
@@ -27,8 +28,8 @@ import kotlinx.coroutines.withContext
  * 1. [prepare] — stashes the host. Deliberately does **no** network work; see [submit].
  * 2. [submit] — `plugin.buildRequest` (`/init`, creating the PayPal order) then launches PayPal's
  *    approval.
- * 3. on approval — hands the `step_id` and approved order to the [PaypalHost]
- *    ([PaypalHost.setCollected]) and calls [PaypalHost.submitPayment], which `/validate`s all splits
+ * 3. on approval — hands the `step_id` and approved order to the [PluginHost]
+ *    ([PluginHost.setCollected]) and calls [PluginHost.submitPayment], which `/validate`s all splits
  *    together and captures.
  * 4. if `/validate` returns a redirection — launches the 3-D Secure Activity, then reports that the
  *    shopper returned (not the payment outcome — see [onRedirectReturn]'s doc).
@@ -40,7 +41,7 @@ import kotlinx.coroutines.withContext
  * the same `postValidation`. Nothing is rendered for a token (web's `getTemplateForUI` returns an
  * empty template): the host's own Pay button calls [submit].
  *
- * Knows nothing about `:headless-checkout` — [PaypalHost] is the seam (see its doc).
+ * Knows nothing about `:headless-checkout` — [PluginHost] is the seam (see its doc).
  *
  * **Construct this in the host Activity's `onCreate`** — it registers `ActivityResult` launchers,
  * which must happen before the Activity is STARTED. The host is supplied later, per payment, via
@@ -81,7 +82,7 @@ class PaypalCoordinator private constructor(
     var isReady: Boolean by androidx.compose.runtime.mutableStateOf(false)
         internal set
 
-    private var host: PaypalHost? = null
+    private var host: PluginHost? = null
     private var partnerWireValue: String? = null
 
     /** The `/init` step id, held between [submit] and [onPaypalResult]. */
@@ -104,7 +105,7 @@ class PaypalCoordinator private constructor(
      * This is also the reset point for [submitting], so a coordinator reused across sessions (as the
      * demo does) isn't left permanently blocked after a prior session's successful submit.
      */
-    fun prepare(host: PaypalHost) {
+    fun prepare(host: PluginHost) {
         this.host = host
         submitting = false
         partnerWireValue = host.buildContext().partner.wireValue
@@ -195,7 +196,7 @@ class PaypalCoordinator private constructor(
     }
 
     /** `POST /validate` — the capture, once the buyer has approved the order. */
-    private fun capture(host: PaypalHost) {
+    private fun capture(host: PluginHost) {
         activity.lifecycleScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) { host.submitPayment() }
@@ -208,7 +209,7 @@ class PaypalCoordinator private constructor(
         }
     }
 
-    private suspend fun resolveOutcome(result: ValidationResult, host: PaypalHost) {
+    private suspend fun resolveOutcome(result: ValidationResult, host: PluginHost) {
         Log.d(
             TAG,
             "validate response: global_status=${result.globalStatus} " +

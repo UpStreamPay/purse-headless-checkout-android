@@ -6,8 +6,8 @@ package eu.purse.partnerui.redirect
  * web's `redirectionHandler` (`DelegatedRedirectionHandlerFactory`: when the merchant supplies one,
  * partner-ui hands it the resolved action instead of navigating itself).
  *
- * Every coordinator host interface extends this; the default says "not handled", so a host built
- * without a hook behaves exactly as before — the SDK opens its own in-app WebView.
+ * `PluginHost` extends this; the default says "not handled", so a host built without a hook
+ * behaves exactly as before — the SDK opens its own in-app WebView.
  */
 interface RedirectionDelegate {
 

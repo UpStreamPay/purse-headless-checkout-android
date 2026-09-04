@@ -265,9 +265,9 @@ class PurseHeadlessCheckoutTest {
         val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
         val action = RedirectAction.Get("https://acs.example/challenge")
 
-        assertFalse(runBlocking { checkout.cardHost(card).delegateRedirection(action) })
-        assertFalse(runBlocking { checkout.paypalHost(paypal).delegateRedirection(action) })
-        assertFalse(runBlocking { checkout.redirectionHost(paypal).delegateRedirection(action) })
+        assertFalse(runBlocking { checkout.host(card).delegateRedirection(action) })
+        assertFalse(runBlocking { checkout.host(paypal).delegateRedirection(action) })
+        assertFalse(runBlocking { checkout.host(paypal).delegateRedirection(action) })
     }
 
     @Test
@@ -277,7 +277,7 @@ class PurseHeadlessCheckoutTest {
         val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
         val action = RedirectAction.PostForm("https://acs.example/challenge", "PaReq=abc")
 
-        assertTrue(runBlocking { checkout.paypalHost(paypal).delegateRedirection(action) })
+        assertTrue(runBlocking { checkout.host(paypal).delegateRedirection(action) })
         assertEquals(action, handed)
     }
 
@@ -293,7 +293,7 @@ class PurseHeadlessCheckoutTest {
         try {
             val thrown = assertThrows(PurseCheckoutException.HookFailed::class.java) {
                 runBlocking {
-                    checkout.paypalHost(paypal).delegateRedirection(RedirectAction.Get("https://acs.example/challenge"))
+                    checkout.host(paypal).delegateRedirection(RedirectAction.Get("https://acs.example/challenge"))
                 }
             }
             assertEquals(PurseErrorCode.POST_VALIDATE_FAILED, thrown.code)
@@ -385,7 +385,7 @@ class PurseHeadlessCheckoutTest {
     fun `the wallet hosts commit their item on approval, not before`() {
         val checkout = checkout()
         val googlePay = checkout.primaryMethods.single { it.method == Method.GooglePay }
-        val host = checkout.googlePayHost(googlePay)
+        val host = checkout.host(googlePay)
         assertFalse("prepare/tap must not touch the split", checkout.isPaymentFulfilled.value)
 
         host.setAsPrimary() // what the coordinator calls once the sheet is approved
@@ -463,7 +463,7 @@ class PurseHeadlessCheckoutTest {
         val checkout = checkout()
         val token = checkout.paymentTokens.value.single()
 
-        val host = checkout.cardHost(token)
+        val host = checkout.host(token)
         val context = host.buildContext()
 
         assertEquals("tok-value-1", context.token?.value)
@@ -471,9 +471,11 @@ class PurseHeadlessCheckoutTest {
         assertEquals("J DOE", context.token?.holderName)
         assertTrue(context.token?.requiresCvv == true)
         // Brands come from the token's method vault, same as for the fresh-card host.
-        assertEquals(checkout.cardHost(checkout.primaryMethods.single { it.method == Method.CreditCard }).supportedBrands, host.supportedBrands)
+        val cardContext = checkout.host(checkout.primaryMethods.single { it.method == Method.CreditCard }).buildContext()
+        assertEquals(cardContext.configuration?.vault?.supportedBrands, context.configuration?.vault?.supportedBrands)
+        assertTrue(context.configuration?.vault?.supportedBrands.orEmpty().isNotEmpty())
 
-        val noCvvHost = checkout(noCvvWidgetData()).let { it.cardHost(it.paymentTokens.value.single()) }
+        val noCvvHost = checkout(noCvvWidgetData()).let { it.host(it.paymentTokens.value.single()) }
         assertTrue(noCvvHost.buildContext().token?.requiresCvv == false)
     }
 
@@ -516,7 +518,7 @@ class PurseHeadlessCheckoutTest {
         assertEquals("pp-1", checkout.amountSplit.value.single().source.id)
         assertTrue("no CVV gate armed for a PayPal token", checkout.isPaymentFulfilled.value)
         // The PayPal host hands the token to the plugin, CVV-free.
-        val context = checkout.paypalHost(paypal).buildContext()
+        val context = checkout.host(paypal).buildContext()
         assertEquals("pp-value-1", context.token?.value)
         assertFalse(context.token!!.requiresCvv)
     }
@@ -551,11 +553,11 @@ class PurseHeadlessCheckoutTest {
     }
 
     @Test
-    fun `only a card method or a saved card can host a card form`() {
+    fun `only a primary method or a saved token can be driven by a coordinator`() {
         val checkout = checkout()
 
         assertThrows(IllegalArgumentException::class.java) {
-            checkout.cardHost(checkout.secondaryMethods.single())
+            checkout.host(checkout.secondaryMethods.single())
         }
     }
 
