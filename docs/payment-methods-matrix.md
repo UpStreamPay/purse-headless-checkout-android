@@ -63,7 +63,7 @@ merchant ever sets `template = googlepay` on a non-Google-Pay method.
 | Riverty `invoice`, `3x`, `6x`, `9x`, `12x` | ✅ form (IBAN) + client-side simulation text | ❌ dedicated; ✅ if `template/integration_mode = redirection` | |
 | Younited `installments` | ✅ | ❌ | |
 | Scalapay `cb3x-paybylink`, `cb4x-paybylink` | ✅ email form | ❌ | |
-| Loan simulation (`simulable` label, `POST /simulation`, `/multi`) | ✅ | ✅ `simulateLoan` / `simulateLoans` | Counts and amounts only, no per-instalment dates, both platforms. |
+| Loan simulation (`simulable` label, `POST /simulation`, `/multi`) | ✅ | ✅ `simulateLoan` / `simulateLoans` | Counts and amounts only, no per-instalment dates, both platforms. Web's total over-counts one instalment (see the web map). |
 
 ### Other
 

@@ -24,7 +24,7 @@ class LoanSimulationTest {
     )
 
     @Test
-    fun `maps plugin_result exactly like web's mapPluginResultToSimulation`() {
+    fun `maps plugin_result and sums the schedule once`() {
         val simulation = LoanSimulation.fromResponse(JSONObject().put("plugin_result", pluginResult))!!
 
         assertEquals(BigDecimal("70.34"), simulation.initialInstallmentAmount)
@@ -32,8 +32,8 @@ class LoanSimulationTest {
         assertEquals(BigDecimal("66.66"), simulation.finalInstallmentAmount)
         assertEquals(3, simulation.installmentCount)
         assertEquals(BigDecimal("3.67"), simulation.totalCost)
-        // (3 - 1) × 66.67 + 70.34 + 66.66 = 270.34
-        assertEquals(BigDecimal("270.34"), simulation.totalAmount)
+        // 70.34 + 66.67 + 66.66 = 203.67: three instalments, i.e. the 200 financed + 3.67 of cost.
+        assertEquals(BigDecimal("203.67"), simulation.totalAmount)
         assertEquals("Un crédit vous engage", simulation.legalText)
         assertEquals(BigDecimal("21.9"), simulation.aprc)
     }

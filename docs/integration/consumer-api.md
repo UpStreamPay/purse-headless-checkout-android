@@ -320,9 +320,11 @@ data class LoanSimulation(
 ```
 
 `totalCost` is the price of the credit (excluding the financed amount); `totalAmount` is what the
-shopper pays in all — `(count - 1) × installmentAmount + initial + final`, rounded to two decimals,
-exactly web's arithmetic. Like web, the schedule carries **counts and amounts only**: the API
-returns no per-instalment dates.
+shopper pays in all — `initial + (count - 2) × installmentAmount + final`, rounded to two decimals.
+`installmentCount` counts every instalment, the first and the last included, so a 3× schedule is
+three lines: initial, one recurring, final. (Web's `mapPluginResultToSimulation` adds `count - 1`
+recurring instalments on top of initial and final and so over-counts one; do not copy it.) Like web,
+the schedule carries **counts and amounts only**: the API returns no per-instalment dates.
 
 **Throws:**
 - `PurseCheckoutException.MethodNotSimulable` (`METHOD_IS_NOT_SIMULABLE`) — the method has no

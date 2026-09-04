@@ -82,6 +82,7 @@ adds or removes a divergence.
 | Payment confirmation after redirect | merchant success page | `paymentStatus()` / `awaitPaymentOutcome()` polling | the app returns to the launching screen |
 | `setSession` survivors | resets the split | keeps an unchanged primary selected | AC of US-24 |
 | Saved gift cards | listed in `mops` | `savedSecondaryTokens` flow, balances re-`/init`ed sequentially | `InitGuard` would coalesce parallel `/init`s of one issuer |
+| Loan simulation total | `(n − 1) × recurring + initial + final`, and the drop-in draws `n + 1` lines | `initial + (n − 2) × recurring + final`, `n` lines | `instalment_number` is the total count; web counts one instalment twice (bug to report on web) |
 | Monitoring envelope | `wrapper`, `env`, … | same plus `platform: "android"` | matches the native vault SDKs |
 | UI toolkit | DOM | Compose only: `rememberPaymentElement`, `remember*Coordinator`, `PurseCardForm` | SecureFields Android is Compose-first; a View app hosts a `ComposeView` |
 | Secondaries extension | static configs | `SecondaryConfigs.register`, `pollForToken`, `classifyInitError` hooks | lets a host add an issuer without an SDK release |

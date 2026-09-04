@@ -112,8 +112,8 @@ class LoanSimulationCheckoutTest {
         assertEquals("/payment/v1/simulation/entity-1/paypal/wallet", lastPath)
         assertEquals("EUR", JSONObject(lastBody!!).getString("currency_code"))
         assertEquals(3, simulation.installmentCount)
-        // Web arithmetic: (count - 1) × recurring + initial + final = 2 × 1.60 + 1.60 + 1.60.
-        assertEquals(BigDecimal("6.40"), simulation.totalAmount)
+        // Three instalments of 1.60 — the 4.80 financed, no cost.
+        assertEquals(BigDecimal("4.80"), simulation.totalAmount)
         assertTrue(events.contains(CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_LOAN_SIM))
     }
 
