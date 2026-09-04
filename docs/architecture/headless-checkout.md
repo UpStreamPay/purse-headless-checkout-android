@@ -143,9 +143,7 @@ teardown:  destroyClient
 ```
 
 Concrete plugins live inside `:partner-ui` (alongside the contract, like web) and are registered by
-default — `PluginRegistry`'s own `init` block calls `GooglePayModule.register()` /
-`KlarnaModule.register()` / `PaypalModule.register()` / `CardModule.register()` /
-`RedirectionModule.register()`, mirroring web's
+default — `PluginRegistry`'s own `init` block registers all five, mirroring web's
 `getPlugin`, which needs no
 registration step at all. The
 session (checked in `getPlugin` against `protocols`) is the real gate on whether a method is

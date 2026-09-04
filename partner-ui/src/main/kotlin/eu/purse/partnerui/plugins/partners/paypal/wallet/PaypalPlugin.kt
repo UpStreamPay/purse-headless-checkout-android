@@ -99,3 +99,15 @@ class PaypalPlugin(override val partner: Partner) : PartnerUiPlugin {
         const val COLLECTED_PAYER_ID = "paypalPayerId"
     }
 }
+
+/**
+ * The merchant's PayPal REST client id for the PayPal SDK's `CoreConfig`. Session data
+ * (`merchant_specifics.client_id`), not `/init` data — the inverse of Google Pay's gateway config.
+ */
+data class PaypalConfig(val clientId: String)
+
+/** What the approval browser switch needs from `/init`: the PayPal order and the `step_id` `/validate` carries back. */
+data class PaypalRequest(
+    val orderId: String,
+    val stepId: Int?,
+)

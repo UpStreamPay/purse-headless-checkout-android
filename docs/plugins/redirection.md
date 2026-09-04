@@ -13,7 +13,7 @@ covers, and the PSP's own hosted page is the entire shopper-facing surface.
 | | |
 |---|---|
 | Partner / method | **whatever the session says** — see [Detection](#detection) |
-| Family | **generic template** — `RedirectionModule` registers it under `configurations.template == "redirection"`, not under any `(partner, method)` pair |
+| Family | **generic template** — `PluginRegistry` registers it under `configurations.template == "redirection"`, not under any `(partner, method)` pair |
 | Native SDK | none |
 | UI surface | none — the PSP's hosted page, opened in the shared redirect WebView |
 | Native step vs `/validate` | **the redirect IS the payment step**, and it happens after `/validate` |
@@ -225,7 +225,6 @@ able to pick another method.
 | `RedirectionMapper.kt` | `/init` body, `browserData`, `step_id` extraction, init-status check |
 | `RedirectionCoordinator.kt` | `/init` on prepare, submit, redirect resolution + launch |
 | `RedirectionHost.kt` | The seam — implemented by `PurseHeadlessCheckout.redirectionHost(item)` |
-| `RedirectionModule.kt` | `PluginRegistry.registerGeneric("redirection", …)` |
 
 Web reference: `usp-widget/packages/partner-ui/src/plugins/generics/redirection/`, plus
 `packages/sdk/src/redirection/redirection-manager.ts` for the resolution this SDK's shared

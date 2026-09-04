@@ -10,7 +10,7 @@ instead of web's `Klarna.Payments` JS SDK.
 | | |
 |---|---|
 | Partner / method | `klarna` / `installments` (`Method.Installments`) |
-| Family | **partner** — one PSP, one method, so `KlarnaModule` registers only `(Klarna, Installments)`; no fallback |
+| Family | **partner** — one PSP, one method, so `PluginRegistry` registers only `(Klarna, Installments)`; no fallback |
 | Native SDK | `com.klarna.mobile:sdk` (from `https://x.klarnacdn.net/mobile-sdk/`, not Maven Central) |
 | UI surface | native `KlarnaPaymentView` inflated into a `ViewGroup` you own |
 | Native step vs `/validate` | **`authorize()` runs AFTER `/validate`**, from inside `postValidation` — the plugin family's biggest asymmetry |

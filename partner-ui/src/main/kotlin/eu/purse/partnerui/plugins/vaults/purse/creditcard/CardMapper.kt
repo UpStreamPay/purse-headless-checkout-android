@@ -41,15 +41,14 @@ object CardMapper {
      *
      * @throws PaymentApiException if the init wasn't a success.
      */
-    fun parseInit(initData: JSONObject): CardInit {
+    fun parseInit(initData: JSONObject): Int? {
         val status = initData.optJSONObject("status")
         val state = status?.optString("state").orEmpty()
         if (state.isNotEmpty() && state != "SUCCESS") {
             val description = status?.optString("description").orEmpty()
             throw PaymentApiException("creditcard init not successful (state=$state) $description".trim())
         }
-        val stepId = if (initData.has("step_id") && !initData.isNull("step_id")) initData.optInt("step_id") else null
-        return CardInit(stepId)
+        return if (initData.has("step_id") && !initData.isNull("step_id")) initData.optInt("step_id") else null
     }
 
     /**

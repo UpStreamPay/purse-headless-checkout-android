@@ -8,6 +8,7 @@ import eu.purse.partnerui.PartnerUiContext
 import eu.purse.partnerui.PartnerUiPlugin
 import eu.purse.partnerui.plugins.generics.googlepay.partners.ingenico.Ingenico
 import eu.purse.partnerui.plugins.generics.googlepay.partners.ingenico.WorldlineProductClient
+import org.json.JSONObject
 
 /**
  * The Google Pay [PartnerUiPlugin] — the protocol half (pure, no Play-Services). It builds the
@@ -67,3 +68,24 @@ class GooglePayPlugin(override val partner: Partner) : PartnerUiPlugin {
         const val COLLECTED_NETWORK = "selected_network"
     }
 }
+
+/**
+ * The `PaymentDataRequest` ingredients `/init` returns for a `googlepay` method — web's per-gateway
+ * `generics/googlepay/partners` builders. [allowedCardNetworks] is already in Google Pay vocabulary.
+ * [countryCode] is only set by Ingenico; the mapper falls back to `"FR"` like web's `default.ts`.
+ */
+data class GooglePayConfig(
+    val gateway: String,
+    val gatewayMerchantId: String?,
+    val merchantId: String?,
+    val merchantName: String?,
+    val allowedCardNetworks: List<String>,
+    val countryCode: String? = null,
+)
+
+/** Ready-to-use `IsReadyToPayRequest` / `PaymentDataRequest` JSON for one `googlepay` item. */
+data class GooglePayRequest(
+    val partnerWireValue: String,
+    val isReadyToPayJson: JSONObject,
+    val paymentDataRequestJson: JSONObject,
+)

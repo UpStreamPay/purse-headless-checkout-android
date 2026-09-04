@@ -169,7 +169,7 @@ fun CardPaymentForm(checkout: PurseHeadlessCheckout, method: PrimaryMethod, list
 ```
 
 Your app needs a Compose entry point for the form (a `ComposeView` inside an otherwise View-based
-layout is fine). No `PluginRegistry` call — `CardModule` is registered by default.
+layout is fine). No `PluginRegistry` call — the card plugin is registered by default.
 
 A saved card is the same three lines with the token as the host's item; only the rendering is
 conditional:
@@ -223,7 +223,6 @@ either way.
 | `CardMapper.kt` | `/init` body, `/init` parsing, `/validate` `payment_data` |
 | `CardCoordinator.kt` | `rememberCardCoordinator`, SecureFields listeners, fulfillment reporting, tokenize + submit, redirect, brand mapping |
 | `CardHost.kt` / `CardInit.kt` | Seam + value type |
-| `CardModule.kt` | `registerVault(VaultVendor.PURSE)` |
 
 Web reference: `usp-widget/packages/partner-ui/src/plugins/vaults/purse/creditcard/` (bridge) and
 `plugins/generics/hostedfields/` (the form/lifecycle half).

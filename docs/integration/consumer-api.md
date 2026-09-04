@@ -15,9 +15,7 @@ Everything here is the Kotlin analog of web's `@upstreampay/headless-checkout` +
 ### Plugins are active by default — no setup call needed
 
 Every plugin `:partner-ui` ships (Google Pay, Klarna, PayPal, Purse-vaulted card, the generic
-redirection template) is registered automatically; you don't call `GooglePayModule.register()` /
-`KlarnaModule.register()` / `PaypalModule.register()` / `CardModule.register()` /
-`RedirectionModule.register()` yourself. Whether a method actually shows
+redirection template) is registered automatically in `PluginRegistry`; there is nothing to call. Whether a method actually shows
 up is gated by the **session** alone — the same thing that already decides it server-side, in the
 merchant's Purse configuration. `paymentMethods` simply won't include a method the session doesn't
 offer.
@@ -29,8 +27,7 @@ though the backend might offer it), opt it out explicitly:
 PluginRegistry.disable(Partner.Klarna, Method.Installments)   // eu.purse.partnerui
 ```
 
-`PluginRegistry.enable(partner, method)` reverses it. Calling `GooglePayModule.register()` /
-`KlarnaModule.register()` yourself is harmless (idempotent) but unnecessary — they exist mainly for
+`PluginRegistry.enable(partner, method)` reverses it. `register` / `registerGeneric` / `registerVault` exist for
 tests that want to register a plugin in isolation.
 
 ### `PurseHeadlessCheckout.init`

@@ -35,7 +35,7 @@ class CardPlugin(override val partner: Partner) : PartnerUiPlugin {
     override suspend fun preValidation(context: PartnerUiContext): ValidateItemPayload {
         val stepId = CardMapper.parseInit(
             context.api.init(CardMapper.buildInitPayload(context.amount, partner.wireValue)),
-        ).stepId
+        )
 
         // Saved token (card-on-file): the opaque token value plus the card metadata travels straight
         // into payment_data (web's patchItemPayloadWithToken). When the token still needs its CVV,

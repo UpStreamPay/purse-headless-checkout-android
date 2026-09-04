@@ -13,7 +13,7 @@ Pay-now only. Registration / vaulting and BNPL ("Pay Later") are out of scope �
 | | |
 |---|---|
 | Partner / method | `paypal` / `wallet` (`Method.Wallet`) |
-| Family | **partner** — one PSP, one method, so `PaypalModule` registers only `(Paypal, Wallet)`; no fallback |
+| Family | **partner** — one PSP, one method, so `PluginRegistry` registers only `(Paypal, Wallet)`; no fallback |
 | Native SDK | `com.paypal.android:paypal-web-payments` + `payment-buttons` (Maven Central) |
 | UI surface | PayPal's own branded `PayPalButton` (xpay), then PayPal's approval — the PayPal app when installed, else a Custom Tab |
 | Native step vs `/validate` | **approval runs BEFORE `/validate`**, but after this plugin's own `/init` |
