@@ -1,22 +1,21 @@
+// Web: packages/partner-ui/src/plugins/generics/googlepay/index.ts (the button + `onPaymentAuthorized`)
+// Same: /init → isReadyToPay → sheet → the approved token goes into /validate, then 3-D Secure.
+// Differs: Play Services `PaymentsClient` and an Activity-result contract instead of pay.js.
 package eu.purse.partnerui.plugins.generics.googlepay
 
-import android.util.Log
 import androidx.activity.ComponentActivity
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
 import com.google.android.gms.common.api.CommonStatusCodes
+import com.google.android.gms.tasks.Task
 import com.google.android.gms.wallet.PaymentData
 import com.google.android.gms.wallet.contract.ApiTaskResult
-import com.google.android.gms.wallet.contract.TaskResultContracts
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
+import eu.purse.partnerui.PaymentCoordinator
 import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.PluginHost
-import eu.purse.partnerui.redirect.RedirectionCheckoutContract
-import eu.purse.partnerui.redirect.RedirectionCheckoutResult
-import eu.purse.partnerui.redirect.RedirectDispatcher
-import eu.purse.partnerui.redirect.RedirectionResolver
-import eu.purse.partnerui.redirect.withReturnUrlPrefix
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -26,109 +25,40 @@ import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 
 /**
- * Drives the interactive Google Pay flow end to end, gluing the [GooglePayPlugin] protocol to
- * Google's `PaymentsClient` sheet and the 3-D Secure [RedirectionCheckoutContract]:
- *
- * 1. [prepare] — `plugin.buildRequest` (`/init` + Worldline refine) then `isReadyToPay`.
- * 2. [launchSheet] — shows the Google Pay sheet.
- * 3. on the sheet result — hands the token/network to the [PluginHost] ([PluginHost.setCollected])
- *    and calls [PluginHost.submitPayment] (which validates all splits together).
- * 4. if `/validate` returns a redirection — launches the 3-D Secure Activity, then reports that the
- *    shopper returned (not the payment outcome — see [onRedirectReturn]'s doc).
- *
- * Knows nothing about `:headless-checkout` — [PluginHost] is the seam (see its doc).
- *
- * **Construct this in the host Activity's `onCreate`** — it registers `ActivityResult` launchers,
- * which must happen before the Activity is STARTED. The host is supplied later, per payment, via
- * [prepare]. Outcomes are reported on [listener].
+ * Google Pay's interactive half: [prepare] runs `/init` (+ Worldline refine) and `isReadyToPay`,
+ * [launchSheet] opens the sheet, and an approved sheet selects the method and captures. The sheet
+ * runs **before** `/validate`. Obtain one with `rememberGooglePayCoordinator`.
  */
-class GooglePayCoordinator private constructor(
+class GooglePayCoordinator internal constructor(
     private val activity: ComponentActivity,
-    private val listener: PaymentElementListener,
-    registerLaunchers: Boolean,
-) {
-    /**
-     * Same contract as [PaymentElementListener] — kept as a nested name for source compatibility
-     * and per-method docs. `onReady` is the `isReadyToPay` answer after [prepare]; `onResult` with
-     * a `null` globalStatus is a redirect return whose real outcome must be re-checked against the
-     * session (see [onRedirectReturn]).
-     */
-    interface Listener : PaymentElementListener
+    listener: PaymentElementListener,
+) : PaymentCoordinator(activity.lifecycleScope, listener) {
 
-    /** Imperative construction — must run in the Activity's `onCreate`, before it is STARTED. */
-    constructor(activity: ComponentActivity, listener: PaymentElementListener) :
-        this(activity, listener, registerLaunchers = true)
+    override val tag = "GooglePayCoordinator"
 
-    /**
-     * Launch seams — filled by the constructor's own launchers, or injected by
-     * [rememberGooglePayCoordinator] with Compose-managed ones (which may be created after the
-     * Activity is STARTED, where `registerForActivityResult` would throw).
-     */
-    internal var launchPaymentData: ((com.google.android.gms.tasks.Task<PaymentData>) -> Unit)? = null
-    internal var launchRedirect: ((eu.purse.partnerui.redirect.RedirectAction) -> Unit)? = null
+    /** Set by `rememberGooglePayCoordinator` with the Compose-managed `GetPaymentDataResult` launcher. */
+    internal var launchPaymentData: ((Task<PaymentData>) -> Unit)? = null
 
-    init {
-        if (registerLaunchers) {
-            val paymentDataLauncher =
-                activity.registerForActivityResult(TaskResultContracts.GetPaymentDataResult()) { onPaymentData(it) }
-            val redirectLauncher =
-                activity.registerForActivityResult(RedirectionCheckoutContract()) { onRedirectReturn(it) }
-            launchPaymentData = { task -> paymentDataLauncher.launch(task) }
-            launchRedirect = { action -> redirectLauncher.launch(action) }
-        }
-    }
-
-    private var host: PluginHost? = null
     private var client: GooglePayClient? = null
-
-    /**
-     * `isReadyToPay`'s answer, as Compose state — what [GooglePayButton] shows itself on. Mirrors
-     * [Listener.onReady] for non-Compose hosts.
-     */
-    var isReady: Boolean by androidx.compose.runtime.mutableStateOf(false)
-        private set
-
-    /**
-     * The prepared request's `allowedPaymentMethods` — [GooglePayButton] hands it to Google's own
-     * `PayButton` so the button renders the shopper's actual card art per Google's guidelines.
-     */
-    var allowedPaymentMethodsJson: String? by androidx.compose.runtime.mutableStateOf(null)
-        private set
-
-    /** Report a lifecycle event to the headless host (which deactivates/reacts, web-parity). */
-    private fun dispatch(event: PluginEvent) {
-        runCatching { host?.buildContext()?.dispatchEvent(event) }
-    }
-    private var partnerWireValue: String? = null
     private var request: GooglePayRequest? = null
 
-    /**
-     * Set for the span from [launchSheet] to a terminal outcome — guards against a double tap (or
-     * any other re-entrant call) firing two payment sheets, which would `POST /validate` twice for
-     * the same session and get the second call rejected with `409` (idempotency conflict). Reset on
-     * cancel/error so the shopper can retry; left `true` after a successful submit since that item is
-     * done.
-     */
-    private var submitting = false
+    /** `isReadyToPay`'s answer, as Compose state — what [GooglePayButton] shows itself on. */
+    var isReady: Boolean by mutableStateOf(false)
+        private set
 
-    /**
-     * Build the request (`/init` + refine) against [host] and check readiness; reports via
-     * [Listener.onReady]. Call once the session is initialized — this is also the reset point for
-     * [submitting], so a coordinator reused across sessions (as the demo does) isn't left permanently
-     * blocked after a prior session's successful submit.
-     */
+    /** The prepared request's `allowedPaymentMethods`, for Google's own `PayButton`. */
+    var allowedPaymentMethodsJson: String? by mutableStateOf(null)
+        private set
+
     fun prepare(host: PluginHost) {
-        this.host = host
-        submitting = false
+        attach(host)
         isReady = false
         allowedPaymentMethodsJson = null
         val client = GooglePayClient.create(activity, host.environment).also { this.client = it }
         activity.lifecycleScope.launch {
             try {
                 val context = host.buildContext()
-                partnerWireValue = context.partner.wireValue
-                val plugin = GooglePayPlugin(context.partner)
-                val req = withContext(Dispatchers.IO) { plugin.buildRequest(context) }
+                val req = withContext(Dispatchers.IO) { GooglePayPlugin(context.partner).buildRequest(context) }
                 request = req
                 allowedPaymentMethodsJson = req.isReadyToPayJson.optJSONArray("allowedPaymentMethods")?.toString()
                 val ready = client.isReadyToPay(req.isReadyToPayJson).awaitBoolean()
@@ -141,19 +71,13 @@ class GooglePayCoordinator private constructor(
         }
     }
 
-    /**
-     * Launch the Google Pay sheet. Call after [prepare] reported ready and the button was tapped.
-     * A no-op while a previous tap's flow is still in progress — see [submitting].
-     */
+    /** Open the sheet. A no-op while a previous tap's flow is still in progress. */
     fun launchSheet() {
         if (submitting) return
         val req = request ?: return listener.onError("call prepare() first")
         val client = client ?: return listener.onError("call prepare() first")
         submitting = true
-        // GetPaymentDataResult's contract resolves synchronously off a COMPLETED Task (success, or a
-        // ResolvableApiException carrying the sheet's PendingIntent) — launch()ing the live/pending
-        // Task straight from loadPaymentData() throws "The task has to be executed before using this
-        // API to resolve its result." So wait for completion first, on this same (main) thread.
+        // GetPaymentDataResult resolves off a COMPLETED task; launching the live one throws.
         client.loadPaymentDataTask(req.paymentDataRequestJson)
             .addOnCompleteListener { completedTask -> launchPaymentData?.invoke(completedTask) }
     }
@@ -165,27 +89,21 @@ class GooglePayCoordinator private constructor(
                 val paymentData = taskResult.result
                     ?: run { submitting = false; return listener.onError("empty Google Pay result") }
                 val methodData = JSONObject(paymentData.toJson()).optJSONObject("paymentMethodData")
-                val token = methodData?.optJSONObject("tokenizationData")?.optString("token").orEmpty()
-                val network = methodData?.optJSONObject("info")?.optString("cardNetwork")
                 host.setCollected(
                     mapOf(
-                        GooglePayPlugin.COLLECTED_TOKEN to token,
-                        GooglePayPlugin.COLLECTED_NETWORK to network,
+                        GooglePayPlugin.COLLECTED_TOKEN to methodData?.optJSONObject("tokenizationData")?.optString("token").orEmpty(),
+                        GooglePayPlugin.COLLECTED_NETWORK to methodData?.optJSONObject("info")?.optString("cardNetwork"),
                     ),
                 )
-                // The approved sheet both selects the method and pays with it — web's
-                // `validationRequested` → setPrimary + submit. A cancel never reaches this line,
-                // so the split is only touched once the shopper has actually committed.
+                // The approved sheet both selects the method and pays with it (web's `validationRequested`).
                 host.setAsPrimary()
-                submit(host)
+                capture(host)
             }
-
             CommonStatusCodes.CANCELED -> {
                 submitting = false
                 dispatch(PluginEvent.Cancelled)
                 listener.onCanceled()
             }
-
             else -> {
                 submitting = false
                 dispatch(PluginEvent.ClientError("Google Pay failed: ${taskResult.status.statusMessage}"))
@@ -194,85 +112,10 @@ class GooglePayCoordinator private constructor(
         }
     }
 
-    private fun submit(host: PluginHost) {
-        activity.lifecycleScope.launch {
-            try {
-                val result = withContext(Dispatchers.IO) { host.submitPayment() }
-                Log.d(
-                    TAG,
-                    "validate response: global_status=${result.globalStatus} " +
-                        "redirection=${result.raw.optJSONObject("redirection")}",
-                )
-                val paymentId = RedirectionResolver.extractWidgetConfirmationPaymentId(
-                    validateResponse = result.raw,
-                    partnerWireValue = partnerWireValue.orEmpty(),
-                    methodWireValue = GooglePayMapper.METHOD,
-                )
-                Log.d(TAG, "extracted payment_id=$paymentId")
-                paymentId?.let { listener.onPaymentId(it) }
-                val action = RedirectionResolver.resolve(
-                    validateResponse = result.raw,
-                    partnerWireValue = partnerWireValue.orEmpty(),
-                    methodWireValue = GooglePayMapper.METHOD,
-                    sessionReturnUrl = host.redirectionReturnUrl,
-                )?.withReturnUrlPrefix(host.redirectionReturnUrl)
-                if (action != null) {
-                    // The merchant's onRedirection hook goes first (web's redirectionHandler);
-                    // the SDK's WebView only opens when it declines.
-                    when (val outcome = RedirectDispatcher.dispatch(action, host, launchRedirect)) {
-                        is RedirectDispatcher.Outcome.HookFailed -> {
-                            // Nothing was opened — the shopper can retry once the merchant fixes it.
-                            submitting = false
-                            listener.onError("onRedirection hook failed: ${outcome.error.message}")
-                        }
-                        else -> {
-                            dispatch(PluginEvent.Redirect)
-                            listener.onRequiresAction()
-                        }
-                    }
-                } else {
-                    listener.onResult("global_status=${result.globalStatus}", result.globalStatus)
-                }
-            } catch (e: Exception) {
-                // `/validate` never landed (or errored) — safe to let the shopper retry.
-                submitting = false
-                listener.onError(e.message)
-            }
+    private suspend fun Task<Boolean>.awaitBoolean(): Boolean = suspendCancellableCoroutine { cont ->
+        addOnCompleteListener { task ->
+            if (task.isSuccessful) cont.resume(task.result ?: false)
+            else cont.resumeWithException(task.exception ?: RuntimeException("isReadyToPay failed"))
         }
-    }
-
-    internal fun onRedirectReturn(result: RedirectionCheckoutResult) {
-        when (result) {
-            // Approved only means the shopper came back — NOT the payment outcome. It deliberately
-            // does not chase that outcome itself: a real 3-D Secure challenge's own final redirect is
-            // constructed server-side (by the bank/PSP), and a confirmed backend pain point is that
-            // this can land on a Purse API gateway URL that 401s on the session's own client-facing
-            // api_key — nothing fixable client-side. Report status independently instead (e.g. this
-            // demo's own alfred-backed "Get Transactions" tool) rather than surface that as an error
-            // here.
-            RedirectionCheckoutResult.Approved -> listener.onResult("returned from 3-D Secure — check the session status independently to confirm the outcome")
-
-            RedirectionCheckoutResult.Canceled -> {
-                dispatch(PluginEvent.Cancelled)
-                listener.onCanceled()
-            }
-            is RedirectionCheckoutResult.Failed -> listener.onError(result.message)
-        }
-    }
-
-    private suspend fun com.google.android.gms.tasks.Task<Boolean>.awaitBoolean(): Boolean =
-        suspendCancellableCoroutine { cont ->
-            addOnCompleteListener { task ->
-                if (task.isSuccessful) cont.resume(task.result ?: false)
-                else cont.resumeWithException(task.exception ?: RuntimeException("isReadyToPay failed"))
-            }
-        }
-
-    internal companion object {
-        const val TAG = "GooglePayCoordinator"
-
-        /** Compose factory seam — [rememberGooglePayCoordinator] injects managed launchers. */
-        fun forCompose(activity: ComponentActivity, listener: PaymentElementListener) =
-            GooglePayCoordinator(activity, listener, registerLaunchers = false)
     }
 }
