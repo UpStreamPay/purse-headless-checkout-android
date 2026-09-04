@@ -22,7 +22,7 @@ API, [integration/consumer-api.md](../integration/consumer-api.md).
 
 ```
 init:      onSessionSet → ensureClientCompatibility(optional)
-react:     onAmountUpdate / onDataUpdate
+react:     onAmountUpdate
 validate:  validateUi(optional) → preValidation ─ SDK POSTs /validate ─▶ postValidation
 teardown:  destroyClient
 ```

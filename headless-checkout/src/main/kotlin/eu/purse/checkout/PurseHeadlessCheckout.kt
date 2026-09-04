@@ -1063,13 +1063,6 @@ class PurseHeadlessCheckout private constructor(
         when (event) {
             // Web clears a recoverable disabled state when the partner comes back up.
             PluginEvent.Ready -> clearRecoverableDisabled(item)
-            is PluginEvent.Fulfilled -> setFulfilled(item, event.isFulfilled)
-            // Web's `validationRequested` — an xpay-style sheet approved: the approval both
-            // selects the method and pays with it (`setPrimary(mop)` then submit).
-            is PluginEvent.RequestValidate -> {
-                makePrimary(item)
-                scope.launch { runCatching { submitPayment(event.skipOnBeforeValidate) } }
-            }
             // Stays in the list but technically disabled (web dims it), not filtered away —
             // an /init failure is partner trouble the shopper should still see the method for.
             is PluginEvent.InitFailed ->

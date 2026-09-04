@@ -137,7 +137,7 @@ lifecycle (`suspend` standing in for web's `Promise` hooks):
 
 ```
 init:      onSessionSet → ensureClientCompatibility(optional)
-react:     onAmountUpdate / onDataUpdate
+react:     onAmountUpdate
 validate:  validateUi(optional) → preValidation ─ host POSTs /validate ─▶ postValidation
 teardown:  destroyClient
 ```

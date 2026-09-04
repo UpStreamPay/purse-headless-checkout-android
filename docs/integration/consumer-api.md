@@ -143,7 +143,7 @@ lifecycleScope.launch {
 }
 ```
 
-There is no `onDataUpdate`/`onAmountUpdate` push into a rendering surface the way web's
+There is no `onAmountUpdate` push into a rendering surface the way web's
 `<purse-partner-ui>` element gets it — the host owns re-rendering on every emission.
 
 ---

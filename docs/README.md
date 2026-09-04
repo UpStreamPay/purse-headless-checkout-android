@@ -29,7 +29,9 @@ own checkout UI on top. It mirrors the layered design of the web `usp-widget`
 | Understand the architecture, modules, and purse-payment flow | **[Headless checkout architecture](architecture/headless-checkout.md)** |
 | Integrate the SDK — the full consumer API (functions, events, callbacks) | **[Consumer API reference](integration/consumer-api.md)** |
 | Work on one PSP — its `/init`, sequence diagram, quirks, failure modes | **[Plugins, per PSP](plugins/README.md)** ([Google Pay](plugins/google-pay.md) · [Klarna](plugins/klarna.md) · [PayPal](plugins/paypal.md) · [Card / Purse vault](plugins/card-purse-vault.md) · [Redirection](plugins/redirection.md)) |
-| Know where this diverges from the web headless SDK | **[Pain points recap](decisions/pain-points-recap.md)** |
+| Find the web file behind an Android file, or why they differ | **[Web ↔ Android map](web-android-map.md)** |
+| See which payment method each platform supports | **[Payment methods by platform](payment-methods-matrix.md)** |
+| Know where this diverges from the web headless SDK | **[Pain points recap](decisions/pain-points-recap.md)** · [Simplification review](decisions/simplification-review.md) |
 | Run the demo app against a real session | **[Testing with alfred](internal/testing-with-alfred.md)** |
 
 ## Requirements
