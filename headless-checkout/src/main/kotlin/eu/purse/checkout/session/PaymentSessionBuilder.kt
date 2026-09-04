@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout/src/session/payment/mops/item-factory/factories.ts
+// Same: protocols → items, availability rules, tokens.
+// Differs: nothing.
 package eu.purse.checkout.session
 
 import eu.purse.checkout.payment.item.MethodAvailability

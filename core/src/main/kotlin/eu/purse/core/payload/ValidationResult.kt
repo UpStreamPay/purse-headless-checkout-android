@@ -1,3 +1,6 @@
+// Web: packages/model /validate response
+// Same: `global_status` + optional `redirection`.
+// Differs: raw JSON kept for the redirect resolver.
 package eu.purse.core.payload
 
 import org.json.JSONObject

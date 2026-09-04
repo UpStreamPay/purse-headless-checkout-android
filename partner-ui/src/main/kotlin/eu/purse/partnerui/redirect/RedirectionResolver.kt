@@ -1,3 +1,6 @@
+// Web: packages/partner-ui `manageRedirection` + widget confirmation-page handling
+// Same: field priority over the /validate answer; `payment_id` off the confirmation URL.
+// Differs: `should_submit_widget` is never auto-followed; the return URL becomes a WebView completion hint.
 package eu.purse.partnerui.redirect
 
 import org.json.JSONObject

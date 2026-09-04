@@ -1,3 +1,6 @@
+// Web: packages/model `LegacyPaymentSession`
+// Same: same fields.
+// Differs: typed `Partner` / `Method` keys.
 package eu.purse.core.session
 
 import eu.purse.core.payment.IntegratedToken

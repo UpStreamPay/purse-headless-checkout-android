@@ -1,3 +1,6 @@
+// Web: packages/sdk/src/types.ts (`Partner` union)
+// Same: known wire values.
+// Differs: sealed class with `Other(wireValue)`.
 package eu.purse.core.payment
 
 /**

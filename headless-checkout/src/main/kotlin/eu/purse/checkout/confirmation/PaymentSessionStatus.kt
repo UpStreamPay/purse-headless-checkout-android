@@ -1,3 +1,6 @@
+// Web: none — web lands on the merchant's success page
+// Same: —
+// Differs: a typed status over the session's transactions, for the screen the app returns to.
 package eu.purse.checkout.confirmation
 
 import org.json.JSONArray

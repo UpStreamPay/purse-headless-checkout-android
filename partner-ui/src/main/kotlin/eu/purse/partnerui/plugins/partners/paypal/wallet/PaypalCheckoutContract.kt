@@ -1,3 +1,6 @@
+// Web: none
+// Same: —
+// Differs: `ActivityResultContract` for the approval Activity.
 package eu.purse.partnerui.plugins.partners.paypal.wallet
 
 import android.content.Context

@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/plugins/generics/googlepay/partners/default.ts
+// Same: fallback gateway builder, `countryCode` FR.
+// Differs: nothing.
 package eu.purse.partnerui.plugins.generics.googlepay.partners
 
 import eu.purse.core.api.PaymentApiException

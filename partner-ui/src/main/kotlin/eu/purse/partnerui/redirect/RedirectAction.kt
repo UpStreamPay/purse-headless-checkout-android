@@ -1,3 +1,6 @@
+// Web: `manageRedirection` action shapes (GET url, POST form, HTML)
+// Same: same three shapes.
+// Differs: carries the session return URL as a completion hint for the WebView.
 package eu.purse.partnerui.redirect
 
 import org.json.JSONObject

@@ -1,3 +1,6 @@
+// Web: packages/sdk/src/API (fetch error shape)
+// Same: status + API error code; a terminal session answer is recognisable.
+// Differs: one exception type instead of per-status classes.
 package eu.purse.core.api
 
 /**

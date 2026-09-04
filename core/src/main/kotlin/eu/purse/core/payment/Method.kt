@@ -1,3 +1,6 @@
+// Web: packages/sdk/src/types.ts (`Method` union)
+// Same: known wire values.
+// Differs: sealed class with `Other(wireValue)` for anything the session sends.
 package eu.purse.core.payment
 
 /**

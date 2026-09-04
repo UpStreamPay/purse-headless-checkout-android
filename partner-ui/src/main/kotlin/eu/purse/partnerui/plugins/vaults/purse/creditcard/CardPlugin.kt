@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/plugins/vaults/purse/creditcard + generics/hostedfields
+// Same: token from the vault into /validate; saved token + CVV-only token side by side.
+// Differs: /init runs inside `preValidation`, not at `onSessionSet`.
 package eu.purse.partnerui.plugins.vaults.purse.creditcard
 
 import eu.purse.core.payload.ItemPayload

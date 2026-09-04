@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/plugins/partners/paypal/wallet/index.ts
+// Same: /init creates the order, /validate captures; token mode patches `payment_data.token`.
+// Differs: token-mode /init runs inside `preValidation`.
 package eu.purse.partnerui.plugins.partners.paypal.wallet
 
 import eu.purse.core.payload.ItemPayload

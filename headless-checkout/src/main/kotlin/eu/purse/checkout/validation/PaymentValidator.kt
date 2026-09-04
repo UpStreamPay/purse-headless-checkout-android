@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout/src/headless-checkout-validation.ts (`executePayment`, `preValidateItems`)
+// Same: preValidation → one POST /validate → postValidation; hooks around it.
+// Differs: a repeated split source is a hard error.
 package eu.purse.checkout.validation
 
 import android.util.Log

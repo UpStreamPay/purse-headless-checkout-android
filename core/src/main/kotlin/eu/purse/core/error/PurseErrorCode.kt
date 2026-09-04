@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout/src/utils/error/error-codes.ts
+// Same: same codes.
+// Differs: nothing.
 package eu.purse.core.error
 
 /**

@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout payment-element `on(...)` streams
+// Same: every plugin event, tagged with its item.
+// Differs: one flattened `SharedFlow` on the checkout.
 package eu.purse.checkout
 
 import eu.purse.partnerui.PluginEvent

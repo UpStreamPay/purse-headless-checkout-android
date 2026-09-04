@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout/src/session/payment/splitter/payment-splitter.ts
+// Same: one primary + N secondaries, secondaries first, primary absorbs the rest.
+// Differs: integer cents; no autofill middlewares.
 package eu.purse.checkout.payment.split
 
 import eu.purse.checkout.payment.secondary.SecondaryTakePolicy

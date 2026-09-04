@@ -7,7 +7,7 @@ the KDoc trim was applied to every file the refactor touched, not yet to the res
 Context: the team is not native-first, ~36k lines were added in the last month, and the codebase
 has started to feel owned by its history rather than by us. This is an inventory of where the
 Android SDK is more complicated than it needs to be, ranked by payoff, with the concrete change
-for each. Nothing here is applied yet. Baseline before any of it: 273 unit tests green
+for each. Baseline before any of it: 273 unit tests green
 (`core` 49, `headless-checkout` 126, `partner-ui` 98).
 
 ## Where the weight is

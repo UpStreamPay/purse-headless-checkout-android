@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout/src/session/payment/mops/secondaries/configs/take-policy.ts
+// Same: `none` splittable, `max` takes the cap.
+// Differs: nothing.
 package eu.purse.checkout.payment.secondary
 
 /**

@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/plugins/generics/googlepay/index.ts + partners_specifics.ts
+// Same: /init body, per-gateway config dispatch, isReadyToPay / PaymentDataRequest / validate JSON.
+// Differs: nothing.
 package eu.purse.partnerui.plugins.generics.googlepay
 
 import eu.purse.core.api.PaymentApiException

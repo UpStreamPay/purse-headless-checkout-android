@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout `sessionState` store
+// Same: ready / submitting / submitted / error / expired / terminated.
+// Differs: nothing.
 package eu.purse.checkout.state
 
 /**

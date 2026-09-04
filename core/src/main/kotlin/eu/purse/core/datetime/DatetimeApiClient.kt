@@ -1,3 +1,6 @@
+// Web: packages/sdk/src/server-datetime-checker.ts (`GET /datetime`)
+// Same: same endpoint.
+// Differs: nothing.
 package eu.purse.core.datetime
 
 import eu.purse.core.api.PaymentApiException

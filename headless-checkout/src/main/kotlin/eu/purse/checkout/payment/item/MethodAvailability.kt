@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout mops recompute on `primaryReach`
+// Same: min/max amount and information-request rules.
+// Differs: nothing.
 package eu.purse.checkout.payment.item
 
 import eu.purse.checkout.payment.split.SplitSource

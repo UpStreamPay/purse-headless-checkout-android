@@ -1,3 +1,6 @@
+// Web: none — web navigates the page
+// Same: —
+// Differs: in-app WebView with progress, first-page watchdog, network-failure surfacing, deep-link return.
 package eu.purse.partnerui.redirect
 
 import android.content.Intent

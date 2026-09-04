@@ -1,3 +1,6 @@
+// Web: packages/sdk/src/API/payment-api.ts
+// Same: `{root}/{entityId}/sessions/{sessionId}/init|validate`, GET session, /simulation endpoints.
+// Differs: blocking HttpURLConnection; callers hop to Dispatchers.IO.
 package eu.purse.core.api
 
 import eu.purse.core.payload.ValidateItemPayload

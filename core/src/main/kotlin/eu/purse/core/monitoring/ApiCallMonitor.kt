@@ -1,3 +1,6 @@
+// Web: packages/sdk API fetch wrapper (PARTNER_API_CALL_START/END events)
+// Same: one start and one end event per call.
+// Differs: a process-wide listener the checkout installs.
 package eu.purse.core.monitoring
 
 /**

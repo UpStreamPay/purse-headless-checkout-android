@@ -1,3 +1,6 @@
+// Web: none
+// Same: —
+// Differs: null-safe org.json helpers.
 package eu.purse.core.session
 
 import org.json.JSONObject

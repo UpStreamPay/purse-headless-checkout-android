@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/plugins/partners/klarna-installments/index.ts
+// Same: /init; /validate carries only the step_id; `authorize()` in postValidation after success.
+// Differs: the authorize callback travels through `collected`.
 package eu.purse.partnerui.plugins.partners.klarna
 
 import eu.purse.core.payload.ItemPayload

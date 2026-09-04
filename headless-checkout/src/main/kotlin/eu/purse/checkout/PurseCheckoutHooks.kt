@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout/src/types/headless-checkout.ts (`PurseHeadlessCheckoutHooks`)
+// Same: onBeforeValidate / onAfterValidate / redirectionHandler.
+// Differs: `redirectionHandler` is `onRedirection`.
 package eu.purse.checkout
 
 import eu.purse.checkout.payment.split.PaymentSplit

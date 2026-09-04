@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout/src/session/payment/mops/disabled.ts
+// Same: same codes, recoverable / filtered / requiresUiClear sets.
+// Differs: nothing.
 package eu.purse.checkout.payment.item
 
 import java.math.BigDecimal

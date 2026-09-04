@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout `SESSION_MALFORMED` errors
+// Same: same meaning.
+// Differs: nothing.
 package eu.purse.core.session
 
 /**

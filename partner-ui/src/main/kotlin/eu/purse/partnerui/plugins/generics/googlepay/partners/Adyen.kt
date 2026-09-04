@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/plugins/generics/googlepay/partners/adyen.ts
+// Same: same gateway config parsing.
+// Differs: not yet validated on a sandbox.
 package eu.purse.partnerui.plugins.generics.googlepay.partners
 
 import eu.purse.core.api.PaymentApiException

@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout/src/monitoring/monitoringConfigs.ts
+// Same: the same 40 codes and levels.
+// Differs: nothing.
 package eu.purse.checkout.monitoring
 
 /**

@@ -1,3 +1,6 @@
+// Web: packages/assets (`iconUrl`, `additionalAssets` on payment items)
+// Same: same CDN paths per environment.
+// Differs: nothing.
 package eu.purse.core.assets
 
 import eu.purse.core.environment.PurseEnvironment

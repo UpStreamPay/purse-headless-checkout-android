@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/commons/PartnerUI/initGuard.ts
+// Same: coalesce duplicate /init calls, retry transient failures, fast-reject a call that just failed.
+// Differs: key includes the amount; lives in :core so secondaries and plugins share it.
 package eu.purse.core.api
 
 import org.json.JSONObject

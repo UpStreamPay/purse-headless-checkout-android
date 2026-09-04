@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/commons/PartnerUI/types.ts (`PartnerUIContext`)
+// Same: partner, method, session, amount, api, register, token, options.
+// Differs: immutable; `collected` carries what the native step produced.
 package eu.purse.partnerui
 
 import eu.purse.core.api.PaymentApiClient

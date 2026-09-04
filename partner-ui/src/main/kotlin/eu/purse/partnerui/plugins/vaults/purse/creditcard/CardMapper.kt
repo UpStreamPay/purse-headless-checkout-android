@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/plugins/vaults/purse/creditcard/bridge.ts
+// Same: /init body, `vault_vendor_token_id` + bin + selected_network in `payment_data`.
+// Differs: nothing.
 package eu.purse.partnerui.plugins.vaults.purse.creditcard
 
 import eu.purse.core.api.PaymentApiException

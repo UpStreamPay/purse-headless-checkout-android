@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/plugins/generics/googlepay/index.ts
+// Same: /init then the sheet token into /validate.
+// Differs: Ingenico's Worldline refinement runs inside `buildRequest`.
 package eu.purse.partnerui.plugins.generics.googlepay
 
 import eu.purse.core.payload.ItemPayload

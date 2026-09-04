@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/commons/PartnerUI/theming
+// Same: scopes global / input / label / helperText with :focus :invalid :valid, `Theme.build()` fallback chain.
+// Differs: values reach SecureFields' `VaultStyles` and `PurseCardForm`.
 package eu.purse.partnerui
 
 /**

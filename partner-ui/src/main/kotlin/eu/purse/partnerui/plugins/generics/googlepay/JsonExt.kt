@@ -1,3 +1,6 @@
+// Web: none
+// Same: —
+// Differs: org.json helpers.
 package eu.purse.partnerui.plugins.generics.googlepay
 
 import org.json.JSONObject

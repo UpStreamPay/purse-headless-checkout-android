@@ -1,3 +1,6 @@
+// Web: `DelegatedRedirectionHandlerFactory` (`redirectionHandler`)
+// Same: the merchant may take a redirect over.
+// Differs: one shared dispatch step for every coordinator.
 package eu.purse.partnerui.redirect
 
 /**

@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout `setSession(widgetData: string)` base64 decode
+// Same: same blob.
+// Differs: nothing.
 package eu.purse.core.session
 
 import eu.purse.core.environment.PurseEnvironment

@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout `mapPluginResultToSimulation`
+// Same: counts and amounts.
+// Differs: no per-instalment dates (web has none either).
 package eu.purse.core.payment
 
 import org.json.JSONObject

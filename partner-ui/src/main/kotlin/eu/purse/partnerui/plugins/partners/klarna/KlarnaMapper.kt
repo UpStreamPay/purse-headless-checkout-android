@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/plugins/partners/klarna-installments (`getKlarnaConfigFromInitData`)
+// Same: /init body, client_token + step_id parsing.
+// Differs: generic `klarna` payment-method category lets the token decide.
 package eu.purse.partnerui.plugins.partners.klarna
 
 import eu.purse.core.api.PaymentApiException

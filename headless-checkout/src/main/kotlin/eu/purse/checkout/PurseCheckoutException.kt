@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout/src/utils/error/error.ts (`PurseHeadlessCheckoutError`)
+// Same: typed codes on every failure.
+// Differs: a sealed hierarchy instead of one class with a code.
 package eu.purse.checkout
 
 import eu.purse.core.error.PurseErrorCode

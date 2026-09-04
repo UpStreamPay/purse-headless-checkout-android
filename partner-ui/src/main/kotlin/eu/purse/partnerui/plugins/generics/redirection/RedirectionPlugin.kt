@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/plugins/generics/redirection/index.ts
+// Same: /init at render, step_id + browser into /validate, token patched in.
+// Differs: partner and method come from the session, never hardcoded.
 package eu.purse.partnerui.plugins.generics.redirection
 
 import eu.purse.core.payload.ItemPayload

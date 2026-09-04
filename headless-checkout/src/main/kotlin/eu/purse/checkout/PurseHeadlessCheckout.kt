@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout/src/headless-checkout.ts + session/payment/payment.ts
+// Same: session, method list, split, submit, tokens, setSession, monitoring events.
+// Differs: Svelte stores → StateFlow; `host(item)` seam for coordinators; `awaitPaymentOutcome` for the app's return from a redirect.
 package eu.purse.checkout
 
 import android.util.Log

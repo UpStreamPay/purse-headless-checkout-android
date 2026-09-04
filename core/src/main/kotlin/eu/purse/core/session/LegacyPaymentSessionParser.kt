@@ -1,3 +1,6 @@
+// Web: packages/model session decode
+// Same: same JSON paths.
+// Differs: hand-written parser over org.json.
 package eu.purse.core.session
 
 import eu.purse.core.vault.CardBrand

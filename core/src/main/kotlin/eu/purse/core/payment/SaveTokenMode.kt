@@ -1,3 +1,6 @@
+// Web: packages/model `save_token_mode`
+// Same: ALWAYS / NEVER / PREFER / PREFER_NO and their defaults.
+// Differs: nothing.
 package eu.purse.core.payment
 
 /**

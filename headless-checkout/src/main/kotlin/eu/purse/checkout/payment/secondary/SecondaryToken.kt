@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout secondaries token shape
+// Same: balance, total, pan, name, expiry, take policy.
+// Differs: implements `SplitSource`; carries `saveTokenMode` for keep-this-card.
 package eu.purse.checkout.payment.secondary
 
 import eu.purse.checkout.payment.split.SplitSource

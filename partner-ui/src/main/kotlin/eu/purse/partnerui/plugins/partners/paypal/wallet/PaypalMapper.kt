@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/plugins/partners/paypal/wallet/index.ts
+// Same: /init body, order_id + step_id parsing, client_id from the session.
+// Differs: `isApprovalUrl` recognises the echoed approval URL.
 package eu.purse.partnerui.plugins.partners.paypal.wallet
 
 import eu.purse.core.api.PaymentApiException
