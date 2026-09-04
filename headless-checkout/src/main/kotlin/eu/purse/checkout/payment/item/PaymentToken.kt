@@ -47,6 +47,9 @@ data class PaymentToken(
 ) : PaymentItem(), PrimarySource {
 
     override val isSecondary: Boolean get() = false
+
+    /** The id of the [PrimaryMethod] this token belongs to (`"{partner}-{method}"`). */
+    val methodId: String get() = "${partner.wireValue}-${method.wireValue}"
     override fun withDisabled(disabled: DisabledState?) = copy(disabled = disabled)
 
     /**

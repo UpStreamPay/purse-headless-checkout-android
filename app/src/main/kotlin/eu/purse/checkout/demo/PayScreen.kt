@@ -224,11 +224,7 @@ private fun subtitle(controller: DemoController, item: PaymentItem): String = wh
 private fun ElementBody(controller: DemoController, item: PaymentItem) {
     val checkout = controller.checkout ?: return
     val listener = remember(item.id) { controller.listenerFor(item) }
-    val element = when (item) {
-        is PrimaryMethod -> rememberPaymentElement(checkout, item, listener)
-        is PaymentToken -> rememberPaymentElement(checkout, item, listener)
-        else -> return
-    }
+    val element = rememberPaymentElement(checkout, item, listener)
     LaunchedEffect(element) { controller.attachElement(element) }
 
     Column(Modifier.fillMaxWidth().padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {

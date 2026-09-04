@@ -41,6 +41,10 @@ import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.redirect.RedirectAction
 import eu.purse.checkout.confirmation.PaymentSessionStatus
 import eu.purse.checkout.monitoring.CheckoutEventBus
+import eu.purse.checkout.monitoring.CheckoutMonitoring
+import eu.purse.checkout.monitoring.monitoringPayload
+import eu.purse.checkout.simulation.LoanSimulator
+import eu.purse.checkout.wallet.WalletTokens
 import eu.purse.checkout.monitoring.CheckoutEventCode
 import eu.purse.checkout.monitoring.EventLevel
 import eu.purse.core.api.PaymentApiException
@@ -48,8 +52,6 @@ import eu.purse.core.api.WalletApiClient
 import eu.purse.core.datetime.DatetimeApiClient
 import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.datetime.ServerDatetimeChecker
-import eu.purse.core.monitoring.ApiCallMonitor
-import eu.purse.core.monitoring.MonitoringApiClient
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -197,20 +199,10 @@ class PurseHeadlessCheckout private constructor(
     private val _savedSecondaryTokens = MutableStateFlow(visibleSavedSecondaryTokens())
     val savedSecondaryTokens: StateFlow<List<SavedSecondaryToken>> = _savedSecondaryTokens.asStateFlow()
 
-    /** Wallet API access, when the widget data carried a `wallet_session`. */
-    private val walletClient: WalletApiClient? = params.walletSession?.let { wallet ->
-        WalletApiClient(
-            apiKey = params.apiKey,
-            walletApiRoot = params.environment.walletApiRoot,
-            ownerReference = wallet.ownerReference,
-            walletSessionId = wallet.sessionId,
-            merchantId = wallet.merchant,
-        )
-    }
+    /** Wallet API access and the wallet's own token list, when the widget data carried a `wallet_session`. */
+    private val wallet = WalletTokens(params)
 
-    /** The wallet's own token list — gates edit/delete/favorite (web's `ensureEditionCapability`). */
-    @Volatile
-    private var walletTokens: List<WalletApiClient.WalletToken> = emptyList()
+    private val loans = LoanSimulator(::apiClient, bus)
 
     /** Per-method save-token decisions — web's `registration` stores. */
     private val registrationByMethod = mutableMapOf<String, RegistrationState>()
@@ -258,7 +250,7 @@ class PurseHeadlessCheckout private constructor(
             CheckoutEventCode.HEADLESS_CHECKOUT_CREATE,
             // Web sends navigator.userAgent here; the platform itself travels on the message
             // envelope (`platform: android`), so this stays a genuine user agent.
-            payload = monitoringPayload("sessionType" to "v2", "user_agent" to androidUserAgent()),
+            payload = monitoringPayload("sessionType" to "v2", "user_agent" to CheckoutMonitoring.androidUserAgent()),
         )
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_SET_SESSION,
@@ -276,12 +268,10 @@ class PurseHeadlessCheckout private constructor(
         // Wallet session — fetch the shopper's token list once (web's `setWalletSession`); it only
         // gates management operations and syncs names/favorites, so a failure is reported but never
         // breaks the checkout.
-        if (walletClient != null) {
+        if (wallet.client != null) {
             scope.launch(Dispatchers.IO) {
                 try {
-                    val tokens = walletClient.getTokens()
-                    walletTokens = tokens
-                    syncWalletTokens(tokens)
+                    syncWalletTokens(wallet.fetch())
                     bus.post(
                         CheckoutEventCode.HEADLESS_CHECKOUT_SET_WALLET_SESSION,
                         payload = monitoringPayload("walletSessionId" to params.walletSession?.sessionId),
@@ -416,7 +406,7 @@ class PurseHeadlessCheckout private constructor(
             .toSet()
         val survivingTokenIds = previousItems
             .filterIsInstance<PaymentToken>()
-            .filter { "${it.partner.wireValue}-${it.method.wireValue}" in survivingMethodIds }
+            .filter { it.methodId in survivingMethodIds }
             .filter { token -> newSession.meansOfPayment.any { it is PaymentToken && it.id == token.id } }
             .map { it.id }
             .toSet()
@@ -470,7 +460,7 @@ class PurseHeadlessCheckout private constructor(
 
         refresh()
         _savedSecondaryTokens.value = visibleSavedSecondaryTokens()
-        syncWalletTokens(walletTokens)
+        syncWalletTokens(wallet.tokens)
         startExpiryWatchdog()
         runEligibilityChecks()
         resolveSavedSecondaryBalances()
@@ -616,8 +606,8 @@ class PurseHeadlessCheckout private constructor(
      * wallet session and the token present in the wallet. Blocking network; call off main.
      */
     suspend fun editToken(token: PaymentToken, name: String) {
-        val client = requireWallet()
-        requireInWallet(token)
+        val client = wallet.requireClient()
+        wallet.requireToken(token.id)
         validateTokenLabel(name, excludingTokenId = token.id)
         client.editTokenName(token.id, name)
         updateTokenItem(token.id) { it.copy(name = name) }
@@ -636,12 +626,12 @@ class PurseHeadlessCheckout private constructor(
      * the split and removes it from [paymentTokens].
      */
     suspend fun deleteToken(token: PaymentToken) {
-        val client = requireWallet()
-        requireInWallet(token)
+        val client = wallet.requireClient()
+        wallet.requireToken(token.id)
         client.deleteToken(token.id)
         if (splitter.primaryMethod?.id == token.id) splitter.setPrimary(null)
         meansOfPayment = meansOfPayment.filterNot { it.id == token.id }
-        walletTokens = walletTokens.filterNot { it.id == token.id }
+        wallet.forget(token.id)
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_TOKEN_DELETE,
             payload = monitoringPayload(
@@ -658,8 +648,8 @@ class PurseHeadlessCheckout private constructor(
      * reverted if the wallet call fails.
      */
     suspend fun setTokenFavorite(token: PaymentToken) {
-        val client = requireWallet()
-        requireInWallet(token)
+        val client = wallet.requireClient()
+        wallet.requireToken(token.id)
         val newFavorite = !token.favorite
         updateTokenItem(token.id) { it.copy(favorite = newFavorite) }
         bus.post(
@@ -673,9 +663,7 @@ class PurseHeadlessCheckout private constructor(
         )
         try {
             client.setAsFavorite(token.id, newFavorite)
-            val tokens = client.getTokens()
-            walletTokens = tokens
-            syncWalletTokens(tokens)
+            syncWalletTokens(wallet.fetch())
         } catch (e: Exception) {
             updateTokenItem(token.id) { it.copy(favorite = !newFavorite) }
             throw e
@@ -684,50 +672,24 @@ class PurseHeadlessCheckout private constructor(
 
     /** Delete every wallet token — web's `deleteAllTokens()`. */
     suspend fun deleteAllTokens() {
-        val client = requireWallet()
+        val client = wallet.requireClient()
         client.deleteAllTokens()
         val tokenIds = visibleTokens().map { it.id }.toSet()
         if (splitter.primaryMethod?.id in tokenIds) splitter.setPrimary(null)
         // Saved gift cards are wallet tokens too — gone with the rest, and out of the split.
         meansOfPayment.filterIsInstance<SavedSecondaryToken>().forEach { splitter.clearSplit(it.asSecondaryToken()) }
         meansOfPayment = meansOfPayment.filterNot { it is PaymentToken || it is SavedSecondaryToken }
-        walletTokens = emptyList()
+        wallet.clear()
         bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_DELETE_ALL_TOKENS)
         refresh()
     }
 
-    private fun requireWallet(): WalletApiClient =
-        walletClient ?: throw PurseCheckoutException.WalletOperationFailed(
-            "no wallet_session was attached to this checkout",
-            PurseErrorCode.MISSING_WALLET_SESSION,
-        )
-
-    private fun requireInWallet(token: PaymentToken) {
-        if (walletTokens.none { it.id == token.id }) {
-            throw PurseCheckoutException.WalletOperationFailed(
-                "token ${token.id} is not present in the wallet",
-                PurseErrorCode.MISSING_TOKEN,
-            )
-        }
-    }
-
-    /** Web's token-name rules: `^[a-zA-Z0-9\s]{1,25}$` + unique across saved tokens. */
+    /** Web's token-name rules, checked against the session's tokens and the wallet's. */
     private fun validateTokenLabel(name: String, excludingTokenId: String?) {
-        if (!TOKEN_LABEL_REGEX.matches(name)) {
-            throw PurseCheckoutException.WalletOperationFailed(
-                "invalid token name '$name' — 1-25 alphanumeric/space characters",
-                PurseErrorCode.INVALID_TOKEN_NAME,
-            )
-        }
-        val existsInSession = visibleTokens().any { it.id != excludingTokenId && it.name == name } ||
-            visibleSavedSecondaryTokens().any { it.id != excludingTokenId && it.name == name }
-        val existsInWallet = walletTokens.any { it.id != excludingTokenId && it.name == name }
-        if (existsInSession || existsInWallet) {
-            throw PurseCheckoutException.WalletOperationFailed(
-                "a saved card is already named '$name'",
-                PurseErrorCode.TOKEN_NAME_EXISTS,
-            )
-        }
+        val taken = (visibleTokens().map { it.id to it.name } + visibleSavedSecondaryTokens().map { it.id to it.name })
+            .filter { (id, _) -> id != excludingTokenId }
+            .map { (_, tokenName) -> tokenName }
+        wallet.validateLabel(name, taken, excludingTokenId)
     }
 
     /** Overlay the wallet's names/favorites onto the session's token items (web's subscription). */
@@ -872,8 +834,8 @@ class PurseHeadlessCheckout private constructor(
      * [editToken]: wallet session required, token present in the wallet, label valid and unique.
      */
     suspend fun editToken(token: SavedSecondaryToken, name: String) {
-        val client = requireWallet()
-        requireWalletToken(token.id)
+        val client = wallet.requireClient()
+        wallet.requireToken(token.id)
         validateTokenLabel(name, excludingTokenId = token.id)
         client.editTokenName(token.id, name)
         updateSavedSecondary(token.id) { it.copy(name = name) }
@@ -892,12 +854,12 @@ class PurseHeadlessCheckout private constructor(
      * clears it from the split and removes it from [savedSecondaryTokens].
      */
     suspend fun deleteToken(token: SavedSecondaryToken) {
-        val client = requireWallet()
-        requireWalletToken(token.id)
+        val client = wallet.requireClient()
+        wallet.requireToken(token.id)
         client.deleteToken(token.id)
         splitter.clearSplit(token.asSecondaryToken())
         meansOfPayment = meansOfPayment.filterNot { it.id == token.id }
-        walletTokens = walletTokens.filterNot { it.id == token.id }
+        wallet.forget(token.id)
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_TOKEN_DELETE,
             payload = monitoringPayload(
@@ -980,15 +942,6 @@ class PurseHeadlessCheckout private constructor(
             if (it is SavedSecondaryToken && it.id == tokenId) transform(it) else it
         }
         _savedSecondaryTokens.value = visibleSavedSecondaryTokens()
-    }
-
-    private fun requireWalletToken(tokenId: String) {
-        if (walletTokens.none { it.id == tokenId }) {
-            throw PurseCheckoutException.WalletOperationFailed(
-                "token $tokenId is not present in the wallet",
-                PurseErrorCode.MISSING_TOKEN,
-            )
-        }
     }
 
     /** The saved gift cards, minus filtered states — what [savedSecondaryTokens] renders. */
@@ -1362,64 +1315,13 @@ class PurseHeadlessCheckout private constructor(
      * answered without usable schedule data.
      * @throws PaymentApiException on network / HTTP failure.
      */
-    suspend fun simulateLoan(method: PrimaryMethod, product: LoanProduct): LoanSimulation {
-        requireSimulable(method, product)
-        return withContext(Dispatchers.IO) {
-            try {
-                apiClient().getSimulation(method.partner, method.method, product)
-            } catch (e: PaymentApiException) {
-                throw e.asLoanSimulationFailureOrSelf()
-            }
-        }
-    }
+    suspend fun simulateLoan(method: PrimaryMethod, product: LoanProduct): LoanSimulation = loans.simulate(method, product)
 
     /**
      * Every schedule the partner offers for [product] (`…/simulation/…/multi`) — web's
-     * `getSimulationMulti`. Same preconditions and errors as [simulateLoan]; candidates the API
-     * returns without schedule data are skipped, so the list may be empty.
+     * `getSimulationMulti`. Same preconditions and errors as [simulateLoan]; the list may be empty.
      */
-    suspend fun simulateLoans(method: PrimaryMethod, product: LoanProduct): List<LoanSimulation> {
-        requireSimulable(method, product)
-        return withContext(Dispatchers.IO) {
-            try {
-                apiClient().getSimulationMulti(method.partner, method.method, product)
-            } catch (e: PaymentApiException) {
-                throw e.asLoanSimulationFailureOrSelf()
-            }
-        }
-    }
-
-    private fun requireSimulable(method: PrimaryMethod, product: LoanProduct) {
-        if (!method.simulable) throw PurseCheckoutException.MethodNotSimulable(method.id)
-        // Web's monitoring proxy posts HEADLESS_CHECKOUT_METHOD_LOAN_SIM with the product on every
-        // simulateLoan call (`monitoringConfigs.ts`).
-        bus.post(
-            CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_LOAN_SIM,
-            payload = monitoringPayload(
-                "partner" to method.partner.wireValue,
-                "method" to method.method.wireValue,
-                "amount" to product.amount.toPlainString(),
-                "currencyCode" to product.currencyCode,
-            ),
-        )
-    }
-
-    /**
-     * Web's `getSimulation` reads the JSON body whatever the HTTP status and throws
-     * `INVALID_LOAN_SIMULATION` whenever it holds no `plugin_result` — so a partner that answers
-     * `409 EMPTY_SIMULATION` (Riverty when the method isn't offered for this order) or any other
-     * API-level refusal surfaces under that one dedicated code, with the API's own `errorCode` kept
-     * on the cause. Only a transport failure (no status at all) stays a raw [PaymentApiException].
-     */
-    private fun PaymentApiException.asLoanSimulationFailureOrSelf(): Exception =
-        if (errorCode == PaymentApiClient.INVALID_LOAN_SIMULATION || status != null) {
-            PurseCheckoutException.LoanSimulationFailed(
-                message ?: "invalid loan simulation${errorCode?.let { " ($it)" } ?: ""}",
-                this,
-            )
-        } else {
-            this
-        }
+    suspend fun simulateLoans(method: PrimaryMethod, product: LoanProduct): List<LoanSimulation> = loans.simulateAll(method, product)
 
     private fun apiClient(): PaymentApiClient =
         PaymentApiClient(params.apiKey, paymentApiRoot, params.entityId, session.id)
@@ -1462,7 +1364,7 @@ class PurseHeadlessCheckout private constructor(
             // Monitoring — only against a real checker (i.e. never from unit tests): route the
             // event bus's batches to the monitoring API with this session's context attached.
             if (datetimeChecker == null) {
-                installMonitoring(params, sessionId = params.paymentSession.id)
+                CheckoutMonitoring.install(params, sessionId = params.paymentSession.id, version = VERSION)
             }
             return PurseHeadlessCheckout(
                 params, session, apiRoot, hooks, options, checker, watchdogIntervalMs, lockedEnvironment,
@@ -1492,95 +1394,5 @@ class PurseHeadlessCheckout private constructor(
 
         /** SDK version stamped onto every monitoring message — web's `version` extra. */
         const val VERSION = "0.1.0"
-
-        /**
-         * The process's HTTP user agent (`Dalvik/2.1.0 (Linux; U; Android 14; Pixel 8 Build/…)`) —
-         * what the runtime sends itself, available without a Context. Falls back to `"android"`.
-         */
-        internal fun androidUserAgent(): String =
-            System.getProperty("http.agent")?.takeIf { it.isNotBlank() } ?: "android"
-
-        @Volatile
-        private var backgroundFlushInstalled = false
-
-        /**
-         * Point the singleton [CheckoutEventBus] at the monitoring API for this session — web's
-         * `init` building the `ApiLogger`, patching extras and handing `sendLogs` to the bus —
-         * plus the Android analog of `beforeunload`: flush when the app goes to background.
-         */
-        private fun installMonitoring(params: PurseSessionParams, sessionId: String) {
-            val logger = MonitoringApiClient(
-                apiKey = params.apiKey,
-                monitoringApiRoot = params.environment.monitoringApiRoot,
-                envWireValue = params.environment.wireValue,
-            )
-            logger.patchExtras(
-                entityId = params.entityId,
-                paymentSessionId = sessionId,
-                version = VERSION,
-                // `wrapper` keeps web's meaning — which product embeds the SDK (`direct` / `dropin`);
-                // a merchant integrating this SDK is `direct`. The platform is the envelope's own field.
-                wrapper = "direct",
-            )
-            val bus = CheckoutEventBus.getInstance()
-            bus.setLogProcessor { batch -> logger.sendLogs(batch.map { it.toJson() }) }
-
-            ApiCallMonitor.listener = object : ApiCallMonitor.Listener {
-                override fun onCallStart(method: String, path: String) {
-                    bus.post(
-                        CheckoutEventCode.HEADLESS_CHECKOUT_PARTNER_API_CALL_START,
-                        EventLevel.NETWORK,
-                        monitoringPayload("call" to method, "path" to path),
-                    )
-                }
-
-                override fun onCallEnd(method: String, path: String, durationMs: Long, success: Boolean) {
-                    bus.post(
-                        CheckoutEventCode.HEADLESS_CHECKOUT_PARTNER_API_CALL_END,
-                        EventLevel.PERFORMANCE,
-                        monitoringPayload(
-                            "call" to method,
-                            "path" to path,
-                            "durationMs" to durationMs,
-                            "success" to success,
-                        ),
-                    )
-                }
-            }
-
-            installBackgroundFlush(bus)
-        }
-
-        /**
-         * Flush the analytics queue when the whole app goes to background — the Android analog of
-         * web's `beforeunload` + `sendBeacon`. Guarded: `ProcessLifecycleOwner` needs a real
-         * Android process (androidx startup), so on the JVM test classpath this quietly no-ops.
-         */
-        private fun installBackgroundFlush(bus: CheckoutEventBus) {
-            if (backgroundFlushInstalled) return
-            runCatching {
-                val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-                mainHandler.post {
-                    runCatching {
-                        androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.addObserver(
-                            androidx.lifecycle.LifecycleEventObserver { _, event ->
-                                if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
-                                    bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_PAGE_UNLOAD)
-                                    bus.flush()
-                                }
-                            },
-                        )
-                    }
-                }
-                backgroundFlushInstalled = true
-            }
-        }
-
-        /** A monitoring payload from non-null pairs. */
-        internal fun monitoringPayload(vararg pairs: Pair<String, Any?>): JSONObject =
-            JSONObject().apply { pairs.forEach { (key, value) -> if (value != null) put(key, value) } }
-
-        /** Web's token-name rule (`validateTokenName`). */
-        private val TOKEN_LABEL_REGEX = Regex("^[a-zA-Z0-9\\s]{1,25}$")
     }
 }
