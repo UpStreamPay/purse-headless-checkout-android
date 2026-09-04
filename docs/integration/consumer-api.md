@@ -1,7 +1,7 @@
 # Consumer API Reference — Headless Checkout (Android)
 
-Audience: a merchant engineer building a checkout UI on top of this SDK. This page documents the
-full **public** surface — every function, reactive property ("event"), and callback a host app can
+Audience: a merchant engineer building a checkout UI on top of this SDK. Start with
+[getting started](getting-started.md); this page documents the full **public** surface — every function, reactive property ("event"), and callback a host app can
 call or observe — module by module. It does not cover internals (plugin protocol classes, mappers,
 splitter math); see [Headless checkout architecture](../architecture/headless-checkout.md) for that.
 
@@ -110,8 +110,8 @@ Same session id → ignored with a warning, as on web. **Throws** `PurseCheckout
 
 Keying UI on `(item.id, generation)` is what makes "keep what is still valid" work on the screen:
 `rememberPaymentElement` already does it, so an unchanged card keeps its SecureFields form and
-whatever the shopper typed, while a changed method gets a fresh element. Recipe 19 shows the
-expired-session recovery loop.
+whatever the shopper typed, while a changed method gets a fresh element. See
+[recipes §15](recipes.md#15-refresh-the-session).
 
 ---
 
@@ -524,7 +524,7 @@ French. Styling comes from `PluginOptions.theme` (`PurseTheme`): the `input*` sc
 SecureFields' `VaultStyles`, `label*` and `helperText*` reach the texts around them, `global*` is the
 base every scope falls back to and `gap` the spacing between fields. `PurseTheme.resolve()` applies
 web's `Theme.build()` order — scope variant → scope → global variant → global — over web's default
-theme, so a partial theme never leaves a hole. See recipe 16.
+theme, so a partial theme never leaves a hole. See [recipes §13](recipes.md#13-locale-texts-theme).
 
 | Member | Signature | Notes |
 |---|---|---|
