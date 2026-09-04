@@ -12,10 +12,10 @@ fields themselves.
 | Partner / method | **any** partner / `creditcard` whose `configurations.vault.vendor` is `purse` |
 | Family | **vault** — `PluginRegistry.registerVault(VaultVendor.PURSE)`, keyed by vault vendor, not `(partner, method)`, and resolved **first** (before generic/partner) |
 | Native SDK | `eu.purse.securefields` (`SecureFieldsAndroid`, `VaultField`) wrapped by the SDK's `PurseCardForm` |
-| UI surface | **Compose-first** — `rememberCardCoordinator(...)`, no `onCreate` construction caveat |
+| UI surface | Compose — `rememberCardCoordinator(host, listener)` + `PurseCardForm`, or simply `rememberPaymentElement` |
 | Native step vs `/validate` | tokenize **before**, then `/init` and `/validate` back to back |
 | Gates `isPaymentFulfilled`? | **Yes** — the only plugin that does |
-| Saved cards | **Yes** — `cardHost(token)`: a CVV-only form when `token.requiresCvv` (`Mode.TOKEN_CVV`), no form behind the no-CVV gates (`Mode.TOKEN_NO_CVV`) |
+| Saved cards | **Yes** — `host(token)`: a CVV-only form when `token.requiresCvv` (`Mode.TOKEN_CVV`), no form behind the no-CVV gates (`Mode.TOKEN_NO_CVV`) |
 | Manifest work | None (3-D Secure uses the Activity `:partner-ui` ships) |
 
 Because the vault family resolves first, this plugin serves *any* partner's `creditcard` as long as
@@ -26,10 +26,10 @@ the session marks it Purse-vaulted — `CardPlugin(partner)` carries whichever p
 
 | Source | Read as | Used for |
 |---|---|---|
-| session-level `vault.vendor_front_data.purse.tenant_id` | `CardHost.vaultTenantId` | SecureFields' `tenantId` |
-| per-method `configurations.vault.supported_brands` | `CardHost.supportedBrands` (`List<CardBrand>`) | which schemes SecureFields accepts; empty falls back to `[VISA, MASTERCARD, CB]` |
+| session-level `vault.vendor_front_data.purse.tenant_id` | `PartnerUiContext.vaultTenantId` | SecureFields' `tenantId` |
+| per-method `configurations.vault.supported_brands` | `PartnerUiContext.configuration?.vault?.supportedBrands` (`List<CardBrand>`) | which schemes SecureFields accepts; empty falls back to `[VISA, MASTERCARD, CB]` |
 | per-method `configurations.vault.vendor` | plugin resolution | must be `purse` for this plugin to be chosen |
-| session `redirection` | `CardHost.redirectionReturnUrl` | the 3-D Secure WebView's "known terminal page" hint |
+| session `redirection` | `PluginHost.redirectionReturnUrl` | the 3-D Secure WebView's "known terminal page" hint |
 
 Note the two `vault` blocks are **different**: the session-level one carries the tenant, the
 per-method one the brands.
@@ -114,11 +114,10 @@ sequenceDiagram
    SecureFields instance on the `host` object, so building the host inline recreates the form — and
    loses whatever's been typed — on every recomposition:
    ```kotlin
-   val host = remember(method.id) { checkout.cardHost(method) }   // NOT checkout.cardHost(method)
-   val coordinator = rememberCardCoordinator(host, controller.cardListener)
+   val host = remember(method.id) { checkout.host(method) }   // NOT checkout.host(method)
+   val coordinator = rememberCardCoordinator(host, listener)
    ```
-   No "construct in `onCreate`" caveat, though: `rememberLauncherForActivityResult` manages the 3-D
-   Secure launcher's lifecycle, and `rememberSecureFields` destroys the SDK on disposal.
+   `rememberSecureFields` destroys the SDK on disposal; `rememberPaymentElement` does the `remember` for you.
 6. **Three brand vocabularies, converted twice.** The session's `CardBrand`
    (`vault.supported_brands`) → SecureFields' own `Brand` (its BIN-lookup vocabulary) → the Payment
    API's gateway scheme string for `payment_data.card.selected_network` (e.g. `CB` → `"CARTE_BANCAIRE"`).
@@ -132,7 +131,7 @@ sequenceDiagram
    `card.selected_network` inside — exactly web's `submitForResult` shape.
 9. **Two separate environment enums.** `PurseEnvironment` (Payment API) maps to SecureFields'
    `VaultEnvironment`; `DEVELOPMENT` maps to `SANDBOX`, since the vault has no development target.
-10. **A saved card runs through the same coordinator, in one of two token modes.** `cardHost(token)`
+10. **A saved card runs through the same coordinator, in one of two token modes.** `host(token)`
     hands the coordinator the `PaymentToken` as `PartnerUiContext.token` (web's `token` attribute),
     and `CardCoordinator.Mode.of(token)` decides the shape — the port of web's `isNoCVV` +
     `cvvOnly` hosted fields:
@@ -155,8 +154,8 @@ sequenceDiagram
 
 ```kotlin
 @Composable
-fun CardPaymentForm(checkout: PurseHeadlessCheckout, method: PrimaryMethod, listener: CardCoordinator.Listener) {
-    val host = remember(method.id) { checkout.cardHost(method) }
+fun CardPaymentForm(checkout: PurseHeadlessCheckout, method: PrimaryMethod, listener: PaymentElementListener) {
+    val host = remember(method.id) { checkout.host(method) }
     val coordinator = rememberCardCoordinator(host, listener)
 
     // The SDK's form: labels, help texts, error messages and PluginOptions.theme around the secure
@@ -176,8 +175,8 @@ conditional:
 
 ```kotlin
 @Composable
-fun SavedCardForm(checkout: PurseHeadlessCheckout, token: PaymentToken, listener: CardCoordinator.Listener) {
-    val host = remember(token.id) { checkout.cardHost(token) }          // selects TOKEN_CVV / TOKEN_NO_CVV
+fun SavedCardForm(checkout: PurseHeadlessCheckout, token: PaymentToken, listener: PaymentElementListener) {
+    val host = remember(token.id) { checkout.host(token) }          // selects TOKEN_CVV / TOKEN_NO_CVV
     val coordinator = rememberCardCoordinator(host, listener)
 
     if (coordinator.mode.rendersForm) {                                   // TOKEN_CVV: just the CVV field
@@ -209,7 +208,7 @@ either way.
 | Pay button never enables | The form isn't valid — SecureFields reports `hasErrors` until every configured field is valid |
 | `PurseCheckoutException.ItemNotFulfilled` | `submitPayment()` called directly while the card form is incomplete — or a saved token that requires a CVV was selected and its CVV field never validated (or was never rendered) |
 | `PurseCheckoutException.ValidateFailed: client-side validation failed…` | No vault token collected — tokenization never succeeded (for a `TOKEN_CVV` saved card: the CVV-only tokenization) |
-| `IllegalArgumentException: … cannot host a card form` | `cardHost(item)` called with a secondary method — only the card `PrimaryMethod` or a `PaymentToken` can |
+| `IllegalArgumentException: … cannot be driven by a plugin coordinator` | `host(item)` called with a secondary method or a saved gift card — only a `PrimaryMethod` or a `PaymentToken` can |
 | `PaymentApiException: creditcard init not successful` | `/init` returned a non-`SUCCESS` state |
 | Form rebuilds and loses input on every keystroke elsewhere | The `host` wasn't `remember`ed — specificity 5 |
 | SecureFields fails to initialize | Blank `vaultTenantId` — the session carries no `vault.vendor_front_data.purse.tenant_id` |
@@ -221,8 +220,8 @@ either way.
 |---|---|
 | `CardPlugin.kt` | `validateUi`, `preValidation` (`/init` + payload) |
 | `CardMapper.kt` | `/init` body, `/init` parsing, `/validate` `payment_data` |
-| `CardCoordinator.kt` | `rememberCardCoordinator`, SecureFields listeners, fulfillment reporting, tokenize + submit, redirect, brand mapping |
-| `CardHost.kt` / `CardInit.kt` | Seam + value type |
+| `CardCoordinator.kt` | `rememberCardCoordinator`, SecureFields listeners, fulfillment reporting, tokenize, brand mapping (the shared submit/redirect flow lives in `PaymentCoordinator`) |
+| `CardForm.kt` | `PurseCardForm` — labels, help texts and errors around the secure fields |
 
 Web reference: `usp-widget/packages/partner-ui/src/plugins/vaults/purse/creditcard/` (bridge) and
 `plugins/generics/hostedfields/` (the form/lifecycle half).

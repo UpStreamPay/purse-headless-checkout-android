@@ -9,7 +9,7 @@ payment* and lets a merchant build their own checkout UI on top. It mirrors the 
 | Module | Package | Mirrors web | Responsibility |
 |---|---|---|---|
 | `:core` | `eu.purse.core` | `sdk` + `model` + `common` | Payment API client, environment targets, the `Partner`/`Method`/`VaultVendor`/`CardBrand` enums, `MethodConfiguration`, the raw `LegacyPaymentSession` DTO + its base64 `widget.data` decode, and the typed `ItemPayload`/`ValidationResult`. No orchestration. |
-| `:partner-ui` | `eu.purse.partnerui` + `.redirect` + `.plugins.generics.googlepay` + `.plugins.generics.redirection` + `.plugins.partners.klarna` + `.plugins.partners.paypal.wallet` + `.plugins.vaults.purse.creditcard` | `partner-ui` (contract + `plugins/generics/googlepay` + `plugins/generics/redirection` + `plugins/partners/klarna-installments` + `plugins/partners/paypal/wallet` + `plugins/vaults/purse/creditcard`) | The plugin lifecycle **contract** — `PartnerUiPlugin`, `PartnerUiContext`, `PluginRegistry` (with runtime `register`/`registerVault`/`registerGeneric`) — the **shared redirect machinery** (`eu.purse.partnerui.redirect`: `RedirectionResolver` + the in-app-WebView return Activity, a sibling of `plugins/` because all five plugins use it) — **and** the concrete **Google Pay (Ingenico/Worldline)**, **Klarna**, **PayPal (wallet)**, **Purse vault credit-card** and **generic redirection template** plugins living in the same module: pure protocol plus, respectively, the Play-Services sheet coordinator, the native `KlarnaPaymentView` coordinator, a coordinator driving PayPal's own browser switch, a Compose-first coordinator wrapping the SecureFields Android SDK, and a coordinator that does nothing but `/init` → `/validate` → follow the redirect. Registered by default (`PluginRegistry`'s own `init` block). Each reaches `:headless-checkout` only through the `GooglePayHost` / `KlarnaHost` / `PaypalHost` / `CardHost` / `RedirectionHost` interface it defines — implemented by `PurseHeadlessCheckout.googlePayHost` / `.klarnaHost` / `.paypalHost` / `.cardHost` / `.redirectionHost` — so the module dependency never points from `:partner-ui` to `:headless-checkout`. |
+| `:partner-ui` | `eu.purse.partnerui` + `.redirect` + `.plugins.generics.googlepay` + `.plugins.generics.redirection` + `.plugins.partners.klarna` + `.plugins.partners.paypal.wallet` + `.plugins.vaults.purse.creditcard` | `partner-ui` (contract + `plugins/generics/googlepay` + `plugins/generics/redirection` + `plugins/partners/klarna-installments` + `plugins/partners/paypal/wallet` + `plugins/vaults/purse/creditcard`) | The plugin lifecycle **contract** — `PartnerUiPlugin`, `PartnerUiContext`, `PluginRegistry` (with runtime `register`/`registerVault`/`registerGeneric`) — the **shared redirect machinery** (`eu.purse.partnerui.redirect`: `RedirectionResolver` + the in-app-WebView return Activity, a sibling of `plugins/` because all five plugins use it) — **and** the concrete **Google Pay (Ingenico/Worldline)**, **Klarna**, **PayPal (wallet)**, **Purse vault credit-card** and **generic redirection template** plugins living in the same module: pure protocol plus, respectively, the Play-Services sheet coordinator, the native `KlarnaPaymentView` coordinator, a coordinator driving PayPal's own browser switch, a Compose-first coordinator wrapping the SecureFields Android SDK, and a coordinator that does nothing but `/init` → `/validate` → follow the redirect. Registered by default (`PluginRegistry`'s own `init` block). Each reaches `:headless-checkout` only through the `PluginHost` interface — implemented by `PurseHeadlessCheckout.host(item)` — so the module dependency never points from `:partner-ui` to `:headless-checkout`. |
 | `:headless-checkout` | `eu.purse.checkout` | `headless-checkout` | `PurseHeadlessCheckout`: session decode, the built payment model, the splitter, and the plugin-driven "create payment" pipeline. |
 | `:app` | `eu.purse.checkout.demo` | playground | Smoke test: mint a session via alfred → `init` → print methods/split; drives Google Pay, PayPal, Klarna, or a Purse-vaulted card. |
 
@@ -234,7 +234,7 @@ Two things set it apart:
   then the `/validate` payload built from the vault token the coordinator collected. Web makes the same
   two calls in the same order, just earlier (at `onSessionSet`).
 - **It gates fulfillment.** SecureFields owns the form state web models in `final-form` and emits it as
-  `onFormValid(hasErrors)`, so the coordinator reports `false` through `CardHost.setFulfilled` at mount,
+  `onFormValid(hasErrors)`, so the coordinator reports `false` through `PluginHost.setFulfilled` at mount,
   mirrors every change, and refuses to tokenize an invalid form — which is what keeps
   `isPaymentFulfilled` `false` and `submitPayment` throwing `ItemNotFulfilled` until the card is
   actually filled in (see the split step above). `CardPlugin.validateUi` is the last line of defence:
@@ -299,7 +299,7 @@ process-death safety); BNPL loan simulation (`PrimaryMethod.simulable` off the `
 dates — and the `METHOD_IS_NOT_SIMULABLE` / `INVALID_LOAN_SIMULATION` codes).
 
 Since then (SDK-12216): **CVV re-entry on a saved card** — `PaymentToken.requiresCvv` (the inverse
-of web's no-CVV gates) arms the per-item fulfillment gate at `setPrimaryToken`, `cardHost(token)`
+of web's no-CVV gates) arms the per-item fulfillment gate at `setPrimaryToken`, `host(token)`
 puts the card coordinator in `CardCoordinator.Mode.TOKEN_CVV`, which renders a CVV-only
 SecureFields form (`securefields-android` ≥ 1.4.0 omits the `card` object when no PAN field is
 mounted), and the resulting `vault_vendor_token_id` rides alongside `payment_data.token` on
@@ -314,7 +314,7 @@ CVV question: a non-card token's `requiresCvv` is always `false`, `setPrimaryTok
 it is payable at selection — web's `hasUI()` returns `false` for a paypal or redirection-template
 token before any no-CVV gate is consulted. `PaypalPlugin.preValidation` with a `token` runs the
 pay-now `/init` itself and sends `payment_data.token` + the init's `step_id` (web's token-mode
-`initSession` + `patchItemPayloadWithToken`); `PaypalCoordinator.submit` on a `paypalHost(token)`
+`initSession` + `patchItemPayloadWithToken`); `PaypalCoordinator.submit` on a `host(token)`
 skips the approval and captures straight away; `rememberPaymentElement(checkout, token)` resolves the
 paypal (and redirection) plugin for a token with `hasUi = false`. `PayToken.patchPaymentData` is the
 one shared `patchItemPayloadWithToken` the card, redirection and PayPal plugins now all use.

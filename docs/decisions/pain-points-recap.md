@@ -95,10 +95,9 @@ rather than one.
   merchant integrating **both** a View-based primary (Google Pay/Klarna) and the card plugin needs
   a Compose entry point somewhere in an otherwise View-based app (this repo's own demo does it via a
   single `ComposeView` embedded in its XML layout) — one more piece of integration surface web
-  merchants never have to think about. Upside: Compose's `rememberLauncherForActivityResult` sidesteps
-  the "construct in `onCreate`, before `STARTED`" lifecycle rule `GooglePayCoordinator`/
-  `KlarnaCoordinator` both carry — so it's not a strictly worse integration model, just a
-  **different** one, coexisting with the other two rather than replacing them.
+  merchants never have to think about. Since the KISS pass every coordinator is Compose-only
+  (`remember*Coordinator`, Compose-managed launchers), so there is one integration model rather than
+  two coexisting ones.
 
 ---
 

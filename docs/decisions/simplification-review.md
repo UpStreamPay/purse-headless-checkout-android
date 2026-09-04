@@ -1,5 +1,9 @@
 # Simplification review (KISS) — 2026-09-04
 
+**Status (2026-09-04): applied on `refactor/kiss-simplification`**, one commit per finding. Kept on
+purpose: `PluginRegistry.disable` / `enable` (documented, tested, cheap). Finding 8's headers are in;
+the KDoc trim was applied to every file the refactor touched, not yet to the rest.
+
 Context: the team is not native-first, ~36k lines were added in the last month, and the codebase
 has started to feel owned by its history rather than by us. This is an inventory of where the
 Android SDK is more complicated than it needs to be, ranked by payoff, with the concrete change

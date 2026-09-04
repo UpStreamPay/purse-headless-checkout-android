@@ -15,7 +15,7 @@ instead of web's `Klarna.Payments` JS SDK.
 | UI surface | native `KlarnaPaymentView` inflated into a `ViewGroup` you own |
 | Native step vs `/validate` | **`authorize()` runs AFTER `/validate`**, from inside `postValidation` — the plugin family's biggest asymmetry |
 | Gates `isPaymentFulfilled`? | No — readiness is "the widget loaded", reported via `Listener.onReady` |
-| Lifecycle caveat | `KlarnaCoordinator` **must be constructed in the Activity's `onCreate`**, and the container `ViewGroup` it captures is that same instance's |
+| Obtain with | `rememberKlarnaCoordinator(listener)`, then set `container` before `prepare` — or simply `rememberPaymentElement` |
 | Manifest work | **Yes** — you must declare a `singleTask` deep link, see below |
 
 ## What `/init` must return
@@ -52,7 +52,7 @@ sequenceDiagram
     participant Ck as PurseHeadlessCheckout
     participant Rd as RedirectionCheckoutActivity
 
-    App->>Co: prepare(checkout.klarnaHost(item, returnUrl))
+    App->>Co: prepare(checkout.host(item), returnUrl)
     Co->>Pl: buildRequest(context)
     Pl->>Api: POST /init
     Api-->>Pl: logs.klarna_client_token + step_id
@@ -141,22 +141,20 @@ it:
 …and passes the matching URL:
 
 ```kotlin
-class MainActivity : ComponentActivity() {
-    private val klarnaContainer = FrameLayout(this)      // hosted via AndroidView in Compose
-    private lateinit var klarna: KlarnaCoordinator
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        klarna = KlarnaCoordinator(this, klarnaContainer, listener)   // MUST be here
-    }
+@Composable
+fun KlarnaRow(checkout: PurseHeadlessCheckout, item: PrimaryMethod, listener: PaymentElementListener) {
+    val coordinator = rememberKlarnaCoordinator(listener)
+    val returnUrl = "${LocalContext.current.packageName}.klarna://return"
+    // The widget inflates into a real ViewGroup: prepare once the container exists.
+    AndroidView(factory = { context ->
+        FrameLayout(context).also { coordinator.container = it; coordinator.prepare(checkout.host(item), returnUrl) }
+    })
+    Button(onClick = { coordinator.submit() }) { Text("Pay with Klarna") }   // after onReady(true)
 }
-
-// when the Klarna row is selected — not before; an unselected row does no /init work
-klarna.prepare(checkout.klarnaHost(item, "$packageName.klarna://return"))
-
-// in your Pay button, after Listener.onReady(true)
-klarna.submit()
 ```
+
+Compose this only when the Klarna row is selected — an unselected row does no `/init` work.
+`rememberPaymentElement(checkout, item, listener)` does exactly this.
 
 ## Outcomes
 
@@ -190,7 +188,6 @@ shopper able to pick another method instead of showing a failure screen.
 |---|---|
 | `KlarnaPlugin.kt` | `buildRequest` (`/init`), `preValidation` (`step_id` only), `postValidation` (`authorize()`), `KlarnaAuthorize`, `KlarnaAuthorizationDeclined` |
 | `KlarnaMapper.kt` | `/init` body, client-token + `step_id` parsing, `PAYMENT_METHOD_CATEGORY` |
-| `KlarnaCoordinator.kt` | Widget lifecycle, `authorize`/`finalize` continuation, submit, redirect, JWT logging |
-| `KlarnaHost.kt` / `KlarnaConfig.kt` / `KlarnaRequest.kt` | Seam + value types |
+| `KlarnaCoordinator.kt` | Widget lifecycle, `authorize`/`finalize` continuation, JWT logging (the shared submit/redirect flow lives in `PaymentCoordinator`) |
 
 Web reference: `usp-widget/packages/partner-ui/src/plugins/partners/klarna-installments/`.

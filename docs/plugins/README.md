@@ -33,14 +33,12 @@ unit-testable and Play-Services/Klarna/SecureFields types never leak into `:head
 | Half | Type | Knows about |
 |---|---|---|
 | **Protocol** | `XxxPlugin : PartnerUiPlugin` + `XxxMapper` | JSON only — `/init` bodies, `/validate` payloads, response parsing |
-| **Interactive** | `XxxCoordinator` (+ `XxxRequest`, `XxxConfig`) | The vendor SDK, Android lifecycle, redirects |
+| **Interactive** | `XxxCoordinator : PaymentCoordinator` | The vendor SDK and its Activity results; `/validate` and redirects come from the base class |
 
 The two halves talk through three seams:
 
-1. **`XxxHost`** — an interface the plugin declares and `PurseHeadlessCheckout` implements
-   (`googlePayHost(item)` / `klarnaHost(item, returnUrl)` / `cardHost(item)` /
-   `redirectionHost(item)`). This is why `:partner-ui` never depends on `:headless-checkout` (which
-   depends on it).
+1. **`PluginHost`** — one interface `:partner-ui` declares and `PurseHeadlessCheckout.host(item)`
+   implements. This is why `:partner-ui` never depends on `:headless-checkout` (which depends on it).
 2. **`setCollected(map)`** — whatever the native step produced (a sheet token, a `step_id`, a vault
    token, even a live callback) is stashed against the item and arrives in the plugin's
    `PartnerUiContext.collected` at `preValidation`/`postValidation` time.

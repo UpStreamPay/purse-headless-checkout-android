@@ -18,7 +18,7 @@ adds or removes a divergence.
 
 | Web | Android | Same? |
 |---|---|---|
-| `headless-checkout/src/headless-checkout.ts` | `checkout/PurseHeadlessCheckout.kt` | yes, plus hosts, wallet, simulation in the same class (see review §4) |
+| `headless-checkout/src/headless-checkout.ts` | `checkout/PurseHeadlessCheckout.kt` (+ `wallet/WalletTokens.kt`, `simulation/LoanSimulator.kt`, `monitoring/CheckoutMonitoring.kt`) | yes |
 | `headless-checkout-validation.ts` (`executePayment`, `preValidateItems`) | `checkout/validation/PaymentValidator.kt` | yes |
 | `session/payment/payment.ts` (stores) | `StateFlow`s on `PurseHeadlessCheckout` | Svelte stores → `StateFlow` |
 | `session/payment/mops/item-factory/{primaries,secondaries,factories}.ts` | `checkout/session/PaymentSessionBuilder.kt`, `payment/item/PaymentItem.kt` | yes |
@@ -27,7 +27,8 @@ adds or removes a divergence.
 | `mops/secondaries/{init,token,validate}-mappers.ts` | `SecondaryConfig.kt`, `SecondaryTokenizer.kt` | yes |
 | `splitter/payment-splitter.ts` | `payment/split/PursePaymentSplitter.kt` | yes, integer cents |
 | `splitter/middlewares/*` (autofill) | not ported | |
-| `payment-element/payment-element.ts` | `checkout/element/PaymentElement.kt` + `:partner-ui` coordinators | see divergences |
+| `payment-element/payment-element.ts` | `checkout/element/PaymentElement.kt` + `partnerui/PaymentCoordinator.kt` and one coordinator per plugin | see divergences |
+| none | `partnerui/PluginHost.kt` | the seam through which a coordinator reaches the checkout |
 | `monitoring/*`, `monitoringConfigs.ts` | `checkout/monitoring/CheckoutEventBus.kt`, `CheckoutEventCode.kt`, `core/monitoring/*` | same 40 codes, envelope + `platform: android` |
 | `utils/error/*` | `checkout/PurseCheckoutException.kt`, `core/error/PurseErrorCode.kt` | same codes |
 | `sdk/src/API/payment-api.ts` | `core/api/PaymentApiClient.kt` | yes |
@@ -71,8 +72,8 @@ adds or removes a divergence.
 |---|---|---|---|
 | Plugin activation | static lookup table | `PluginRegistry` with all built-ins registered in `init` | same effect; registry kept for `Partner.Other` and host-registered plugins |
 | Google Pay resolution | template `googlepay` | pair `(ingenico, googlepay)` + method fallback | historical; harmless for today's sessions |
-| Interactive step | plugin renders into the DOM and owns its client | `*Coordinator` owns the native SDK, Activity-result launchers and the redirect WebView; the plugin stays pure protocol | Activity lifecycle and result contracts have no web analogue |
-| Plugin ↔ checkout access | plugin holds the checkout context | `*Host` interface implemented by the checkout | keeps `:partner-ui` from depending on `:headless-checkout` |
+| Interactive step | plugin renders into the DOM and owns its client | a `PaymentCoordinator` subclass owns the native SDK; the base owns `/validate`, redirects and the return; the plugin stays pure protocol | Activity lifecycle and result contracts have no web analogue |
+| Plugin ↔ checkout access | plugin holds the checkout context | one `PluginHost` interface, implemented by `PurseHeadlessCheckout.host(item)` | keeps `:partner-ui` from depending on `:headless-checkout` |
 | Fulfilment | `setAsPrimarySource` refuses an unfulfilled element | reactive `isPaymentFulfilled`, selectable before the form is filled | fits `StateFlow` UIs |
 | Card `/init` timing | at `onSessionSet` | inside `preValidation` | nothing about rendering depends on it on Android |
 | PayPal `/init` timing | at render | on button tap | avoids orphan PayPal orders |
@@ -82,5 +83,5 @@ adds or removes a divergence.
 | `setSession` survivors | resets the split | keeps an unchanged primary selected | AC of US-24 |
 | Saved gift cards | listed in `mops` | `savedSecondaryTokens` flow, balances re-`/init`ed sequentially | `InitGuard` would coalesce parallel `/init`s of one issuer |
 | Monitoring envelope | `wrapper`, `env`, … | same plus `platform: "android"` | matches the native vault SDKs |
-| Card UI toolkit | DOM | Compose (`PurseCardForm`); Google Pay / Klarna also have View-system entry points | SecureFields Android is Compose-first; see review §3 |
+| UI toolkit | DOM | Compose only: `rememberPaymentElement`, `remember*Coordinator`, `PurseCardForm` | SecureFields Android is Compose-first; a View app hosts a `ComposeView` |
 | Secondaries extension | static configs | `SecondaryConfigs.register`, `pollForToken`, `classifyInitError` hooks | lets a host add an issuer without an SDK release |

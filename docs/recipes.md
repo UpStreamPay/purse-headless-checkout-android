@@ -242,7 +242,7 @@ fun CardPayment(checkout: PurseHeadlessCheckout, method: PrimaryMethod) {
 Mounting the form arms the fulfillment gate: an **empty card form never reads as payable**
 (`isPaymentFulfilled` stays `false` until every field validates).
 
-**Under the hood** the element wraps `rememberCardCoordinator(checkout.cardHost(method), listener)`
+**Under the hood** the element wraps `rememberCardCoordinator(checkout.host(method), listener)`
 + SecureFields' `VaultForm(coordinator.sdk)` — use those directly when you need the lower-level
 surface, e.g. a custom brand picker for co-badged cards (CB + Visa) calling
 `coordinator.sdk.setBrandSelection(...)`; by default the detected brand is used.
@@ -273,12 +273,11 @@ fun GooglePayRow(checkout: PurseHeadlessCheckout, method: PrimaryMethod) {
 }
 ```
 
-**Under the hood** the element wraps `rememberGooglePayCoordinator(listener)` + `prepare(
-checkout.googlePayHost(method))` (`/init` + `isReadyToPay`) + `GooglePayButton(coordinator)` —
-use those directly to pass button looks (`theme = ButtonTheme.LIGHT`, `type = ButtonType.BUY`,
-`cornerRadius = 8.dp`), from a View-system screen (construct `GooglePayCoordinator(activity,
-listener)` in `onCreate`), or to drive the sheet from a custom control via
-`coordinator.launchSheet()` — though Google's brand guidelines require the official button asset.
+**Under the hood** the element wraps `rememberGooglePayCoordinator(listener)` +
+`prepare(checkout.host(method))` (`/init` + `isReadyToPay`) + `GooglePayButton(coordinator)` — use
+those directly to pass button looks (`theme = ButtonTheme.LIGHT`, `type = ButtonType.BUY`,
+`cornerRadius = 8.dp`), or to drive the sheet from a custom control via `coordinator.launchSheet()`
+— though Google's brand guidelines require the official button asset.
 
 ---
 
@@ -304,9 +303,8 @@ fun PaypalRow(checkout: PurseHeadlessCheckout, method: PrimaryMethod) {
 ```
 
 **Under the hood** the element wraps `rememberPaypalCoordinator(listener)` +
-`prepare(checkout.paypalHost(method))` + `PaypalButton(coordinator)` — use those directly from a
-View-system screen (construct `PaypalCoordinator(activity, listener)` in `onCreate`), or drive a
-fully custom button via `paypal.submit()` as the escape hatch.
+`prepare(checkout.host(method))` + `PaypalButton(coordinator)` — use those directly to drive a fully
+custom button via `coordinator.submit()` as the escape hatch.
 
 ---
 
@@ -346,12 +344,8 @@ fun KlarnaPayment(checkout: PurseHeadlessCheckout, method: PrimaryMethod) {
 On submit the order is web-parity: `/validate` first, then — only on its success — Klarna's own
 `authorize()` inside the plugin's `postValidation`.
 
-**Under the hood** the element wraps `rememberKlarnaCoordinator(listener)` +
-`prepare(checkout.klarnaHost(method, returnUrl))` + `submit()`. For a View-system screen,
-construct `KlarnaCoordinator(activity, container, listener)` in `onCreate` — there is no separate
-render call on that path: the `ViewGroup` you hand the constructor *is* the render surface, and
-`prepare` inflates the widget into it (render and prepare collapse into one step, which is exactly
-what the element path un-collapses).
+**Under the hood** the element wraps `rememberKlarnaCoordinator(listener)`, sets its `container` to
+the `AndroidView` it renders, then `prepare(checkout.host(method), returnUrl)` + `submit()`.
 
 ---
 
@@ -377,8 +371,7 @@ fun RedirectionMethodRow(checkout: PurseHeadlessCheckout, method: PrimaryMethod)
 ```
 
 **Under the hood** the element wraps `rememberRedirectionCoordinator(listener)` +
-`prepare(checkout.redirectionHost(method))` + `submit()` — construct
-`RedirectionCoordinator(activity, listener)` in `onCreate` for a View-system screen.
+`prepare(checkout.host(method))` + `submit()`.
 
 The shopper returning from the PSP page reports `onResult(..., globalStatus = null)`: that means
 "they came back", **not** "it worked" — settle it with recipe 12.
@@ -552,7 +545,7 @@ CVV field validates — so a screen that forgets to render the element cannot su
 `payment_data.token`, exactly like web. A token behind the no-CVV gates is payable the moment it's
 selected; `element.ready` is `true` immediately and `element.hasUi` is `false`.
 
-Lower level: `rememberCardCoordinator(remember(token.id) { checkout.cardHost(token) }, listener)` —
+Lower level: `rememberCardCoordinator(remember(token.id) { checkout.host(token) }, listener)` —
 the coordinator's `mode` (`TOKEN_CVV` / `TOKEN_NO_CVV`) tells you whether to place `VaultForm(coordinator.sdk)`.
 
 **Pay with a saved PayPal account** — the very same recipe, and nothing to render: a CVV is a
@@ -565,7 +558,7 @@ following a chained 3-D Secure hop if the PSP asks for one. Skipping the element
 `checkout.submitPayment()` yourself sends the same item: the PayPal plugin's `preValidation` does the
 `/init`, so no coordinator is required.
 
-Lower level: `rememberPaypalCoordinator(listener)` prepared with `checkout.paypalHost(token)` — its
+Lower level: `rememberPaypalCoordinator(listener)` prepared with `checkout.host(token)` — its
 `submit()` goes straight to the capture.
 
 **Save a fresh card** — driven by the method's `save_token_mode`:
