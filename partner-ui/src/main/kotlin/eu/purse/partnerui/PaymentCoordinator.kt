@@ -67,6 +67,21 @@ abstract class PaymentCoordinator internal constructor(
         listener.onError(e.message)
     }
 
+    /**
+     * A self-submitting flow's approval: make this item the primary, then [capture]. The checkout
+     * refuses a disabled item (`METHOD_DISABLED`) — that refusal ends the attempt as a submit
+     * failure instead of escaping into the result callback.
+     */
+    protected fun selectAndCapture(host: PluginHost) {
+        try {
+            host.setAsPrimary()
+        } catch (e: Exception) {
+            onSubmitFailed(e)
+            return
+        }
+        capture(host)
+    }
+
     /** `POST /validate` through [host] and act on the answer. */
     protected fun capture(host: PluginHost) {
         scope.launch {

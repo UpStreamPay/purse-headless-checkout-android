@@ -3,6 +3,7 @@
 // Differs: a sealed hierarchy instead of one class with a code.
 package eu.purse.checkout
 
+import eu.purse.checkout.payment.item.DisabledState
 import eu.purse.checkout.state.SessionState
 import eu.purse.core.api.PaymentApiException
 import eu.purse.core.error.PurseErrorCode
@@ -38,6 +39,13 @@ sealed class PurseCheckoutException(
             },
             PurseErrorCode.SUBMIT_BLOCKED,
         )
+
+    /**
+     * Selecting a method or saved token whose [DisabledState] is set — web's `METHOD_DISABLED`
+     * from `setAsPrimarySource`. [disabled] says why, with a displayable `message`.
+     */
+    class MethodDisabled(itemId: String, val disabled: DisabledState) :
+        PurseCheckoutException("$itemId is disabled: ${disabled.message}", PurseErrorCode.METHOD_DISABLED)
 
     /**
      * A secondary draw the splitter refuses — web's `ensureTakePolicy` / `isMethodLimitReached`:

@@ -96,8 +96,7 @@ class GooglePayCoordinator internal constructor(
                     ),
                 )
                 // The approved sheet both selects the method and pays with it (web's `validationRequested`).
-                host.setAsPrimary()
-                capture(host)
+                selectAndCapture(host)
             }
             CommonStatusCodes.CANCELED -> {
                 submitting = false

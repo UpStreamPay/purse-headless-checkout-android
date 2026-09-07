@@ -93,8 +93,7 @@ class PaypalCoordinator internal constructor(
                     ),
                 )
                 // The approved order both selects the method and pays with it (web's `validationRequested`).
-                host.setAsPrimary()
-                capture(host)
+                selectAndCapture(host)
             }
             PaypalCheckoutResult.Canceled -> {
                 submitting = false

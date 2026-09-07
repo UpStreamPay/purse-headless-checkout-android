@@ -31,7 +31,8 @@ interface PluginHost : RedirectionDelegate {
     /**
      * Commit this item as the split's primary. Self-submitting flows call it on approval (web's
      * `validationRequested`): the tap is the shopper choosing the method, and a cancelled sheet
-     * leaves the split untouched.
+     * leaves the split untouched. Throws when the item is disabled (`METHOD_DISABLED`) — use
+     * `PaymentCoordinator.selectAndCapture`, which turns that into a submit failure.
      */
     fun setAsPrimary()
 

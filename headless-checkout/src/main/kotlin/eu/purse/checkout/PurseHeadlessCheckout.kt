@@ -350,6 +350,17 @@ class PurseHeadlessCheckout private constructor(
     }
 
     /**
+     * Refuse to put a disabled item in the split — web's `setAsPrimarySource` (`METHOD_DISABLED`).
+     * Checked against the live list, so a stale instance from an earlier emission is judged on the
+     * current state; the submit lock counts too.
+     */
+    private fun requireSelectable(item: PaymentItem) {
+        val live = meansOfPayment.firstOrNull { it.id == item.id } ?: item
+        val disabled = live.disabled ?: if (submitting) DisabledState.Submitting else null
+        if (disabled != null) throw PurseCheckoutException.MethodDisabled(item.id, disabled)
+    }
+
+    /**
      * Eligibility pre-check — web's `getEligibilityCheck` at session build
      * (`item-factory/primaries.ts:118`): a plugin that rejects the current client/session gets its
      * method deactivated with the filtered PLUGIN_INCOMPATIBLE code before it is rendered.
@@ -503,9 +514,15 @@ class PurseHeadlessCheckout private constructor(
     /** Applied secondary tokens, in the order they were added. */
     val appliedSecondaries: List<SecondaryToken> get() = splitter.appliedSecondaries
 
-    /** Choose (or clear, with `null`) the primary method that covers the remaining amount. */
+    /**
+     * Choose (or clear, with `null`) the primary method that covers the remaining amount.
+     *
+     * @throws PurseCheckoutException.MethodDisabled when [method] is disabled (its `disabled` state,
+     * or a submit in flight) — web's `METHOD_DISABLED`.
+     */
     fun setPrimary(method: PrimaryMethod?) {
         if (method != null) {
+            requireSelectable(method)
             bus.post(
                 CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_SET_PRIMARY,
                 payload = monitoringPayload("partner" to method.partner.wireValue, "method" to method.method.wireValue),
@@ -533,8 +550,11 @@ class PurseHeadlessCheckout private constructor(
      * [setFulfilled]. A token behind the no-CVV gates is payable immediately, as before — and so is
      * a token with no card form behind it at all (a saved PayPal: [PaymentToken.isVaultedCard]
      * `false`), for which no CVV exists.
+     *
+     * @throws PurseCheckoutException.MethodDisabled when [token] is disabled — web's `METHOD_DISABLED`.
      */
     fun setPrimaryToken(token: PaymentToken) {
+        requireSelectable(token)
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_PRIMARY_TOKEN_SET_AS_PRIMARY,
             payload = monitoringPayload("partner" to token.partner.wireValue, "method" to token.method.wireValue),
@@ -1091,6 +1111,7 @@ class PurseHeadlessCheckout private constructor(
      */
     private fun makePrimary(item: PaymentItem) {
         val source = item as? PrimarySource ?: return
+        requireSelectable(item)
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_SET_PRIMARY,
             payload = monitoringPayload("partner" to item.partner.wireValue, "method" to item.method.wireValue),

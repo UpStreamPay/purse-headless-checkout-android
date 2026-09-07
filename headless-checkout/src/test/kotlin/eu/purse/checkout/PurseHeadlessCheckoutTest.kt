@@ -1154,4 +1154,19 @@ class PurseHeadlessCheckoutTest {
             assertNull(checkout.paymentMethods.value.single { it.id == giftCard.id }.disabled)
         }
     }
+
+    @Test
+    fun `a disabled method cannot be made primary`() {
+        val checkout = checkout()
+        val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
+        checkout.pluginContext(paypal).dispatchEvent(PluginEvent.ClientError("sdk died"))
+
+        // The merchant still holds the pre-failure instance: the refusal is judged on the live state.
+        val thrown = assertThrows(PurseCheckoutException.MethodDisabled::class.java) { checkout.setPrimary(paypal) }
+
+        assertEquals(PurseErrorCode.METHOD_DISABLED, thrown.code)
+        assertTrue(thrown.disabled is DisabledState.PartnerUiFatalError)
+        assertEquals(thrown.disabled.message, DisabledState.PartnerUiFatalError().message)
+        assertFalse(checkout.isPaymentFulfilled.value)
+    }
 }
