@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!--
+          Declares Google Pay support for the integrating app — required by the Google Pay API so it
+          (and the Play Store) know this app integrates it. Ships here so the integrator needs no
+          manifest work of their own, and only when the Google Pay artifact is on the classpath.
+        -->
+        <meta-data
+            android:name="com.google.android.gms.wallet.api.enabled"
+            android:value="true" />
+    </application>
+
+</manifest>

@@ -4,18 +4,18 @@ import eu.purse.checkout.PurseCheckoutException
 import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.checkout.payment.secondary.SecondaryTakePolicy
 import eu.purse.checkout.payment.secondary.SecondaryToken
+import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.MethodConfiguration
 import eu.purse.core.payment.MethodSettings
 import eu.purse.core.payment.Partner
 import eu.purse.core.payment.RegistrationMode
-import eu.purse.core.error.PurseErrorCode
+import java.math.BigDecimal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.math.BigDecimal
 
 class PursePaymentSplitterTest {
 
@@ -58,7 +58,7 @@ class PursePaymentSplitterTest {
         assertFalse("nothing to submit yet", splitter.fulfilled)
         assertEquals(BigDecimal("0.00"), splitter.remaining)
 
-        splitter.setPrimary(primary())   // an information request registers the chosen method
+        splitter.setPrimary(primary()) // an information request registers the chosen method
         assertTrue(splitter.fulfilled)
     }
 

@@ -5,6 +5,12 @@
 package eu.purse.checkout
 
 import android.util.Log
+import eu.purse.checkout.confirmation.PaymentSessionStatus
+import eu.purse.checkout.monitoring.CheckoutEventBus
+import eu.purse.checkout.monitoring.CheckoutEventCode
+import eu.purse.checkout.monitoring.CheckoutMonitoring
+import eu.purse.checkout.monitoring.EventLevel
+import eu.purse.checkout.monitoring.monitoringPayload
 import eu.purse.checkout.payment.item.DisabledState
 import eu.purse.checkout.payment.item.MethodAvailability
 import eu.purse.checkout.payment.item.PaymentItem
@@ -22,40 +28,37 @@ import eu.purse.checkout.payment.split.PrimarySource
 import eu.purse.checkout.payment.split.PursePaymentSplitter
 import eu.purse.checkout.session.PaymentSession
 import eu.purse.checkout.session.PaymentSessionBuilder
+import eu.purse.checkout.simulation.LoanSimulator
 import eu.purse.checkout.state.SessionState
 import eu.purse.checkout.validation.PaymentValidator
+import eu.purse.checkout.wallet.WalletTokens
 import eu.purse.core.api.PaymentApiClient
+import eu.purse.core.api.PaymentApiException
+import eu.purse.core.api.WalletApiClient
+import eu.purse.core.assets.PurseAssets
+import eu.purse.core.datetime.DatetimeApiClient
+import eu.purse.core.datetime.ServerDatetimeChecker
 import eu.purse.core.environment.PurseEnvironment
+import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.payload.ItemPayload
 import eu.purse.core.payload.ValidationResult
 import eu.purse.core.payment.LoanProduct
 import eu.purse.core.payment.LoanSimulation
-import eu.purse.core.payment.Partner
 import eu.purse.core.payment.Method
+import eu.purse.core.payment.Partner
 import eu.purse.core.session.LegacyPaymentSession
 import eu.purse.core.session.PurseSessionParams
 import eu.purse.core.session.SessionCodec
-import eu.purse.core.assets.PurseAssets
+import eu.purse.partnerui.PartnerArtifacts
 import eu.purse.partnerui.PartnerUiContext
 import eu.purse.partnerui.PartnerUiPlugin
-import eu.purse.partnerui.PluginOptions
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.PluginHost
+import eu.purse.partnerui.PluginOptions
 import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.redirect.RedirectAction
-import eu.purse.checkout.confirmation.PaymentSessionStatus
-import eu.purse.checkout.monitoring.CheckoutEventBus
-import eu.purse.checkout.monitoring.CheckoutMonitoring
-import eu.purse.checkout.monitoring.monitoringPayload
-import eu.purse.checkout.simulation.LoanSimulator
-import eu.purse.checkout.wallet.WalletTokens
-import eu.purse.checkout.monitoring.CheckoutEventCode
-import eu.purse.checkout.monitoring.EventLevel
-import eu.purse.core.api.PaymentApiException
-import eu.purse.core.api.WalletApiClient
-import eu.purse.core.datetime.DatetimeApiClient
-import eu.purse.core.error.PurseErrorCode
-import eu.purse.core.datetime.ServerDatetimeChecker
+import java.math.BigDecimal
+import java.time.Instant
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -73,9 +76,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
-import org.json.JSONObject
-import java.math.BigDecimal
-import java.time.Instant
 
 /**
  * The headless purse-payment SDK — the Kotlin analog of web's `PurseHeadlessCheckout`. It owns the
@@ -312,7 +312,6 @@ class PurseHeadlessCheckout private constructor(
         resolveSavedSecondaryBalances()
     }
 
-
     /** The running expiry watchdog, so [setSession] can restart it against the new expiry. */
     private var watchdogJob: Job? = null
 
@@ -378,7 +377,16 @@ class PurseHeadlessCheckout private constructor(
      */
     private fun runEligibilityChecks() {
         meansOfPayment.forEach { item ->
-            val plugin = PluginRegistry.getPlugin(item.partner, item.method, session.source) ?: return@forEach
+            val plugin = PluginRegistry.getPlugin(item.partner, item.method, session.source)
+            if (plugin == null) {
+                // A method the session offers but no plugin serves. When a Purse artifact would serve
+                // it, say which one: the most likely cause is a missing Gradle dependency.
+                PartnerArtifacts.forMethod(item.partner, item.method)?.let {
+                    val hint = PartnerArtifacts.missingPluginMessage(item.partner, item.method)
+                    Log.w("PurseHeadlessCheckout", "session offers ${item.id} but $hint")
+                }
+                return@forEach
+            }
             scope.launch {
                 try {
                     plugin.ensureClientCompatibility(pluginContext(item))
@@ -617,8 +625,11 @@ class PurseHeadlessCheckout private constructor(
      * Always `registered = false` for a saved instrument.
      */
     fun registrationOf(token: SecondaryToken): RegistrationState =
-        if (token.isSaved) RegistrationState(registered = false)
-        else registrationBySecondaryToken[token.id] ?: RegistrationState(token.saveTokenMode.registeredByDefault)
+        if (token.isSaved) {
+            RegistrationState(registered = false)
+        } else {
+            registrationBySecondaryToken[token.id] ?: RegistrationState(token.saveTokenMode.registeredByDefault)
+        }
 
     /**
      * Ask to keep a temporary gift card for the next session, optionally under [name] — web's
@@ -633,8 +644,11 @@ class PurseHeadlessCheckout private constructor(
     fun registerSecondary(token: SecondaryToken, registered: Boolean = true, name: String? = null) {
         if (!token.canBeRegistered) {
             throw PurseCheckoutException.WalletOperationFailed(
-                if (token.isSaved) "${token.id} is already a saved instrument"
-                else "${token.id} cannot be registered (save_token_mode=${token.saveTokenMode})",
+                if (token.isSaved) {
+                    "${token.id} is already a saved instrument"
+                } else {
+                    "${token.id} cannot be registered (save_token_mode=${token.saveTokenMode})"
+                },
                 PurseErrorCode.TOKEN_NOT_REGISTERABLE,
             )
         }
@@ -873,8 +887,11 @@ class PurseHeadlessCheckout private constructor(
         }
         if (!current.balanceResolved || current.balance.signum() <= 0) {
             throw PurseCheckoutException.SecondaryTokenizationFailed(
-                if (current.balanceResolved) "saved token ${token.id} has no balance"
-                else "saved token ${token.id} balance is not resolved yet",
+                if (current.balanceResolved) {
+                    "saved token ${token.id} has no balance"
+                } else {
+                    "saved token ${token.id} balance is not resolved yet"
+                },
                 PurseErrorCode.SECONDARY_TOKEN_EMPTY_BALANCE,
             )
         }
@@ -1078,8 +1095,11 @@ class PurseHeadlessCheckout private constructor(
                 deactivate(item, DisabledState.PartnerUiFatalError(event.message))
             is PluginEvent.PartnerError -> deactivate(
                 item,
-                if (event.recoverable) DisabledState.PartnerUiRecoverableError(event.message)
-                else DisabledState.PartnerUiFatalError(event.message),
+                if (event.recoverable) {
+                    DisabledState.PartnerUiRecoverableError(event.message)
+                } else {
+                    DisabledState.PartnerUiFatalError(event.message)
+                },
             )
             PluginEvent.EndOfSession -> _sessionState.value = SessionState.TERMINATED
             // Informational — merchants observe these on [pluginEvents].
@@ -1088,7 +1108,7 @@ class PurseHeadlessCheckout private constructor(
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_PARTNER_UI_EVENT,
             payload = monitoringPayload(
-                "code" to event::class.simpleName,
+                "code" to event.code,
                 "partner" to item.partner.wireValue,
                 "method" to item.method.wireValue,
             ),
@@ -1295,8 +1315,11 @@ class PurseHeadlessCheckout private constructor(
             validationConsumed = true
             _sessionState.value = if (result.isSuccess) SessionState.SUBMITTED else SessionState.ERROR
             bus.post(
-                if (result.isSuccess) CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_SUCCESS
-                else CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_FAILED,
+                if (result.isSuccess) {
+                    CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_SUCCESS
+                } else {
+                    CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_FAILED
+                },
                 if (result.isSuccess) EventLevel.SUCCESS else EventLevel.ERROR,
                 monitoringPayload("global_status" to result.globalStatus),
             )

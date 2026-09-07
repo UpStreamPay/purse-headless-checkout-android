@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <application>
+        <!--
+          PayPal wallet's approval return Activity. PayPal's own SDK opens the approval (the PayPal
+          app when installed, else a Custom Tab) and returns here via this deep link — the scheme is
+          the app's own applicationId plus ".paypal", and the SDK is handed the identical string at
+          runtime as its urlScheme, so the two always match. Note the return target is supplied
+          client-side by the SDK (it puts it in the approval URL's redirect_uri), NOT by the
+          return_url the backend set on the order. Ships here so it merges into any integrating app
+          with no manifest work, and only when the PayPal artifact is on the classpath.
+        -->
+        <activity
+            android:name="eu.purse.partnerui.plugins.partners.paypal.wallet.PaypalCheckoutActivity"
+            android:launchMode="singleTop"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data android:scheme="${applicationId}.paypal" />
+            </intent-filter>
+        </activity>
+    </application>
+
+</manifest>

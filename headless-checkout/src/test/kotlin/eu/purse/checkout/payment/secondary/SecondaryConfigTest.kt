@@ -11,13 +11,13 @@ import eu.purse.core.payment.MethodSettings
 import eu.purse.core.payment.Partner
 import eu.purse.core.payment.RegistrationMode
 import eu.purse.core.payment.SaveTokenMode
+import java.math.BigDecimal
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.math.BigDecimal
 
 class SecondaryConfigTest {
 

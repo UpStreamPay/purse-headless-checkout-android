@@ -211,7 +211,11 @@ fun LabeledValue(label: String, value: String, mono: Boolean = false) {
         SelectionContainer {
             Text(
                 text = value,
-                style = if (mono) monoStyle.copy(fontSize = MaterialTheme.typography.bodyMedium.fontSize) else MaterialTheme.typography.bodyLarge,
+                style = if (mono) {
+                    monoStyle.copy(fontSize = MaterialTheme.typography.bodyMedium.fontSize)
+                } else {
+                    MaterialTheme.typography.bodyLarge
+                },
                 fontFamily = if (mono) FontFamily.Monospace else null,
             )
         }

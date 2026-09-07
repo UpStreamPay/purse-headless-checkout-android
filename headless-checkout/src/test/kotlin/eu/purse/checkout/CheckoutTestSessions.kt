@@ -1,7 +1,7 @@
 package eu.purse.checkout
 
-import org.json.JSONObject
 import java.util.Base64
+import org.json.JSONObject
 
 /**
  * A base64 `widget.data` fixture for the headless-checkout tests — a purse-vendor CB primary (with

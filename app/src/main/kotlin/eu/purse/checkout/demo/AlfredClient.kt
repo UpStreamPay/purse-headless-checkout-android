@@ -1,12 +1,12 @@
 package eu.purse.checkout.demo
 
+import java.io.IOException
+import java.net.HttpURLConnection
+import java.net.URL
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.IOException
-import java.net.HttpURLConnection
-import java.net.URL
 
 /**
  * The four calls this demo makes against **alfred** — the `usp-widget` dev server that holds the

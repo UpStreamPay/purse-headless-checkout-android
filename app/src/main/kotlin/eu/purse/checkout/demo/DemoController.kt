@@ -27,14 +27,14 @@ import eu.purse.partnerui.plugins.generics.googlepay.GooglePayPlugin
 import eu.purse.partnerui.plugins.generics.redirection.RedirectionPlugin
 import eu.purse.partnerui.plugins.partners.paypal.wallet.PaypalPlugin
 import eu.purse.partnerui.redirect.RedirectionResolver
+import java.math.BigDecimal
+import java.math.RoundingMode
+import java.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.math.BigDecimal
-import java.math.RoundingMode
-import java.util.Base64
 
 /** The three screens this demo walks through, in order. */
 enum class DemoStep { Session, Pay, Result }

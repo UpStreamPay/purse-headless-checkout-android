@@ -9,6 +9,9 @@ import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.payment.LoanProduct
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
+import java.math.BigDecimal
+import java.net.InetSocketAddress
+import java.util.Base64
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
 import org.junit.After
@@ -18,9 +21,6 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import java.math.BigDecimal
-import java.net.InetSocketAddress
-import java.util.Base64
 
 /**
  * `simulateLoan` / `simulateLoans` — the `simulable` label gate, the dedicated error code, the
@@ -139,7 +139,8 @@ class LoanSimulationCheckoutTest {
     @Test
     fun `an API refusal such as 409 EMPTY_SIMULATION is INVALID_LOAN_SIMULATION with the API code on the cause`() {
         responseStatus = 409
-        responseBody = """{"error":"EMPTY_SIMULATION","error_description":"The plugin did not managed to parse partner's API response and returned an empty result.","status":409}"""
+        responseBody = """{"error":"EMPTY_SIMULATION","error_description":"The plugin did not managed to parse partner's API """ +
+            """response and returned an empty result.","status":409}"""
         val checkout = checkout()
         val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
 
@@ -157,7 +158,8 @@ class LoanSimulationCheckoutTest {
     @Test
     fun `the multi endpoint's refusal is INVALID_LOAN_SIMULATION too`() {
         responseStatus = 501
-        responseBody = """{"error":"NOT_IMPLEMENTED","error_description":"The multi simulation processing method is not implemented.","status":400}"""
+        responseBody = """{"error":"NOT_IMPLEMENTED","error_description":"The multi simulation processing method is not """ +
+            """implemented.","status":400}"""
         val checkout = checkout()
         val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
 

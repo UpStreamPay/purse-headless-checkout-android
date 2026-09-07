@@ -16,6 +16,7 @@ import eu.purse.core.payment.Partner
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.redirect.RedirectAction
+import java.math.BigDecimal
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -27,7 +28,6 @@ import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
-import java.math.BigDecimal
 
 class PurseHeadlessCheckoutTest {
 
@@ -276,7 +276,12 @@ class PurseHeadlessCheckoutTest {
     @Test
     fun `a handling onRedirection hook takes the redirect over`() {
         var handed: RedirectAction? = null
-        val checkout = checkout(hooks = PurseCheckoutHooks(onRedirection = { action -> handed = action; true }))
+        val checkout = checkout(
+            hooks = PurseCheckoutHooks(onRedirection = { action ->
+                handed = action
+                true
+            })
+        )
         val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
         val action = RedirectAction.PostForm("https://acs.example/challenge", "PaReq=abc")
 
@@ -409,7 +414,10 @@ class PurseHeadlessCheckoutTest {
         assertEquals("VISA •••• 4242", token.label)
         assertEquals("424242xxxxxx4242", token.maskedPan)
         assertTrue(token.favorite)
-        assertTrue("network token + network_token setting absent -> depends on settings", !token.paysWithoutCvv || token.networkTokenAvailable)
+        assertTrue(
+            "network token + network_token setting absent -> depends on settings",
+            !token.paysWithoutCvv || token.networkTokenAvailable,
+        )
         assertTrue(checkout.paymentMethods.value.none { it.id == "tok-1" })
         // The method list is unchanged by the token's presence.
         assertEquals(3, checkout.primaryMethods.size)
@@ -897,7 +905,7 @@ class PurseHeadlessCheckoutTest {
             val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(apiUrl = api.apiRoot))
             val keepable = temporaryGiftCard(eu.purse.core.payment.SaveTokenMode.PREFER)
             checkout.registerSecondary(keepable, name = "gift one")
-            checkout.applySecondary(keepable)   // 10.00 covers the 4.80 order alone
+            checkout.applySecondary(keepable) // 10.00 covers the 4.80 order alone
             assertTrue(checkout.isPaymentFulfilled.value)
 
             runBlocking { checkout.submitPayment() }
@@ -1033,14 +1041,17 @@ class PurseHeadlessCheckoutTest {
     /** A checkout whose whole amount a gift card covers, so a submit needs no plugin. */
     private fun coveredCheckout(api: FakePaymentApi, checker: ServerDatetimeChecker = offlineChecker()): PurseHeadlessCheckout {
         val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(apiUrl = api.apiRoot), checker = checker)
-        checkout.applySecondary(temporaryGiftCard(eu.purse.core.payment.SaveTokenMode.NEVER))   // 10.00 covers 4.80
+        checkout.applySecondary(temporaryGiftCard(eu.purse.core.payment.SaveTokenMode.NEVER)) // 10.00 covers 4.80
         return checkout
     }
 
     @Test
     fun `two concurrent submits post one validate and the loser is SUBMIT_BLOCKED`() {
         FakePaymentApi().use { api ->
-            api.on("validate") { Thread.sleep(300); 200 to SUCCESS_ANSWER }
+            api.on("validate") {
+                Thread.sleep(300)
+                200 to SUCCESS_ANSWER
+            }
             val checkout = coveredCheckout(api)
 
             val outcomes = runBlocking {
@@ -1096,7 +1107,7 @@ class PurseHeadlessCheckoutTest {
     fun `a validate that never answered is reported as outcome unknown`() {
         val api = FakePaymentApi()
         val checkout = coveredCheckout(api)
-        api.close()   // the request leaves the device; nothing answers
+        api.close() // the request leaves the device; nothing answers
 
         val thrown = assertThrows(PurseCheckoutException.ValidateFailed::class.java) {
             runBlocking { checkout.submitPayment() }
@@ -1188,6 +1199,6 @@ class PurseHeadlessCheckoutTest {
         assertThrows(PurseCheckoutException.CheckoutTornDown::class.java) {
             runBlocking { checkout.setSession(CheckoutTestSessions.widgetData()) }
         }
-        checkout.teardown()   // idempotent
+        checkout.teardown() // idempotent
     }
 }

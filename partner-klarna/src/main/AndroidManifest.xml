@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- Already declared by :partner-ui (and every host app); repeated here so lint can verify
+         KlarnaPaymentView's requirement against this module on its own. Merges to one entry. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+</manifest>
