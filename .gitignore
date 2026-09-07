@@ -16,3 +16,8 @@
 local.properties
 .idea
 build
+# Kotlin compiler session cache
+.kotlin
+
+# Heap dumps from profiling sessions
+*.hprof

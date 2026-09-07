@@ -46,10 +46,16 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // The consumer path every merchant's release build takes: R8 shrinking + obfuscation
+            // against the SDK's consumer rules. CI builds this variant and the sandbox payment is
+            // rehearsed on it (SDK-12219 AC 5). Signed with the debug key so it installs anywhere;
+            // the demo is never distributed.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
+                "proguard-rules.pro",
             )
         }
     }

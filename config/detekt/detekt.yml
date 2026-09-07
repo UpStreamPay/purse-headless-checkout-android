@@ -1,0 +1,61 @@
+# detekt — static analysis tuned for this SDK (buildUponDefaultConfig = true: only deviations from
+# detekt's defaults are listed). Style is ktlint's job, so detekt's style/formatting rules stay off
+# where they overlap, and the rules that would fight the codebase's deliberate shapes (long KDoc'd
+# files that mirror one web file each, `when` over many payment states) are relaxed.
+build:
+  maxIssues: 0
+
+complexity:
+  LongMethod:
+    threshold: 80
+  LongParameterList:
+    functionThreshold: 8
+    constructorThreshold: 10
+    ignoreDefaultParameters: true
+  TooManyFunctions:
+    thresholdInFiles: 30
+    thresholdInClasses: 30
+    thresholdInObjects: 30
+    ignorePrivate: true
+  CyclomaticComplexMethod:
+    threshold: 20
+  LargeClass:
+    threshold: 1200
+  ComplexCondition:
+    threshold: 5
+
+style:
+  MaxLineLength:
+    active: false            # ktlint enforces the line length
+  ReturnCount:
+    active: false
+  WildcardImport:
+    active: false            # ktlint's job
+  MagicNumber:
+    active: false
+  UnusedPrivateMember:
+    active: true
+  ForbiddenComment:
+    active: false
+  ThrowsCount:
+    active: false
+
+exceptions:
+  TooGenericExceptionCaught:
+    active: false            # coordinators deliberately catch everything a partner SDK may throw
+  SwallowedException:
+    active: false
+  TooGenericExceptionThrown:
+    active: false
+
+naming:
+  FunctionNaming:
+    ignoreAnnotated: ['Composable']
+  TopLevelPropertyNaming:
+    active: false
+  MatchingDeclarationName:
+    active: false
+
+empty-blocks:
+  EmptyFunctionBlock:
+    ignoreOverridden: true
