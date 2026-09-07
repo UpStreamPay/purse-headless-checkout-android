@@ -1035,6 +1035,19 @@ class PurseHeadlessCheckoutTest {
     }
 
     @Test
+    fun `a validate that never answered is reported as outcome unknown`() {
+        val api = FakePaymentApi()
+        val checkout = coveredCheckout(api)
+        api.close()   // the request leaves the device; nothing answers
+
+        val thrown = assertThrows(PurseCheckoutException.ValidateFailed::class.java) {
+            runBlocking { checkout.submitPayment() }
+        }
+        assertTrue("the payment may exist server-side — the merchant must reconcile", thrown.outcomeUnknown)
+        assertEquals(SessionState.ERROR, checkout.sessionState.value)
+    }
+
+    @Test
     fun `a zero-amount session is not submittable without a primary`() {
         val zeroAmount = CheckoutTestSessions.samplePaymentSessionJson.replace(""""amount": 4.80""", """"amount": 0""")
         val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(zeroAmount))

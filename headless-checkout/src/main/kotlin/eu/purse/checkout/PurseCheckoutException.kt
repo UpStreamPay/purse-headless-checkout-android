@@ -3,6 +3,7 @@
 // Differs: a sealed hierarchy instead of one class with a code.
 package eu.purse.checkout
 
+import eu.purse.core.api.PaymentApiException
 import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.error.PurseException
 
@@ -59,12 +60,19 @@ sealed class PurseCheckoutException(
     class HookFailed(val hook: String, cause: Throwable, code: PurseErrorCode) :
         PurseCheckoutException("$hook hook failed: ${cause.message}", code, cause)
 
-    /** A client-side or API validation step failed during "create payment". */
+    /**
+     * A client-side or API validation step failed during "create payment". When [outcomeUnknown]
+     * is `true` the `POST /validate` left the device but no answer came back (transport failure):
+     * the payment may exist server-side — reconcile with `paymentStatus()` /
+     * `awaitPaymentOutcome()` instead of telling the shopper it failed.
+     */
     class ValidateFailed(
         message: String,
         cause: Throwable? = null,
         code: PurseErrorCode = PurseErrorCode.VALIDATE_FAILED,
-    ) : PurseCheckoutException(message, code, cause)
+    ) : PurseCheckoutException(message, code, cause) {
+        val outcomeUnknown: Boolean get() = (cause as? PaymentApiException)?.outcomeUnknown == true
+    }
 
     /** No `SecondaryConfig` is registered for a secondary `(partner, method)`. */
     class NoSecondaryConfig(message: String) :

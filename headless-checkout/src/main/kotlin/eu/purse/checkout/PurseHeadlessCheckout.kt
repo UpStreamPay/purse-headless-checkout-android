@@ -1181,6 +1181,8 @@ class PurseHeadlessCheckout private constructor(
      * @throws PurseCheckoutException.PaymentNotFulfilled if the split doesn't cover the amount.
      * @throws PurseCheckoutException.ItemNotFulfilled if an item in the split has an incomplete or
      * invalid form (see [setFulfilled]).
+     * @throws PurseCheckoutException.ValidateFailed if `/validate` failed — when its `outcomeUnknown`
+     * is `true` the request left the device and the payment may exist: check [paymentStatus].
      * @throws PurseCheckoutException.NoPluginRegistered while no `:partner-ui` plugins exist yet.
      */
     suspend fun submitPayment(skipOnBeforeValidate: Boolean = false): ValidationResult {

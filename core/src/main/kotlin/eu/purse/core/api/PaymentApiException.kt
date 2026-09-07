@@ -28,6 +28,13 @@ class PaymentApiException(
 ) : PurseException(message, PurseErrorCode.API_ERROR, cause) {
 
     /**
+     * Whether the request may have reached the server even though no answer came back — a transport
+     * failure with no [status]. After a `/validate`, this means the payment may exist; check the
+     * session status instead of reporting a failure.
+     */
+    val outcomeUnknown: Boolean get() = status == null
+
+    /**
      * The session itself is spent — already submitted, expired, or gone — so every further call is
      * pointless: web's `SESSION_TERMINAL_ERRORS` (`SESSION_ALREADY_SUBMITTED_ERROR`,
      * `SESSION_EXPIRED`, `API_404`). Callers should surface a terminated session state.
