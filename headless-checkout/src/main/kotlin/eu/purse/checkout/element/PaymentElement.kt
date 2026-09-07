@@ -1,7 +1,8 @@
 // Web: packages/headless-checkout/src/payment-element/payment-element.ts (`getPaymentElement`, `hasUI`, `appendTo`)
 // Same: one element per rendered method or saved token; `hasUi` false for redirection and no-CVV tokens.
 // Differs: Compose (`rememberPaymentElement` + `PaymentElementUi`) instead of a DOM container; a
-//          coordinator per plugin owns the native step; the element is keyed on `itemGenerations`.
+//          coordinator per plugin owns the native step; the element is keyed on `itemGenerations`;
+//          a technically disabled item gets an element with no UI where web's `appendTo` throws.
 package eu.purse.checkout.element
 
 import android.widget.FrameLayout
@@ -77,7 +78,9 @@ fun PaymentElementUi(element: PaymentElement, modifier: Modifier = Modifier) = e
  *
  * Create the element **when the shopper selects the item**, not for every row: creation runs
  * `prepare`, which for Klarna and redirection methods is a `POST /init`. Select the item yourself
- * (`setPrimary` / `setPrimaryToken`); the element does not.
+ * (`setPrimary` / `setPrimaryToken`); the element does not. An item whose `disabled` state is
+ * technically disabled (`TOKEN_INIT_FAILED`, `PARTNER_UI_FATAL_ERROR`) gets an element with no UI
+ * whose [PaymentElement.submit] reports the reason on `onError` — web's `appendTo` throws there.
  *
  * What a saved token renders follows its plugin: a card token needing its CVV gets a CVV-only form
  * (and gates fulfilment like a fresh card); a card token behind the no-CVV gates, a saved PayPal
@@ -111,8 +114,16 @@ fun rememberPaymentElement(
     }
     val plugin = remember(elementKey) { PluginRegistry.getPlugin(item.partner, item.method, checkout.session.source) }
     val isToken = item is PaymentToken
+    val disabled = item.disabled
 
     return when {
+        // A hard technical failure mounts nothing — web's `appendTo` throws for these states.
+        disabled != null && disabled.isTechnicallyDisabled -> remember(elementKey, disabled) {
+            PaymentElement(item, hasUi = false, selfSubmitting = false, readyState, onSubmit = {
+                wrapped.onError("${item.id} is disabled: ${disabled.message}")
+            }) { }
+        }
+
         plugin is CardPlugin -> rememberCardElement(checkout, item, elementKey, readyState, wrapped)
 
         plugin is GooglePayPlugin && !isToken -> {
