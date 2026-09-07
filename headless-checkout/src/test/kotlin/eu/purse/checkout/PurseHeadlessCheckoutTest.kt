@@ -1022,4 +1022,26 @@ class PurseHeadlessCheckoutTest {
         assertEquals("session-123", checkout.currentSessionId)
         assertEquals(SessionState.READY, checkout.sessionState.value)
     }
+
+    // --- reliability: one submit per session, locks, teardown (SDK-12218) ------------------------------
+
+    private val SUCCESS_ANSWER = """{"global_status":"SUCCESS","results":[]}"""
+
+    /** A checkout whose whole amount a gift card covers, so a submit needs no plugin. */
+    private fun coveredCheckout(api: FakePaymentApi, checker: ServerDatetimeChecker = offlineChecker()): PurseHeadlessCheckout {
+        val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(apiUrl = api.apiRoot), checker = checker)
+        checkout.applySecondary(temporaryGiftCard(eu.purse.core.payment.SaveTokenMode.NEVER))   // 10.00 covers 4.80
+        return checkout
+    }
+
+    @Test
+    fun `a zero-amount session is not submittable without a primary`() {
+        val zeroAmount = CheckoutTestSessions.samplePaymentSessionJson.replace(""""amount": 4.80""", """"amount": 0""")
+        val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(zeroAmount))
+
+        assertFalse(checkout.isPaymentFulfilled.value)
+        assertThrows(PurseCheckoutException.PaymentNotFulfilled::class.java) {
+            runBlocking { checkout.submitPayment() }
+        }
+    }
 }

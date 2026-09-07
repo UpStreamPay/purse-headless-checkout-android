@@ -48,10 +48,12 @@ class PursePaymentSplitter(orderAmount: BigDecimal) {
     val appliedSecondaries: List<SecondaryToken> get() = secondaries.values.map { it.first }
 
     /**
-     * True once payment can be submitted: a zero-amount session, secondaries covering the whole
-     * amount, or a primary selected to cover the remainder — mirroring web's completion rule.
+     * True once payment can be submitted: secondaries covering the whole (non-zero) amount, or a
+     * primary selected to cover the remainder — mirroring web's completion rule. A zero-amount
+     * session is never fulfilled by itself: an information request still needs the primary the
+     * shopper is registering, and anything else has nothing to submit.
      */
-    val fulfilled: Boolean get() = amountCents == 0L || remainingCents() == 0L || primary != null
+    val fulfilled: Boolean get() = primary != null || (amountCents > 0L && remainingCents() == 0L)
 
     /** The submittable set: each applied token's slice, plus the primary's remainder when one is set. */
     val splits: List<PaymentSplit>

@@ -52,11 +52,14 @@ class PursePaymentSplitterTest {
     }
 
     @Test
-    fun `a zero-amount session is fulfilled from the start`() {
+    fun `a zero-amount session needs a primary before it is fulfilled`() {
         val splitter = PursePaymentSplitter(BigDecimal.ZERO)
 
-        assertTrue(splitter.fulfilled)
+        assertFalse("nothing to submit yet", splitter.fulfilled)
         assertEquals(BigDecimal("0.00"), splitter.remaining)
+
+        splitter.setPrimary(primary())   // an information request registers the chosen method
+        assertTrue(splitter.fulfilled)
     }
 
     @Test
