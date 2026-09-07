@@ -142,6 +142,7 @@ data class SavedSecondaryToken(
         expirationDate = expirationDate.orEmpty(),
         takePolicy = takePolicy,
         limit = maxAmount,
+        usageLimit = configuration.settings.usagePerSessionLimit,
         saveTokenMode = SaveTokenMode.NEVER,
         isSaved = true,
     )

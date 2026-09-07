@@ -131,6 +131,7 @@ object MaxxingConfig : SecondaryConfig {
             expirationDate = "",
             takePolicy = takePolicy,
             limit = method.maxAmount,
+            usageLimit = method.configuration.settings.usagePerSessionLimit,
         )
     }
 }
@@ -277,6 +278,7 @@ internal fun parseCardToken(
         expirationDate = card?.optString("expiry_date").orEmpty(),
         takePolicy = takePolicy,
         limit = method.maxAmount,
+        usageLimit = method.configuration.settings.usagePerSessionLimit,
     )
 }
 

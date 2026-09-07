@@ -1,5 +1,6 @@
 package eu.purse.checkout.payment.split
 
+import eu.purse.checkout.PurseCheckoutException
 import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.checkout.payment.secondary.SecondaryTakePolicy
 import eu.purse.checkout.payment.secondary.SecondaryToken
@@ -8,8 +9,10 @@ import eu.purse.core.payment.MethodConfiguration
 import eu.purse.core.payment.MethodSettings
 import eu.purse.core.payment.Partner
 import eu.purse.core.payment.RegistrationMode
+import eu.purse.core.error.PurseErrorCode
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.math.BigDecimal
@@ -32,10 +35,11 @@ class PursePaymentSplitterTest {
         balance: BigDecimal,
         policy: SecondaryTakePolicy = SecondaryTakePolicy.NONE,
         limit: BigDecimal? = null,
+        usageLimit: Int? = null,
     ) = SecondaryToken(
         id = id, partner = Partner.Illicado, method = Method.GiftCard,
         pan = "9250004781234567890", cvv = "123", name = "gift", balance = balance,
-        takePolicy = policy, limit = limit,
+        takePolicy = policy, limit = limit, usageLimit = usageLimit,
     )
 
     @Test
@@ -53,6 +57,52 @@ class PursePaymentSplitterTest {
 
         assertTrue(splitter.fulfilled)
         assertEquals(BigDecimal("0.00"), splitter.remaining)
+    }
+
+    @Test
+    fun `an explicit amount above the balance or the rest to pay is refused, not clamped`() {
+        val splitter = PursePaymentSplitter(BigDecimal("50.00"))
+
+        val aboveBalance = assertThrows(PurseCheckoutException.InvalidTake::class.java) {
+            splitter.takeSplit(token(balance = BigDecimal("10.00")), requestedAmount = BigDecimal("12.00"))
+        }
+        assertEquals(PurseErrorCode.INVALID_TAKE_AMOUNT, aboveBalance.code)
+
+        val aboveOrder = assertThrows(PurseCheckoutException.InvalidTake::class.java) {
+            splitter.takeSplit(token(balance = BigDecimal("90.00")), requestedAmount = BigDecimal("60.00"))
+        }
+        assertEquals(PurseErrorCode.INVALID_TAKE_AMOUNT, aboveOrder.code)
+        assertTrue("nothing was applied", splitter.appliedSecondaries.isEmpty())
+    }
+
+    @Test
+    fun `an explicit amount above the method maximum is MAX_AMOUNT_REACHED`() {
+        val splitter = PursePaymentSplitter(BigDecimal("50.00"))
+
+        val thrown = assertThrows(PurseCheckoutException.InvalidTake::class.java) {
+            splitter.takeSplit(token(balance = BigDecimal("40.00"), limit = BigDecimal("20.00")), requestedAmount = BigDecimal("25.00"))
+        }
+        assertEquals(PurseErrorCode.MAX_AMOUNT_REACHED, thrown.code)
+
+        // Without an explicit amount the draw is simply capped at the maximum.
+        splitter.takeSplit(token(balance = BigDecimal("40.00"), limit = BigDecimal("20.00")))
+        assertEquals(BigDecimal("20.00"), splitter.secondaryContribution)
+    }
+
+    @Test
+    fun `the method's usage_per_session_limit caps how many of its tokens share a split`() {
+        val splitter = PursePaymentSplitter(BigDecimal("50.00"))
+        splitter.takeSplit(token(id = "gc-1", balance = BigDecimal("5.00"), usageLimit = 2))
+        splitter.takeSplit(token(id = "gc-2", balance = BigDecimal("5.00"), usageLimit = 2))
+
+        val thrown = assertThrows(PurseCheckoutException.InvalidTake::class.java) {
+            splitter.takeSplit(token(id = "gc-3", balance = BigDecimal("5.00"), usageLimit = 2))
+        }
+        assertEquals(PurseErrorCode.USAGE_LIMIT_ERROR, thrown.code)
+
+        // Re-applying a token already in the split is not a new usage.
+        splitter.takeSplit(token(id = "gc-2", balance = BigDecimal("5.00"), usageLimit = 2), requestedAmount = BigDecimal("3.00"))
+        assertEquals(BigDecimal("8.00"), splitter.secondaryContribution)
     }
 
     @Test

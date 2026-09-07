@@ -24,6 +24,14 @@ sealed class PurseCheckoutException(
         PurseCheckoutException(message, PurseErrorCode.PAYMENT_NOT_FULFILLED_ON_SUBMIT)
 
     /**
+     * A secondary draw the splitter refuses — web's `ensureTakePolicy` / `isMethodLimitReached`:
+     * `INVALID_TAKE_AMOUNT` (negative, above the balance or above what is left to pay),
+     * `MAX_AMOUNT_REACHED` (above the method's `payment_max_amount`) or `USAGE_LIMIT_ERROR` (the
+     * method's `usage_per_session_limit` is already used up by other tokens in the split).
+     */
+    class InvalidTake(message: String, code: PurseErrorCode) : PurseCheckoutException(message, code)
+
+    /**
      * An item in the split has an interactive form that isn't complete and valid yet — web's
      * `ELEMENT_NOT_FULFILLED`. Raised by `submitPayment`; the reactive guard against ever getting
      * here is `isPaymentFulfilled`, which is `false` for the same reason.
