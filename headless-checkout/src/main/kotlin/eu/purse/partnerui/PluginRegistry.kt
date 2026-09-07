@@ -29,8 +29,9 @@ typealias PluginBuilder = (PluginBuilderData) -> PartnerUiPlugin
  * Resolves the plugin for a `(partner, method)` of a session. The card and redirection plugins
  * `:partner-ui` ships register here at class load, then every [PartnerModule] found on the classpath
  * (the optional `headless-checkout-googlepay` / `-klarna` / `-paypal` artifacts) adds its own. The
- * session's `protocols` remain the only gate on whether a method is offered. [disable] opts a shipped
- * method out for one app build.
+ * session's `protocols` remain the only gate on whether a method is offered; an app build that wants
+ * a method out passes it to `PurseHeadlessCheckout.init(disabledMethods = …)`, which is scoped to
+ * that checkout instead of this process-wide registry.
  */
 object PluginRegistry {
 
@@ -38,7 +39,6 @@ object PluginRegistry {
     private val genericPlugins = mutableMapOf<String, PluginBuilder>()
     private val partnerPlugins = mutableMapOf<Pair<Partner, Method>, PluginBuilder>()
     private val methodFallbacks = mutableMapOf<Method, PluginBuilder>()
-    private val disabled = mutableSetOf<Pair<Partner, Method>>()
     private val installed = mutableListOf<PartnerModule>()
 
     init {
@@ -92,18 +92,8 @@ object PluginRegistry {
         vaultPlugins[vendor] = builder
     }
 
-    /** Hide a shipped `(partner, method)` from this app build even when the session offers it. */
-    fun disable(partner: Partner, method: Method) {
-        disabled += partner to method
-    }
-
-    fun enable(partner: Partner, method: Method) {
-        disabled -= partner to method
-    }
-
     /**
      * ```
-     * disabled?                                          → null
      * vault.vendor ≠ none                                → vault plugin
      * configurations.template                            → generic plugin
      * merchant_specifics.integration_mode = redirection  → redirection generic (web checks this
@@ -113,7 +103,6 @@ object PluginRegistry {
      * ```
      */
     fun getPlugin(partner: Partner, method: Method, session: LegacyPaymentSession): PartnerUiPlugin? {
-        if (partner to method in disabled) return null
         val configuration = session.protocols[partner]?.get(method)?.configurations ?: return null
 
         val builder = configuration.vault

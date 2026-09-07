@@ -75,8 +75,8 @@ generic at all (web has a test on exactly that, and so does `PluginRegistryTest`
 
 All five shipped plugins are **registered by default** (`PluginRegistry`'s own `init` block) — the
 session's `protocols` entry is the real gate on whether a method is offered, so no app-side setup
-call exists to drift out of sync with it. `PluginRegistry.disable(partner, method)` opts a built-in
-method out of one app build. `registerGeneric(template, builder)` registers a *template* rather than
+call exists to drift out of sync with it. `PurseHeadlessCheckout.init(disabledMethods = …)` opts a
+method out of one checkout. `registerGeneric(template, builder)` registers a *template* rather than
 a pair, for a generic that isn't bundled here.
 
 ### Form completeness gates the payment

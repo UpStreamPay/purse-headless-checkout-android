@@ -11,6 +11,7 @@ import eu.purse.checkout.payment.item.SavedSecondaryToken
 import eu.purse.checkout.payment.item.SecondaryMethod
 import eu.purse.checkout.payment.secondary.SecondaryConfigs
 import eu.purse.checkout.payment.secondary.SecondaryTakePolicy
+import eu.purse.core.payment.MethodKey
 import eu.purse.core.payment.RegistrationMode
 import eu.purse.core.session.LegacyPaymentSession
 import java.math.BigDecimal
@@ -23,7 +24,11 @@ import java.math.RoundingMode
  */
 object PaymentSessionBuilder {
 
-    fun build(session: LegacyPaymentSession): PaymentSession {
+    /**
+     * @param disabledMethods methods this app build opts out of — dropped as if the session did not
+     * offer them (their saved instruments included), whatever `protocols` says.
+     */
+    fun build(session: LegacyPaymentSession, disabledMethods: Set<MethodKey> = emptySet()): PaymentSession {
         // `session.amount` is a cross-module property (declared in `:core`) so it can't smart-cast;
         // bind it to a local before the null-driven checks below.
         val sessionAmount = session.amount
@@ -40,7 +45,7 @@ object PaymentSessionBuilder {
             currency = session.currencyCode,
             expirationDate = session.expirationDate,
             vaultsConfiguration = session.vault?.vendorFrontData,
-            meansOfPayment = buildMeansOfPayment(session, isInformationRequest, primaryReach = amount),
+            meansOfPayment = buildMeansOfPayment(session, isInformationRequest, primaryReach = amount, disabledMethods),
         )
     }
 
@@ -48,10 +53,12 @@ object PaymentSessionBuilder {
         session: LegacyPaymentSession,
         isInformationRequest: Boolean,
         primaryReach: BigDecimal,
+        disabledMethods: Set<MethodKey>,
     ): List<PaymentItem> {
         val items = mutableListOf<PaymentItem>()
         for ((partner, methods) in session.protocols) {
             for ((method, entry) in methods) {
+                if (MethodKey(partner, method) in disabledMethods) continue
                 val configuration = entry.configurations
 
                 // In an information_request session, only OFF_SESSION-registrable methods are

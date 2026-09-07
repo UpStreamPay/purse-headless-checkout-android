@@ -45,6 +45,7 @@ import eu.purse.core.payload.ValidationResult
 import eu.purse.core.payment.LoanProduct
 import eu.purse.core.payment.LoanSimulation
 import eu.purse.core.payment.Method
+import eu.purse.core.payment.MethodKey
 import eu.purse.core.payment.Partner
 import eu.purse.core.session.LegacyPaymentSession
 import eu.purse.core.session.PurseSessionParams
@@ -104,6 +105,8 @@ class PurseHeadlessCheckout private constructor(
     private val watchdogIntervalMs: Long,
     /** The build-locked environment [init] was given, re-applied by [setSession]. */
     private val lockedEnvironment: PurseEnvironment?,
+    /** Methods this app build opts out of — never listed, whatever the session offers; re-applied by [setSession]. */
+    val disabledMethods: Set<MethodKey>,
 ) {
     /** The decoded widget data behind [session]; replaced by [setSession]. */
     var params: PurseSessionParams = initialParams
@@ -424,7 +427,7 @@ class PurseHeadlessCheckout private constructor(
     suspend fun setSession(widgetData: String) {
         requireOpen()
         if (_sessionState.value == SessionState.SUBMITTING) throw PurseCheckoutException.SubmitBlocked(SessionState.SUBMITTING)
-        val (newParams, newSession, newRoot) = resolve(widgetData, lockedEnvironment)
+        val (newParams, newSession, newRoot) = resolve(widgetData, lockedEnvironment, disabledMethods)
         if (newSession.id == session.id) {
             Log.w("PurseHeadlessCheckout", "setSession: attempting to set the same payment session again, ignoring.")
             return
@@ -1479,6 +1482,8 @@ class PurseHeadlessCheckout private constructor(
         /**
          * @param widgetData the base64-encoded `widget.data` string from the merchant backend's
          * Client Session response (the "V2" params).
+         * @param disabledMethods methods this app build opts out of, whatever the session offers —
+         * never listed on [paymentMethods] (their saved instruments included), scoped to this checkout.
          * @param lockedEnvironment when non-null, overrides whatever [widgetData] declares — a
          * release build should always pass [PurseEnvironment.PRODUCTION] rather than trusting a
          * session-declared environment.
@@ -1490,7 +1495,9 @@ class PurseHeadlessCheckout private constructor(
             lockedEnvironment: PurseEnvironment? = null,
             hooks: PurseCheckoutHooks? = null,
             options: PluginOptions = PluginOptions(),
-        ): PurseHeadlessCheckout = init(widgetData, lockedEnvironment, hooks, options, datetimeChecker = null)
+            disabledMethods: Set<MethodKey> = emptySet(),
+        ): PurseHeadlessCheckout =
+            init(widgetData, lockedEnvironment, hooks, options, datetimeChecker = null, disabledMethods = disabledMethods)
 
         /**
          * Test seam: inject a [datetimeChecker] (and a fast watchdog) so unit tests never touch the
@@ -1503,8 +1510,9 @@ class PurseHeadlessCheckout private constructor(
             options: PluginOptions = PluginOptions(),
             datetimeChecker: ServerDatetimeChecker?,
             watchdogIntervalMs: Long = WATCHDOG_INTERVAL_MS,
+            disabledMethods: Set<MethodKey> = emptySet(),
         ): PurseHeadlessCheckout {
-            val (params, session, apiRoot) = resolve(widgetData, lockedEnvironment)
+            val (params, session, apiRoot) = resolve(widgetData, lockedEnvironment, disabledMethods)
             val checker = datetimeChecker ?: ServerDatetimeChecker(
                 fetchServerTime = {
                     DatetimeApiClient(params.apiKey, params.environment.datetimeApiRoot).datetime()
@@ -1516,12 +1524,16 @@ class PurseHeadlessCheckout private constructor(
                 CheckoutMonitoring.install(params, sessionId = params.paymentSession.id, version = VERSION)
             }
             return PurseHeadlessCheckout(
-                params, session, apiRoot, hooks, options, checker, watchdogIntervalMs, lockedEnvironment,
+                params, session, apiRoot, hooks, options, checker, watchdogIntervalMs, lockedEnvironment, disabledMethods,
             )
         }
 
         /** Decoded params, built session and Payment API root for [widgetData] — shared by [init] and [setSession]. */
-        private fun resolve(widgetData: String, lockedEnvironment: PurseEnvironment?): Triple<PurseSessionParams, PaymentSession, String> {
+        private fun resolve(
+            widgetData: String,
+            lockedEnvironment: PurseEnvironment?,
+            disabledMethods: Set<MethodKey>,
+        ): Triple<PurseSessionParams, PaymentSession, String> {
             val decoded = SessionCodec.decode(widgetData)
             val params = if (lockedEnvironment != null && lockedEnvironment != decoded.environment) {
                 decoded.copy(environment = lockedEnvironment)
@@ -1535,7 +1547,7 @@ class PurseHeadlessCheckout private constructor(
             } else {
                 params.apiUrl.ifBlank { params.environment.paymentApiRoot }
             }
-            return Triple(params, PaymentSessionBuilder.build(params.paymentSession), apiRoot)
+            return Triple(params, PaymentSessionBuilder.build(params.paymentSession, disabledMethods), apiRoot)
         }
 
         /** Web's `ServerDatetimeChecker.WATCHDOG_DURATION`. */

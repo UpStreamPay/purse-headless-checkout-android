@@ -305,8 +305,8 @@ no plugin registered for klarna/installments — add the `eu.purse:headless-chec
 ```
 
 The same line is logged at `PurseHeadlessCheckout.init` (tag `PurseHeadlessCheckout`, level W), and
-`submitPayment` throws `PurseCheckoutException.NoPluginRegistered`. Add the dependency, or
-`PluginRegistry.disable(partner, method)` to hide the method in this build.
+`submitPayment` throws `PurseCheckoutException.NoPluginRegistered`. Add the dependency, or hide the
+method in this build with `init(disabledMethods = setOf(MethodKey(partner, method)))`.
 
 ## 13. Locale, texts, theme
 

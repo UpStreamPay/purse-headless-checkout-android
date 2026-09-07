@@ -166,8 +166,8 @@ classpath (`ServiceLoader`). The net effect mirrors web's `getPlugin`, which nee
 step at all. The
 session (checked in `getPlugin` against `protocols`) is the real gate on whether a method is
 offered — that's already decided server-side, so no app-side setup call is required for a built-in
-plugin to work. `PluginRegistry.disable`/`enable` opt a built-in method out/back in for a specific
-app build; `register`/`registerFallback`/`registerGeneric` (or a whole `PartnerModule` via
+plugin to work. `PurseHeadlessCheckout.init(disabledMethods = …)` opts a method out of one checkout (scoped
+to the instance, not the process); `register`/`registerFallback`/`registerGeneric` (or a whole `PartnerModule` via
 `PluginRegistry.install`) remain for a plugin that isn't one of Purse's own. A `(partner, method)` with no plugin at all (e.g. a non-Purse-vaulted card/CB)
 still makes `submitPayment` throw `PurseCheckoutException.NoPluginRegistered`.
 

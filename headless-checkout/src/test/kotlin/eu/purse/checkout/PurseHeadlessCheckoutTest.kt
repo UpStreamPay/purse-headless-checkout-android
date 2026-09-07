@@ -12,15 +12,16 @@ import eu.purse.core.datetime.ServerDatetimeChecker
 import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.payment.IntegrationMode
 import eu.purse.core.payment.Method
+import eu.purse.core.payment.MethodKey
 import eu.purse.core.payment.Partner
 import eu.purse.partnerui.PluginEvent
-import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.redirect.RedirectAction
 import java.math.BigDecimal
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -649,21 +650,44 @@ class PurseHeadlessCheckoutTest {
     }
 
     @Test
-    fun `submitPayment fails while no partner-ui plugin is registered`() {
-        val checkout = checkout()
-        // Every primary this fixture offers now resolves to a shipped plugin, so opt one out to
-        // reach the no-plugin path (that's exactly what `disable` is for — see PluginRegistry).
-        checkout.setPrimary(checkout.primaryMethods.single { it.partner == Partner.Paypal })
-        PluginRegistry.disable(Partner.Paypal, Method.Wallet)
+    fun `submitPayment fails while no plugin is registered for the primary`() {
+        // A partner/method pair no shipped plugin claims: no vault, no template, no fallback.
+        val json = JSONObject(CheckoutTestSessions.samplePaymentSessionJson)
+        json.getJSONObject("protocols").put(
+            "acme",
+            JSONObject().put(
+                "voucher",
+                JSONObject().put(
+                    "configurations",
+                    JSONObject("""{"stable": true, "labels": ["acme", "voucher", "primary"], "position": 9, "settings": {}}"""),
+                ),
+            ),
+        )
+        val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(json.toString()))
+        checkout.setPrimary(checkout.primaryMethods.single { it.partner == Partner.Other("acme") })
 
-        try {
-            assertThrows(PurseCheckoutException.NoPluginRegistered::class.java) {
-                runBlocking { checkout.submitPayment() }
-            }
-        } finally {
-            // PluginRegistry is a singleton — leaving this set would leak into every later test.
-            PluginRegistry.enable(Partner.Paypal, Method.Wallet)
+        assertThrows(PurseCheckoutException.NoPluginRegistered::class.java) {
+            runBlocking { checkout.submitPayment() }
         }
+    }
+
+    @Test
+    fun `disabledMethods drops a method the session offers, saved instruments included, on init and setSession`() {
+        val disabled = setOf(MethodKey(Partner.Paypal, Method.Wallet), MethodKey.of("purse", "creditcard"))
+        val checkout = PurseHeadlessCheckout.init(
+            CheckoutTestSessions.widgetData(),
+            datetimeChecker = offlineChecker(),
+            disabledMethods = disabled,
+        )
+
+        assertTrue(checkout.primaryMethods.none { it.partner == Partner.Paypal })
+        assertTrue(checkout.primaryMethods.none { it.method == Method.CreditCard })
+        assertTrue("the saved card rides with its method", checkout.paymentTokens.value.isEmpty())
+        assertTrue(checkout.primaryMethods.any { it.method == Method.GooglePay })
+        assertEquals(disabled, checkout.disabledMethods)
+
+        runBlocking { checkout.setSession(CheckoutTestSessions.widgetData(CheckoutTestSessions.sessionWithSavedGiftCard())) }
+        assertTrue(checkout.primaryMethods.none { it.partner == Partner.Paypal })
     }
 
     // --- saved gift cards (secondary tokens) --------------------------------------------------------

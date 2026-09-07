@@ -82,4 +82,8 @@ dependency, the method's payment element has no UI, and `submit()` reports the s
 no plugin registered for klarna/installments — add the `eu.purse:headless-checkout-klarna` dependency to offer this method
 ```
 
-Add the artifact, or hide the method in this build with `PluginRegistry.disable(partner, method)`.
+Add the artifact, or hide the method in this build:
+
+```kotlin
+PurseHeadlessCheckout.init(widgetData, disabledMethods = setOf(MethodKey(Partner.Klarna, Method.Installments)))
+```

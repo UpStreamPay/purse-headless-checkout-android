@@ -22,13 +22,14 @@ merchant's Purse configuration. `paymentMethods` simply won't include a method t
 offer.
 
 If you need to suppress a shipped method for a specific app build (e.g. its UI isn't ready yet even
-though the backend might offer it), opt it out explicitly:
+though the backend might offer it), opt it out on the checkout — scoped to that instance, never
+process-wide:
 
 ```kotlin
-PluginRegistry.disable(Partner.Klarna, Method.Installments)   // eu.purse.partnerui
+PurseHeadlessCheckout.init(widgetData, disabledMethods = setOf(MethodKey(Partner.Klarna, Method.Installments)))
 ```
 
-`PluginRegistry.enable(partner, method)` reverses it. `register` / `registerGeneric` / `registerVault` exist for
+`register` / `registerGeneric` / `registerVault` exist for
 tests that want to register a plugin in isolation.
 
 ### `PurseHeadlessCheckout.init`
@@ -39,6 +40,7 @@ fun init(
     lockedEnvironment: PurseEnvironment? = null,
     hooks: PurseCheckoutHooks? = null,
     options: PluginOptions = PluginOptions(),
+    disabledMethods: Set<MethodKey> = emptySet(),
 ): PurseHeadlessCheckout
 ```
 
@@ -48,6 +50,7 @@ fun init(
 | `lockedEnvironment` | Overrides whatever `widgetData` declares. **A release build must always pass `PurseEnvironment.PRODUCTION`** rather than trusting a session-declared environment. |
 | `hooks` | Merchant hooks around "create payment" — see [`PurseCheckoutHooks`](#pursecheckouthooks) below. |
 | `options` | Presentation preferences forwarded to every plugin (locale, theme, card-form texts). |
+| `disabledMethods` | `(partner, method)` pairs this app build opts out of: never listed on `paymentMethods`, their saved instruments included, whatever the session offers. Scoped to this checkout and re-applied by `setSession`. |
 
 **Throws:** `PurseSessionException.SessionMalformed` if `widgetData` can't be decoded, or the
 session is missing `id` / `expiration_date`.
@@ -625,11 +628,9 @@ built-in ones are already registered, and the optional partner artifacts registe
 | `registerFallback` | `fun registerFallback(method: Method, builder: PluginBuilder)` |
 | `registerVault` | `fun registerVault(vendor: VaultVendor, builder: PluginBuilder)` |
 | `registerGeneric` | `fun registerGeneric(template: String, builder: PluginBuilder)` — a reusable **template** keyed by `configurations.template`, naming no partner or method; the session decides which methods it covers. |
-| `disable` | `fun disable(partner: Partner, method: Method)` — suppress a built-in plugin for this app build. |
-| `enable` | `fun enable(partner: Partner, method: Method)` — reverse a previous `disable`. |
 | `getPlugin` | `fun getPlugin(partner: Partner, method: Method, session: LegacyPaymentSession): PartnerUiPlugin?` |
 
-Resolution order: `disable`d check → vault vendor → generic template (strict equality) →
+Resolution order: vault vendor → generic template (strict equality) →
 `merchant_specifics.integration_mode = redirection` → exact `(partner, method)` → method fallback.
 `getPlugin` is also the honest way to ask *what will actually handle this item* — e.g.
 `getPlugin(...) is RedirectionPlugin` to decide how to render a row, rather than re-reading `template`

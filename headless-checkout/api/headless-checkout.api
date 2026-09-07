@@ -123,7 +123,7 @@ public final class eu/purse/checkout/PurseHeadlessCheckout {
 	public static final field Companion Leu/purse/checkout/PurseHeadlessCheckout$Companion;
 	public static final field VERSION Ljava/lang/String;
 	public static final field WATCHDOG_INTERVAL_MS J
-	public synthetic fun <init> (Leu/purse/core/session/PurseSessionParams;Leu/purse/checkout/session/PaymentSession;Ljava/lang/String;Leu/purse/checkout/PurseCheckoutHooks;Leu/purse/partnerui/PluginOptions;Leu/purse/core/datetime/ServerDatetimeChecker;JLeu/purse/core/environment/PurseEnvironment;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Leu/purse/core/session/PurseSessionParams;Leu/purse/checkout/session/PaymentSession;Ljava/lang/String;Leu/purse/checkout/PurseCheckoutHooks;Leu/purse/partnerui/PluginOptions;Leu/purse/core/datetime/ServerDatetimeChecker;JLeu/purse/core/environment/PurseEnvironment;Ljava/util/Set;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun applySecondary (Leu/purse/checkout/payment/item/SavedSecondaryToken;Ljava/math/BigDecimal;)V
 	public final fun applySecondary (Leu/purse/checkout/payment/secondary/SecondaryToken;Ljava/math/BigDecimal;)V
 	public static synthetic fun applySecondary$default (Leu/purse/checkout/PurseHeadlessCheckout;Leu/purse/checkout/payment/item/SavedSecondaryToken;Ljava/math/BigDecimal;ILjava/lang/Object;)V
@@ -141,6 +141,7 @@ public final class eu/purse/checkout/PurseHeadlessCheckout {
 	public final fun getAppliedSecondaries ()Ljava/util/List;
 	public final fun getCurrency ()Ljava/lang/String;
 	public final fun getCurrentSessionId ()Ljava/lang/String;
+	public final fun getDisabledMethods ()Ljava/util/Set;
 	public final fun getItemGenerations ()Lkotlinx/coroutines/flow/StateFlow;
 	public final fun getOptions ()Leu/purse/partnerui/PluginOptions;
 	public final fun getParams ()Leu/purse/core/session/PurseSessionParams;
@@ -189,8 +190,8 @@ public final class eu/purse/checkout/PurseHeadlessCheckout {
 }
 
 public final class eu/purse/checkout/PurseHeadlessCheckout$Companion {
-	public final fun init (Ljava/lang/String;Leu/purse/core/environment/PurseEnvironment;Leu/purse/checkout/PurseCheckoutHooks;Leu/purse/partnerui/PluginOptions;)Leu/purse/checkout/PurseHeadlessCheckout;
-	public static synthetic fun init$default (Leu/purse/checkout/PurseHeadlessCheckout$Companion;Ljava/lang/String;Leu/purse/core/environment/PurseEnvironment;Leu/purse/checkout/PurseCheckoutHooks;Leu/purse/partnerui/PluginOptions;ILjava/lang/Object;)Leu/purse/checkout/PurseHeadlessCheckout;
+	public final fun init (Ljava/lang/String;Leu/purse/core/environment/PurseEnvironment;Leu/purse/checkout/PurseCheckoutHooks;Leu/purse/partnerui/PluginOptions;Ljava/util/Set;)Leu/purse/checkout/PurseHeadlessCheckout;
+	public static synthetic fun init$default (Leu/purse/checkout/PurseHeadlessCheckout$Companion;Ljava/lang/String;Leu/purse/core/environment/PurseEnvironment;Leu/purse/checkout/PurseCheckoutHooks;Leu/purse/partnerui/PluginOptions;Ljava/util/Set;ILjava/lang/Object;)Leu/purse/checkout/PurseHeadlessCheckout;
 }
 
 public abstract class eu/purse/checkout/confirmation/PaymentSessionStatus {
@@ -1025,7 +1026,8 @@ public final class eu/purse/checkout/session/PaymentSession {
 public final class eu/purse/checkout/session/PaymentSessionBuilder {
 	public static final field $stable I
 	public static final field INSTANCE Leu/purse/checkout/session/PaymentSessionBuilder;
-	public final fun build (Leu/purse/core/session/LegacyPaymentSession;)Leu/purse/checkout/session/PaymentSession;
+	public final fun build (Leu/purse/core/session/LegacyPaymentSession;Ljava/util/Set;)Leu/purse/checkout/session/PaymentSession;
+	public static synthetic fun build$default (Leu/purse/checkout/session/PaymentSessionBuilder;Leu/purse/core/session/LegacyPaymentSession;Ljava/util/Set;ILjava/lang/Object;)Leu/purse/checkout/session/PaymentSession;
 }
 
 public final class eu/purse/checkout/state/SessionState : java/lang/Enum {
@@ -1538,6 +1540,26 @@ public final class eu/purse/core/payment/MethodConfiguration {
 }
 
 public final class eu/purse/core/payment/MethodConfiguration$Companion {
+}
+
+public final class eu/purse/core/payment/MethodKey {
+	public static final field $stable I
+	public static final field Companion Leu/purse/core/payment/MethodKey$Companion;
+	public fun <init> (Leu/purse/core/payment/Partner;Leu/purse/core/payment/Method;)V
+	public final fun component1 ()Leu/purse/core/payment/Partner;
+	public final fun component2 ()Leu/purse/core/payment/Method;
+	public final fun copy (Leu/purse/core/payment/Partner;Leu/purse/core/payment/Method;)Leu/purse/core/payment/MethodKey;
+	public static synthetic fun copy$default (Leu/purse/core/payment/MethodKey;Leu/purse/core/payment/Partner;Leu/purse/core/payment/Method;ILjava/lang/Object;)Leu/purse/core/payment/MethodKey;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getId ()Ljava/lang/String;
+	public final fun getMethod ()Leu/purse/core/payment/Method;
+	public final fun getPartner ()Leu/purse/core/payment/Partner;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class eu/purse/core/payment/MethodKey$Companion {
+	public final fun of (Ljava/lang/String;Ljava/lang/String;)Leu/purse/core/payment/MethodKey;
 }
 
 public final class eu/purse/core/payment/MethodSettings {
@@ -2260,8 +2282,6 @@ public final class eu/purse/partnerui/PluginOptions {
 public final class eu/purse/partnerui/PluginRegistry {
 	public static final field $stable I
 	public static final field INSTANCE Leu/purse/partnerui/PluginRegistry;
-	public final fun disable (Leu/purse/core/payment/Partner;Leu/purse/core/payment/Method;)V
-	public final fun enable (Leu/purse/core/payment/Partner;Leu/purse/core/payment/Method;)V
 	public final fun getModules ()Ljava/util/List;
 	public final fun getPlugin (Leu/purse/core/payment/Partner;Leu/purse/core/payment/Method;Leu/purse/core/session/LegacyPaymentSession;)Leu/purse/partnerui/PartnerUiPlugin;
 	public final fun install (Leu/purse/partnerui/PartnerModule;)V

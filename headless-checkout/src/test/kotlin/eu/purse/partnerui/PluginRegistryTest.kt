@@ -199,17 +199,4 @@ class PluginRegistryTest {
         val session = sessionWith(fintecture, instantPayment, template = RedirectionPlugin.TEMPLATE)
         assertNull(PluginRegistry.getPlugin(aci, instantPayment, session))
     }
-
-    @Test
-    fun `disable wins over any registration`() {
-        val session = sessionWith(fintecture, instantPayment, template = RedirectionPlugin.TEMPLATE)
-        PluginRegistry.disable(fintecture, instantPayment)
-        try {
-            assertNull(PluginRegistry.getPlugin(fintecture, instantPayment, session))
-        } finally {
-            // PluginRegistry is a singleton — leaving this set would leak into every later test.
-            PluginRegistry.enable(fintecture, instantPayment)
-        }
-        assertTrue(PluginRegistry.getPlugin(fintecture, instantPayment, session) is RedirectionPlugin)
-    }
 }
