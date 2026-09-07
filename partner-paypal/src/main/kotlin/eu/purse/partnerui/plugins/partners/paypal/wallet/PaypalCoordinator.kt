@@ -51,7 +51,7 @@ class PaypalCoordinator internal constructor(
 
     fun submit() {
         if (submitting) return
-        val host = host ?: return listener.onError("call prepare() first")
+        val host = host ?: return fail("call prepare() first")
         submitting = true
         val context = host.buildContext()
         if (context.token != null) {
@@ -76,7 +76,7 @@ class PaypalCoordinator internal constructor(
             } catch (e: Exception) {
                 submitting = false
                 dispatch(PluginEvent.InitFailed(e.message))
-                listener.onError(e.message)
+                fail(e)
             }
         }
     }
@@ -84,7 +84,7 @@ class PaypalCoordinator internal constructor(
     internal fun onPaypalResult(result: PaypalCheckoutResult) {
         val host = host ?: run {
             submitting = false
-            return listener.onError("not prepared")
+            return fail("not prepared")
         }
         when (result) {
             is PaypalCheckoutResult.Approved -> {
@@ -101,12 +101,12 @@ class PaypalCoordinator internal constructor(
             PaypalCheckoutResult.Canceled -> {
                 submitting = false
                 dispatch(PluginEvent.Cancelled)
-                listener.onCanceled()
+                cancel()
             }
             is PaypalCheckoutResult.Failed -> {
                 submitting = false
                 dispatch(PluginEvent.ClientError(result.message))
-                listener.onError(result.message)
+                fail(result.message)
             }
         }
     }

@@ -97,7 +97,7 @@ PaymentElementUi(element, Modifier.fillMaxWidth().height(56.dp))   // the brande
 ```
 
 The approval selects the method as primary and runs `/validate`. A cancelled sheet leaves the split
-untouched and calls `onCanceled`. PayPal's `/init` runs on the tap, so an unused button never
+untouched and reports `PaymentOutcome.Canceled`. PayPal's `/init` runs on the tap, so an unused button never
 creates an orphan order. No manifest work for either.
 
 ## 5. Klarna
@@ -114,7 +114,7 @@ Button(onClick = { element.submit() }, enabled = element.ready) { Text("Pay with
 ```
 
 `submit()` runs `/validate` first, then Klarna's own `authorize()`. A declined authorization is
-reported as `onCanceled`.
+reported as `PaymentOutcome.Canceled`.
 
 ## 6. Redirection methods
 
@@ -208,17 +208,21 @@ checkout.deleteAllTokens()
 
 ## 9. Confirm after a redirect
 
-`onResult` with `globalStatus == null` means the shopper came back, nothing more.
+`PaymentOutcome.ReturnedFromRedirect` means the shopper came back, nothing more.
 
 ```kotlin
-override fun onResult(summary: String, globalStatus: String?) {
-    if (globalStatus != null) return render(globalStatus)                 // SUCCESS or a decline
-    scope.launch {
-        when (val status = checkout.awaitPaymentOutcome(timeoutMs = 60_000, pollIntervalMs = 3_000)) {
-            is PaymentSessionStatus.Confirmed -> showSuccess()
-            is PaymentSessionStatus.Failed -> showFailure()
-            is PaymentSessionStatus.Pending -> showStillProcessing(status.operations)
+override fun onOutcome(outcome: PaymentOutcome) {
+    when (outcome) {
+        is PaymentOutcome.Completed -> render(outcome.status)                // SUCCESS or a decline
+        PaymentOutcome.ReturnedFromRedirect -> scope.launch {
+            when (val status = checkout.awaitPaymentOutcome(timeoutMs = 60_000, pollIntervalMs = 3_000)) {
+                is PaymentSessionStatus.Confirmed -> showSuccess()
+                is PaymentSessionStatus.Failed -> showFailure()
+                is PaymentSessionStatus.Pending -> showStillProcessing(status.operations)
+            }
         }
+        PaymentOutcome.Canceled -> Unit
+        is PaymentOutcome.Failed -> showError(outcome.error)
     }
 }
 ```
@@ -229,7 +233,7 @@ response lists operations, not payments: one captured payment is an `AUTHORIZE` 
 The same check covers a submit that was interrupted: a `ValidateFailed` whose `outcomeUnknown` is
 `true` (the request left, nothing answered) means the payment may exist — poll before showing an
 error. A return from the redirect WebView after the app was killed lands here too, never on
-`onCanceled`.
+`Canceled`.
 
 ## 10. Hooks
 
@@ -293,7 +297,8 @@ Transient `/init` failures are retried by the SDK; do not add your own retry loo
 
 **A method shows up but cannot pay.** If the session offers Google Pay, PayPal or Klarna and the
 matching artifact is not on your classpath, the method is still listed (the session decides that),
-but its payment element has no UI and `submit()` reports on `onError`:
+but its payment element has no UI and `submit()` reports a `PaymentOutcome.Failed(NoPluginRegistered)`
+whose message reads:
 
 ```
 no plugin registered for klarna/installments — add the `eu.purse:headless-checkout-klarna` dependency to offer this method

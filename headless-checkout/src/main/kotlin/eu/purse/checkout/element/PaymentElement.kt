@@ -14,6 +14,7 @@ import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import eu.purse.checkout.PurseCheckoutException
 import eu.purse.checkout.PurseHeadlessCheckout
 import eu.purse.checkout.payment.item.PaymentItem
 import eu.purse.checkout.payment.item.PaymentToken
@@ -21,6 +22,7 @@ import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.partnerui.PartnerArtifacts
 import eu.purse.partnerui.PartnerModule
 import eu.purse.partnerui.PaymentElementListener
+import eu.purse.partnerui.PaymentOutcome
 import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.SurfaceRequest
 
@@ -111,7 +113,7 @@ fun rememberPaymentElement(
         // A hard technical failure mounts nothing — web's `appendTo` throws for these states.
         disabled != null && disabled.isTechnicallyDisabled -> remember(elementKey, disabled) {
             PaymentElement(item, hasUi = false, selfSubmitting = false, readyState, onSubmit = {
-                wrapped.onError("${item.id} is disabled: ${disabled.message}")
+                wrapped.onOutcome(PaymentOutcome.Failed(PurseCheckoutException.MethodDisabled(item.id, disabled)))
             }) { }
         }
 
@@ -130,12 +132,16 @@ fun rememberPaymentElement(
 
         else -> remember(elementKey) {
             PaymentElement(item, hasUi = false, selfSubmitting = false, readyState, onSubmit = {
-                wrapped.onError(
-                    if (plugin == null) {
-                        PartnerArtifacts.missingPluginMessage(item.partner, item.method)
-                    } else {
-                        "no installed PartnerModule renders ${item.id}"
-                    },
+                wrapped.onOutcome(
+                    PaymentOutcome.Failed(
+                        PurseCheckoutException.NoPluginRegistered(
+                            if (plugin == null) {
+                                PartnerArtifacts.missingPluginMessage(item.partner, item.method)
+                            } else {
+                                "no installed PartnerModule renders ${item.id}"
+                            },
+                        ),
+                    ),
                 )
             }) { }
         }

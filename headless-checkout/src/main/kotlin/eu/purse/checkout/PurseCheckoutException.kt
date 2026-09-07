@@ -73,7 +73,7 @@ sealed class PurseCheckoutException(
     class SessionExpired(sessionId: String) :
         PurseCheckoutException("session $sessionId is expired", PurseErrorCode.EXPIRED_SESSION)
 
-    /** No `:partner-ui` plugin is registered for a `(partner, method)` in the current split. */
+    /** No plugin is registered for a `(partner, method)` in the current split (often a missing partner artifact). */
     class NoPluginRegistered(message: String) :
         PurseCheckoutException(message, PurseErrorCode.METHOD_NOT_IMPLEMENTED)
 

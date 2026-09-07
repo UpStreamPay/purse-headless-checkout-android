@@ -206,7 +206,7 @@ Its defining asymmetry: **Klarna's own `authorize()` runs after `/validate`**, i
 `postValidation`, via a live `suspend` callback the coordinator stashed in `PartnerUiContext.collected`
 — ported verbatim from web (`preValidateItems` → `validate` → `postValidateItems`, the last only on
 success). One `submitPayment()` therefore both submits and opens Klarna's payment step. A declined
-authorization throws `KlarnaAuthorizationDeclined`, reported as `onCanceled()` rather than an error.
+authorization throws `KlarnaAuthorizationDeclined`, reported as `PaymentOutcome.Canceled` rather than an error.
 Its `returnURL` must resume the **same Activity** hosting the live widget, so the host app declares
 that deep link itself (see [§7 of the consumer API](../integration/consumer-api.md#7-declaring-your-own-deep-link-for-klarna)).
 

@@ -16,8 +16,11 @@ data class ValidationResult(
     val redirection: Redirection?,
     val raw: JSONObject,
 ) {
+    /** [globalStatus] as the typed [PaymentStatus]; `UNKNOWN` for a value this SDK does not know. */
+    val status: PaymentStatus get() = PaymentStatus.fromWire(globalStatus)
+
     /** Web treats `global_status === SUCCESS` as the go-ahead for post-validation. */
-    val isSuccess: Boolean get() = globalStatus.equals("SUCCESS", ignoreCase = true)
+    val isSuccess: Boolean get() = status == PaymentStatus.SUCCESS
 
     data class Redirection(
         val shouldSubmitWidget: Boolean,

@@ -35,7 +35,7 @@ carries the generated API reference; your IDE shows the same KDoc from the publi
 A partner artifact registers its payment method on its own once it is on the classpath. If the
 session offers a method whose artifact you did not add, the SDK logs a warning at `init` naming the
 dependency to add, and the method's payment element has no UI — `submit` reports the same message
-on `onError`.
+as a `PaymentOutcome.Failed(NoPluginRegistered)`.
 
 Everything else ships in the artifacts' own manifests: the `INTERNET` permission, Google Pay's
 `meta-data`, the redirect WebView Activity (3-D Secure, redirection methods) and PayPal's return
@@ -126,9 +126,7 @@ One composable renders any method or saved token, wiring the native SDK, its lau
 @Composable
 fun SelectedMethod(checkout: PurseHeadlessCheckout, item: PaymentItem) {
     val element = rememberPaymentElement(checkout, item, listener = object : PaymentElementListener {
-        override fun onResult(summary: String, globalStatus: String?) { /* step 6 */ }
-        override fun onCanceled() { }
-        override fun onError(message: String?) { }
+        override fun onOutcome(outcome: PaymentOutcome) { /* step 6 */ }
     })
     LaunchedEffect(item.id) {
         when (item) {
@@ -157,11 +155,20 @@ redirection methods creation runs a `POST /init`.
 
 ## 6. Read the outcome
 
-`onResult(summary, globalStatus)`:
+`onOutcome` receives a sealed `PaymentOutcome`:
 
-- `globalStatus != null` — `/validate` answered directly. `"SUCCESS"` is a success, anything else a
-  declined payment.
-- `globalStatus == null` — the shopper came back from a redirect (3-D Secure, PayPal, a PSP page).
+```kotlin
+override fun onOutcome(outcome: PaymentOutcome) = when (outcome) {
+    is PaymentOutcome.Completed -> if (outcome.isSuccess) showSuccess() else showDeclined(outcome.status)
+    PaymentOutcome.ReturnedFromRedirect -> confirmWithSession()          // below
+    PaymentOutcome.Canceled -> Unit                                      // the shopper backed out, nothing changed
+    is PaymentOutcome.Failed -> showError(outcome.error)                 // a PurseException with a stable code
+}
+```
+
+- `Completed` — `/validate` answered directly. `status` is the API's verdict: `PaymentStatus.SUCCESS`
+  is a payment, anything else a declined payment.
+- `ReturnedFromRedirect` — the shopper came back from a redirect (3-D Secure, PayPal, a PSP page).
   That is **not** an outcome. Ask the session:
 
 ```kotlin
@@ -172,8 +179,8 @@ when (checkout.awaitPaymentOutcome()) {              // polls the session's tran
 }
 ```
 
-`onError` before any submit (a widget that failed to load) is not a failed payment: leave the
-shopper on the screen with a message.
+A `Failed` before any submit (a widget that failed to load) is not a failed payment: leave the
+shopper on the screen with a message; the method is disabled on `paymentMethods` accordingly.
 
 ## 7. Gift cards
 

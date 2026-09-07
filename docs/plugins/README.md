@@ -140,7 +140,7 @@ or a `purse-redirection-data` URL.
 ### A returned redirect is not an outcome
 
 Every coordinator reports `RedirectionCheckoutResult.Approved` as
-`onResult(summary, globalStatus = null)` and **does not chase the real outcome**. This is a confirmed
+`PaymentOutcome.ReturnedFromRedirect` and **does not chase the real outcome**. This is a confirmed
 backend pain point, not laziness: a real 3-D Secure challenge's final redirect is constructed
 server-side by the bank/PSP and can land on a Purse API gateway URL that `401`s on the session's own
 client-facing `api_key`. Re-check status independently instead — `checkout.sessionTransactions()`, or

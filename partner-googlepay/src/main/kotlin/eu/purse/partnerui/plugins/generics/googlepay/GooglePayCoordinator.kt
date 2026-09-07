@@ -66,7 +66,7 @@ class GooglePayCoordinator internal constructor(
                 listener.onReady(ready)
             } catch (e: Exception) {
                 dispatch(PluginEvent.InitFailed(e.message))
-                listener.onError(e.message)
+                fail(e)
             }
         }
     }
@@ -74,8 +74,8 @@ class GooglePayCoordinator internal constructor(
     /** Open the sheet. A no-op while a previous tap's flow is still in progress. */
     fun launchSheet() {
         if (submitting) return
-        val req = request ?: return listener.onError("call prepare() first")
-        val client = client ?: return listener.onError("call prepare() first")
+        val req = request ?: return fail("call prepare() first")
+        val client = client ?: return fail("call prepare() first")
         submitting = true
         // GetPaymentDataResult resolves off a COMPLETED task; launching the live one throws.
         client.loadPaymentDataTask(req.paymentDataRequestJson)
@@ -85,14 +85,14 @@ class GooglePayCoordinator internal constructor(
     internal fun onPaymentData(taskResult: ApiTaskResult<PaymentData>) {
         val host = host ?: run {
             submitting = false
-            return listener.onError("not prepared")
+            return fail("not prepared")
         }
         when (taskResult.status.statusCode) {
             CommonStatusCodes.SUCCESS -> {
                 val paymentData = taskResult.result
                     ?: run {
                         submitting = false
-                        return listener.onError("empty Google Pay result")
+                        return fail("empty Google Pay result")
                     }
                 val methodData = JSONObject(paymentData.toJson()).optJSONObject("paymentMethodData")
                 host.setCollected(
@@ -107,12 +107,12 @@ class GooglePayCoordinator internal constructor(
             CommonStatusCodes.CANCELED -> {
                 submitting = false
                 dispatch(PluginEvent.Cancelled)
-                listener.onCanceled()
+                cancel()
             }
             else -> {
                 submitting = false
                 dispatch(PluginEvent.ClientError("Google Pay failed: ${taskResult.status.statusMessage}"))
-                listener.onError("Google Pay failed: ${taskResult.status.statusMessage}")
+                fail("Google Pay failed: ${taskResult.status.statusMessage}")
             }
         }
     }

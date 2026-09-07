@@ -1199,6 +1199,7 @@ public final class eu/purse/core/error/PurseErrorCode : java/lang/Enum {
 	public static final field MISSING_TOKEN Leu/purse/core/error/PurseErrorCode;
 	public static final field MISSING_WALLET_SESSION Leu/purse/core/error/PurseErrorCode;
 	public static final field ON_BEFORE_VALIDATE_HOOK_FAILED Leu/purse/core/error/PurseErrorCode;
+	public static final field PARTNER_UI_ERROR Leu/purse/core/error/PurseErrorCode;
 	public static final field PAYMENT_NOT_FULFILLED_ON_SUBMIT Leu/purse/core/error/PurseErrorCode;
 	public static final field POST_VALIDATE_FAILED Leu/purse/core/error/PurseErrorCode;
 	public static final field SECONDARY_METHOD_REQUIRED_CVV Leu/purse/core/error/PurseErrorCode;
@@ -1294,6 +1295,24 @@ public final class eu/purse/core/payload/ItemPayload {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class eu/purse/core/payload/PaymentStatus : java/lang/Enum {
+	public static final field Companion Leu/purse/core/payload/PaymentStatus$Companion;
+	public static final field ERROR Leu/purse/core/payload/PaymentStatus;
+	public static final field FAILED Leu/purse/core/payload/PaymentStatus;
+	public static final field SUCCESS Leu/purse/core/payload/PaymentStatus;
+	public static final field UNCERTAIN Leu/purse/core/payload/PaymentStatus;
+	public static final field UNKNOWN Leu/purse/core/payload/PaymentStatus;
+	public static final field WAITING Leu/purse/core/payload/PaymentStatus;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public final fun getWireValue ()Ljava/lang/String;
+	public static fun valueOf (Ljava/lang/String;)Leu/purse/core/payload/PaymentStatus;
+	public static fun values ()[Leu/purse/core/payload/PaymentStatus;
+}
+
+public final class eu/purse/core/payload/PaymentStatus$Companion {
+	public final fun fromWire (Ljava/lang/String;)Leu/purse/core/payload/PaymentStatus;
+}
+
 public final class eu/purse/core/payload/ValidationResult {
 	public static final field $stable I
 	public static final field Companion Leu/purse/core/payload/ValidationResult$Companion;
@@ -1307,6 +1326,7 @@ public final class eu/purse/core/payload/ValidationResult {
 	public final fun getGlobalStatus ()Ljava/lang/String;
 	public final fun getRaw ()Lorg/json/JSONObject;
 	public final fun getRedirection ()Leu/purse/core/payload/ValidationResult$Redirection;
+	public final fun getStatus ()Leu/purse/core/payload/PaymentStatus;
 	public fun hashCode ()I
 	public final fun isSuccess ()Z
 	public fun toString ()Ljava/lang/String;
@@ -1958,6 +1978,12 @@ public final class eu/purse/partnerui/PartnerUiContext {
 	public fun toString ()Ljava/lang/String;
 }
 
+public final class eu/purse/partnerui/PartnerUiException : eu/purse/core/error/PurseException {
+	public static final field $stable I
+	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
 public abstract interface class eu/purse/partnerui/PartnerUiPlugin {
 	public fun destroyClient (Leu/purse/partnerui/PartnerUiContext;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
 	public fun ensureClientCompatibility (Leu/purse/partnerui/PartnerUiContext;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -2005,12 +2031,13 @@ public final class eu/purse/partnerui/PayToken {
 
 public abstract class eu/purse/partnerui/PaymentCoordinator {
 	public static final field $stable I
-	public static final field Companion Leu/purse/partnerui/PaymentCoordinator$Companion;
-	public static final field RETURNED_FROM_REDIRECT Ljava/lang/String;
 	protected fun <init> (Lkotlinx/coroutines/CoroutineScope;Leu/purse/partnerui/PaymentElementListener;)V
 	protected final fun attach (Leu/purse/partnerui/PluginHost;)V
+	protected final fun cancel ()V
 	protected final fun capture (Leu/purse/partnerui/PluginHost;)V
 	protected final fun dispatch (Leu/purse/partnerui/PluginEvent;)V
+	protected final fun fail (Ljava/lang/String;)V
+	protected final fun fail (Ljava/lang/Throwable;)V
 	protected final fun getHost ()Leu/purse/partnerui/PluginHost;
 	protected final fun getListener ()Leu/purse/partnerui/PaymentElementListener;
 	protected final fun getSubmitting ()Z
@@ -2022,27 +2049,64 @@ public abstract class eu/purse/partnerui/PaymentCoordinator {
 	protected fun shouldFollow (Leu/purse/partnerui/redirect/RedirectAction;)Z
 }
 
-public final class eu/purse/partnerui/PaymentCoordinator$Companion {
-}
-
 public abstract interface class eu/purse/partnerui/PaymentElementListener {
-	public fun onCanceled ()V
-	public fun onError (Ljava/lang/String;)V
+	public fun onOutcome (Leu/purse/partnerui/PaymentOutcome;)V
 	public fun onPaymentId (Ljava/lang/String;)V
 	public fun onReady (Z)V
 	public fun onRequiresAction ()V
-	public fun onResult (Ljava/lang/String;Ljava/lang/String;)V
-	public static synthetic fun onResult$default (Leu/purse/partnerui/PaymentElementListener;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)V
 }
 
 public final class eu/purse/partnerui/PaymentElementListener$DefaultImpls {
-	public static fun onCanceled (Leu/purse/partnerui/PaymentElementListener;)V
-	public static fun onError (Leu/purse/partnerui/PaymentElementListener;Ljava/lang/String;)V
+	public static fun onOutcome (Leu/purse/partnerui/PaymentElementListener;Leu/purse/partnerui/PaymentOutcome;)V
 	public static fun onPaymentId (Leu/purse/partnerui/PaymentElementListener;Ljava/lang/String;)V
 	public static fun onReady (Leu/purse/partnerui/PaymentElementListener;Z)V
 	public static fun onRequiresAction (Leu/purse/partnerui/PaymentElementListener;)V
-	public static fun onResult (Leu/purse/partnerui/PaymentElementListener;Ljava/lang/String;Ljava/lang/String;)V
-	public static synthetic fun onResult$default (Leu/purse/partnerui/PaymentElementListener;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)V
+}
+
+public abstract class eu/purse/partnerui/PaymentOutcome {
+	public static final field $stable I
+}
+
+public final class eu/purse/partnerui/PaymentOutcome$Canceled : eu/purse/partnerui/PaymentOutcome {
+	public static final field $stable I
+	public static final field INSTANCE Leu/purse/partnerui/PaymentOutcome$Canceled;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class eu/purse/partnerui/PaymentOutcome$Completed : eu/purse/partnerui/PaymentOutcome {
+	public static final field $stable I
+	public fun <init> (Leu/purse/core/payload/ValidationResult;)V
+	public final fun component1 ()Leu/purse/core/payload/ValidationResult;
+	public final fun copy (Leu/purse/core/payload/ValidationResult;)Leu/purse/partnerui/PaymentOutcome$Completed;
+	public static synthetic fun copy$default (Leu/purse/partnerui/PaymentOutcome$Completed;Leu/purse/core/payload/ValidationResult;ILjava/lang/Object;)Leu/purse/partnerui/PaymentOutcome$Completed;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getResult ()Leu/purse/core/payload/ValidationResult;
+	public final fun getStatus ()Leu/purse/core/payload/PaymentStatus;
+	public fun hashCode ()I
+	public final fun isSuccess ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class eu/purse/partnerui/PaymentOutcome$Failed : eu/purse/partnerui/PaymentOutcome {
+	public static final field $stable I
+	public fun <init> (Leu/purse/core/error/PurseException;)V
+	public final fun component1 ()Leu/purse/core/error/PurseException;
+	public final fun copy (Leu/purse/core/error/PurseException;)Leu/purse/partnerui/PaymentOutcome$Failed;
+	public static synthetic fun copy$default (Leu/purse/partnerui/PaymentOutcome$Failed;Leu/purse/core/error/PurseException;ILjava/lang/Object;)Leu/purse/partnerui/PaymentOutcome$Failed;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getError ()Leu/purse/core/error/PurseException;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class eu/purse/partnerui/PaymentOutcome$ReturnedFromRedirect : eu/purse/partnerui/PaymentOutcome {
+	public static final field $stable I
+	public static final field INSTANCE Leu/purse/partnerui/PaymentOutcome$ReturnedFromRedirect;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
 }
 
 public final class eu/purse/partnerui/PaymentSurface {

@@ -10,6 +10,7 @@ import androidx.lifecycle.lifecycleScope
 import eu.purse.core.payload.ValidationResult
 import eu.purse.partnerui.PaymentCoordinator
 import eu.purse.partnerui.PaymentElementListener
+import eu.purse.partnerui.PaymentOutcome
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.PluginHost
 import kotlinx.coroutines.Dispatchers
@@ -51,15 +52,15 @@ class RedirectionCoordinator internal constructor(
                 listener.onReady(true)
             } catch (e: Exception) {
                 dispatch(PluginEvent.InitFailed(e.message))
-                listener.onError(e.message)
+                fail(e)
             }
         }
     }
 
     fun submit() {
         if (submitting) return
-        val host = host ?: return listener.onError("call prepare() first")
-        if (!prepared) return listener.onError("call prepare() first")
+        val host = host ?: return fail("call prepare() first")
+        if (!prepared) return fail("call prepare() first")
         submitting = true
         capture(host)
     }
@@ -67,6 +68,6 @@ class RedirectionCoordinator internal constructor(
     /** For this template, no redirect means the PSP never handed over its page — say so. */
     override fun onSettled(result: ValidationResult) {
         Log.w(tag, "no redirect to follow — a redirection method's /validate normally carries one")
-        listener.onResult("global_status=${result.globalStatus} (no redirect returned)", result.globalStatus)
+        listener.onOutcome(PaymentOutcome.Completed(result))
     }
 }

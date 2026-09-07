@@ -461,28 +461,42 @@ What they share:
 | Callback | Fires |
 |---|---|
 | `onReady(ready: Boolean)` | The method's readiness changed — `isReadyToPay` for Google Pay, `prepare()` done for PayPal and redirection, the widget loaded for Klarna, the form's validity for the card. |
-| `onResult(summary: String, globalStatus: String? = null)` | Terminal, non-error outcome. `globalStatus` is the `/validate` response's own `global_status` when the outcome came from one, and `null` after a redirect return — see the note below. |
+| `onOutcome(outcome: PaymentOutcome)` | The attempt ended — see the sealed class below. Once per attempt. |
 | `onRequiresAction()` | A redirect step is being launched (3-D Secure, PayPal's approval, the PSP's page). |
 | `onPaymentId(paymentId: String)` | Informational — a `payment_id` the flow could read, when present. Never required for the payment to resolve. |
-| `onCanceled()` | The shopper backed out (sheet dismissed, approval abandoned, redirect page closed, Klarna declined to authorize). |
-| `onError(message: String?)` | Any failure — native step, `/init`, `/validate`, or redirect launch. |
 
-**Note on `onResult` after a redirect:** a returned-from-redirect outcome means only that the shopper
-came back into the app — **not** that the payment succeeded. That's the case `onResult` reports with a
-`null` `globalStatus`: don't render it as either success or failure. Re-check status independently
-(`paymentStatus()` / `awaitPaymentOutcome()`). A non-`SUCCESS` `globalStatus` is a declined payment,
-not an error. The demo's own three-way mapping (`PaymentOutcome.of`) is the shape to copy:
+**`PaymentOutcome`** (sealed, `eu.purse.partnerui`):
 
 ```kotlin
-when {
-    globalStatus == null -> Unconfirmed   // came back from a redirect — go and check the session
-    globalStatus.equals("SUCCESS", true) -> Authorized
-    else -> Failed
+sealed class PaymentOutcome {
+    data class Completed(val result: ValidationResult) : PaymentOutcome()   // status: PaymentStatus, isSuccess
+    data object ReturnedFromRedirect : PaymentOutcome()
+    data object Canceled : PaymentOutcome()
+    data class Failed(val error: PurseException) : PaymentOutcome()
 }
 ```
 
-An `onError` before any submit (a widget that fails to load, a `/init` that throws) is not a failed
-payment either — leave the shopper able to pick another method.
+| Outcome | Meaning |
+|---|---|
+| `Completed(result)` | `/validate` answered without a redirect. `result.status` is the API's verdict (`PaymentStatus.SUCCESS`, `FAILED`, `ERROR`, `UNCERTAIN`, `WAITING`; `UNKNOWN` for a value this SDK doesn't know, the raw string stays on `result.globalStatus`). A non-`SUCCESS` status is a declined payment, not an error. |
+| `ReturnedFromRedirect` | The shopper came back into the app — **not** that the payment succeeded. Don't render it as either success or failure; re-check with `paymentStatus()` / `awaitPaymentOutcome()`. |
+| `Canceled` | The shopper backed out (sheet dismissed, approval abandoned, redirect page closed, Klarna declined to authorize). The split is untouched; they may try again. |
+| `Failed(error)` | The attempt produced no payment. `error` is typed: the checkout's own exceptions (`PurseCheckoutException.*`, `PaymentApiException`) as they are, a partner SDK failure as `PartnerUiException` (code `PARTNER_UI_ERROR`, the partner's exception as `cause`). A `ValidateFailed` whose `outcomeUnknown` is `true` must be confirmed against the session before showing a failure. |
+
+The demo's three-way mapping (`DemoResult.of`) is the shape to copy:
+
+```kotlin
+when (outcome) {
+    is PaymentOutcome.Completed -> if (outcome.isSuccess) Authorized else Declined(outcome.status)
+    PaymentOutcome.ReturnedFromRedirect -> Unconfirmed        // go and check the session
+    PaymentOutcome.Canceled -> BackToMethods
+    is PaymentOutcome.Failed -> if (outcome.error is ValidateFailed && outcome.error.outcomeUnknown) Unconfirmed else Failed(outcome.error)
+}
+```
+
+A `Failed` before any submit (a widget that fails to load, a `/init` that throws) is not a failed
+payment either — the item is disabled on `paymentMethods` with the matching state; leave the shopper
+able to pick another method.
 
 #### Google Pay
 
@@ -714,7 +728,7 @@ While in flight, every item reads `DisabledState.Submitting`; the lock lifts whe
   reconcile with `awaitPaymentOutcome()` instead of telling the shopper it failed.
 
 Most callers reach `submitPayment` indirectly, through `PluginHost.submitPayment`, which coordinators
-call for you; the coordinator's `onError` carries the same message.
+call for you; the element's `PaymentOutcome.Failed` carries the same exception.
 
 ### Re-checking status after a redirect or an unknown outcome
 

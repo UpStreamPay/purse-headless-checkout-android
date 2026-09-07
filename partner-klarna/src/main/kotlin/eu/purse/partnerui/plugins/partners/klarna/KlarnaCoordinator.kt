@@ -83,7 +83,7 @@ class KlarnaCoordinator internal constructor(
             } else {
                 submitting = false
                 dispatch(PluginEvent.PartnerError(error.describe(), recoverable = !error.isFatal))
-                listener.onError(error.describe())
+                fail(error.describe())
             }
         }
     }
@@ -126,7 +126,7 @@ class KlarnaCoordinator internal constructor(
                 paymentView.initialize(request.clientToken)
             } catch (e: Exception) {
                 dispatch(PluginEvent.InitFailed(e.message))
-                listener.onError(e.message)
+                fail(e)
             }
         }
     }
@@ -140,8 +140,8 @@ class KlarnaCoordinator internal constructor(
     /** `/validate`, then Klarna's own `authorize()` inside the plugin's `postValidation`. */
     fun submit() {
         if (submitting) return
-        val host = host ?: return listener.onError("call prepare() first")
-        if (view == null) return listener.onError("call prepare() first")
+        val host = host ?: return fail("call prepare() first")
+        if (view == null) return fail("call prepare() first")
         submitting = true
         capture(host)
     }
@@ -151,7 +151,7 @@ class KlarnaCoordinator internal constructor(
         if (e is KlarnaAuthorizationDeclined) {
             submitting = false
             dispatch(PluginEvent.Cancelled)
-            listener.onCanceled()
+            cancel()
         } else {
             super.onSubmitFailed(e)
         }

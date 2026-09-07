@@ -86,9 +86,9 @@ sequenceDiagram
         Co-->>App: Listener.onRequiresAction()
         Co->>Rd: launch (in-app WebView)
         Rd-->>Co: Approved / Canceled / Failed
-        Co-->>App: onResult(globalStatus = null) — outcome unconfirmed
+        Co-->>App: onOutcome(ReturnedFromRedirect) — confirm against the session
     else no redirect
-        Co-->>App: onResult(globalStatus)
+        Co-->>App: onOutcome(Completed(result))
     end
 ```
 
@@ -201,13 +201,14 @@ The approval commits the method as primary itself (`host.setAsPrimary()`).
 | Callback | Fires |
 |---|---|
 | `onReady(ready)` | `prepare` completed — show the branded button |
-| `onResult(summary, globalStatus)` | Terminal, no redirect pending. `globalStatus == null` after a redirect return means "outcome unknown" |
+| `onOutcome(PaymentOutcome.Completed)` | Terminal, no redirect pending — `status` is the API's verdict (`SUCCESS`, or a refusal) |
+| `onOutcome(PaymentOutcome.ReturnedFromRedirect)` | The shopper came back from a redirect — not an outcome, confirm with `awaitPaymentOutcome()` |
 | `onRequiresAction()` | PayPal's approval is being launched — and again if `/validate` chains a 3-D Secure step |
 | `onPaymentId(id)` | Informational `payment_id` off the confirmation-page JWT |
-| `onCanceled()` | Buyer dismissed PayPal's approval, or the chained redirect was dismissed |
-| `onError(msg)` | `/init`, a missing `client_id`, the approval failing to present, `/validate`, or redirect launch |
+| `onOutcome(PaymentOutcome.Canceled)` | Buyer dismissed PayPal's approval, or the chained redirect was dismissed | |
+| `onOutcome(PaymentOutcome.Failed)` | `/init`, a missing `client_id`, the approval failing to present, `/validate`, or redirect launch |; `error` is the typed `PurseException` (`PartnerUiException` for the partner's own failures) |
 
-An `onError` from `/init` is not a failed payment — no order was approved and nothing was charged,
+A `PaymentOutcome.Failed` from `/init` is not a failed payment — no order was approved and nothing was charged,
 so leave the shopper able to retry or pick another method.
 
 ## Failure modes
@@ -216,9 +217,9 @@ so leave the shopper able to retry or pick another method.
 |---|---|
 | `PaymentApiException: paypal session carries no merchant_specifics.client_id…` | The session offers PayPal but no REST client id — a backend/merchant configuration gap |
 | `PaymentApiException: paypal init returned no order_id` | Backend didn't create a PayPal order for this item |
-| `onCanceled()` immediately after the approval opens | Buyer dismissed the Custom Tab / PayPal app without approving |
+| `Canceled` immediately after the approval opens | Buyer dismissed the Custom Tab / PayPal app without approving |
 | Approval opens but never returns to the app | The `urlScheme` and the manifest scheme disagree — both derive from `applicationId`, so this only happens if the Activity entry was edited |
-| `onError` from the `start` callback | `PayPalPresentAuthChallengeResult.Failure` — no browser could be opened |
+| `Failed` from the `start` callback | `PayPalPresentAuthChallengeResult.Failure` — no browser could be opened |
 | PayPal's checkout re-opens straight after approving, and a duplicate transaction appears | The `/validate` approval-URL echo is being followed — specificity 4. Fixed; if it recurs, check `PaypalMapper.isApprovalUrl` against the URL in the `PaypalCoordinator` log line. |
 | The button never appears | The session doesn't offer `paypal`/`wallet`, or it's in `redirection` mode and shows as a row instead (specificity 6) |
 

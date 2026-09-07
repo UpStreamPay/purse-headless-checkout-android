@@ -60,13 +60,28 @@ abstract class PaymentCoordinator protected constructor(
 
     /** `/validate` answered without a redirect. */
     protected open fun onSettled(result: ValidationResult) {
-        listener.onResult("global_status=${result.globalStatus}", result.globalStatus)
+        listener.onOutcome(PaymentOutcome.Completed(result))
     }
 
     /** `/validate` never landed or errored — nothing was charged, the shopper may retry. */
     protected open fun onSubmitFailed(e: Exception) {
         submitting = false
-        listener.onError(e.message)
+        fail(e)
+    }
+
+    /** Report a failed attempt: [error] as is when it is already an SDK error, wrapped as a partner failure otherwise. */
+    protected fun fail(error: Throwable) {
+        listener.onOutcome(PaymentOutcome.Failed(error.asPurseException()))
+    }
+
+    /** Report a failed attempt from a partner's own message (no exception behind it). */
+    protected fun fail(message: String?) {
+        listener.onOutcome(PaymentOutcome.Failed(PartnerUiException(message ?: "unexpected partner error")))
+    }
+
+    /** The shopper backed out. */
+    protected fun cancel() {
+        listener.onOutcome(PaymentOutcome.Canceled)
     }
 
     /**
@@ -122,7 +137,7 @@ abstract class PaymentCoordinator protected constructor(
         when (val outcome = RedirectDispatcher.dispatch(action, host, launchRedirect)) {
             is RedirectDispatcher.Outcome.HookFailed -> {
                 submitting = false
-                listener.onError("onRedirection hook failed: ${outcome.error.message}")
+                fail(outcome.error)
             }
             else -> {
                 dispatch(PluginEvent.Redirect)
@@ -132,26 +147,21 @@ abstract class PaymentCoordinator protected constructor(
     }
 
     /**
-     * The shopper is back from the redirect WebView. `Approved` only means they came back: a 3-D
-     * Secure challenge's final redirect is built server-side and can land on a URL this client
-     * cannot read, so the real outcome is checked against the session
-     * (`PurseHeadlessCheckout.awaitPaymentOutcome`), never inferred here.
+     * The shopper is back from the redirect WebView. `Approved` only means they came back
+     * ([PaymentOutcome.ReturnedFromRedirect]): a 3-D Secure challenge's final redirect is built
+     * server-side and can land on a URL this client cannot read, so the real outcome is checked
+     * against the session (`PurseHeadlessCheckout.awaitPaymentOutcome`), never inferred here.
      */
     @InternalPurseApi
     fun onRedirectReturn(result: RedirectionCheckoutResult) {
         submitting = false
         when (result) {
-            RedirectionCheckoutResult.Approved -> listener.onResult(RETURNED_FROM_REDIRECT)
+            RedirectionCheckoutResult.Approved -> listener.onOutcome(PaymentOutcome.ReturnedFromRedirect)
             RedirectionCheckoutResult.Canceled -> {
                 dispatch(PluginEvent.Cancelled)
-                listener.onCanceled()
+                cancel()
             }
-            is RedirectionCheckoutResult.Failed -> listener.onError(result.message)
+            is RedirectionCheckoutResult.Failed -> fail(result.message)
         }
-    }
-
-    companion object {
-        const val RETURNED_FROM_REDIRECT =
-            "returned from the redirect — check the session status independently to confirm the outcome"
     }
 }

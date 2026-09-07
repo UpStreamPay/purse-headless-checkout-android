@@ -82,9 +82,9 @@ sequenceDiagram
         Co-->>App: Listener.onRequiresAction()
         Co->>Rd: launch (in-app WebView)
         Rd-->>Co: Approved / Canceled / Failed
-        Co-->>App: onResult(globalStatus = null) — outcome unconfirmed
+        Co-->>App: onOutcome(ReturnedFromRedirect) — confirm against the session
     else no redirect
-        Co-->>App: onResult(globalStatus)
+        Co-->>App: onOutcome(Completed(result))
     end
 ```
 
@@ -196,11 +196,12 @@ either way.
 | Callback | Fires |
 |---|---|
 | `onReady(ready)` | Form validity changed (mirrors `formValid`; also re-fired if `submit()` is refused) |
-| `onResult(summary, globalStatus)` | Terminal, no redirect pending. `globalStatus == null` after a 3-D Secure return means "outcome unknown" |
+| `onOutcome(PaymentOutcome.Completed)` | Terminal, no redirect pending — `status` is the API's verdict (`SUCCESS`, or a refusal) |
+| `onOutcome(PaymentOutcome.ReturnedFromRedirect)` | The shopper came back from a redirect — not an outcome, confirm with `awaitPaymentOutcome()` |
 | `onRequiresAction()` | A 3-D Secure step is being launched (informational) |
 | `onPaymentId(id)` | Informational `payment_id` off the confirmation-page JWT |
-| `onCanceled()` | The 3-D Secure WebView was dismissed |
-| `onError(msg)` | Tokenization (`SubmitResult.Error`), `/init`, `/validate`, or redirect launch failed |
+| `onOutcome(PaymentOutcome.Canceled)` | The 3-D Secure WebView was dismissed | |
+| `onOutcome(PaymentOutcome.Failed)` | Tokenization (`SubmitResult.Error`), `/init`, `/validate`, or redirect launch failed |; `error` is the typed `PurseException` (`PartnerUiException` for the partner's own failures) |
 
 ## Failure modes
 

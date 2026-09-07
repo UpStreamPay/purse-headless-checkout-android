@@ -9,9 +9,10 @@ package eu.purse.core.error
  * merchant integrating both platforms handles one vocabulary; codes web can't produce on Android
  * (DOM payment-element rendering, wallet UI states) are added only once the matching feature ships.
  *
- * Two codes are Android-only, because the situations are refused here where web stays silent:
- * [SUBMIT_BLOCKED] (web posts the `HEADLESS_CHECKOUT_SUBMIT_BLOCKED` monitoring event and returns)
- * and [CHECKOUT_TORN_DOWN] (web's `teardown` leaves the instance usable).
+ * Three codes are Android-only, because the situations are refused here where web stays silent:
+ * [SUBMIT_BLOCKED] (web posts the `HEADLESS_CHECKOUT_SUBMIT_BLOCKED` monitoring event and returns),
+ * [CHECKOUT_TORN_DOWN] (web's `teardown` leaves the instance usable) and [PARTNER_UI_ERROR] (a
+ * partner SDK failure reaching the payment element's outcome as a typed error).
  *
  * Each code links to the shared docs at [documentationLink], like web's `getErrorDocLink`.
  */
@@ -37,6 +38,13 @@ enum class PurseErrorCode {
 
     /** Selecting a method (or saved token) whose `disabled` state is set — web's `setAsPrimarySource`. */
     METHOD_DISABLED,
+
+    /**
+     * A partner's native step failed: its SDK returned an error, a tokenization was refused, the
+     * redirect Activity could not complete, or a coordinator was driven before `prepare`. Android-only:
+     * web surfaces these as partner-UI events, not as errors.
+     */
+    PARTNER_UI_ERROR,
 
     // Secondary methods
     FAILED_TO_INIT_SECONDARY_TOKEN,

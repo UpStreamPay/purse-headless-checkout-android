@@ -58,33 +58,33 @@ fun ResultScreen(controller: DemoController) {
 }
 
 @Composable
-private fun StatusBanner(outcome: PaymentOutcome) {
+private fun StatusBanner(outcome: DemoResult) {
     val accent = when (outcome) {
-        is PaymentOutcome.Authorized -> DemoStatusColors.success
-        is PaymentOutcome.Failed -> MaterialTheme.colorScheme.error
-        is PaymentOutcome.Unconfirmed -> DemoStatusColors.warning
+        is DemoResult.Authorized -> DemoStatusColors.success
+        is DemoResult.Failed -> MaterialTheme.colorScheme.error
+        is DemoResult.Unconfirmed -> DemoStatusColors.warning
     }
     val onAccent = when (outcome) {
-        is PaymentOutcome.Authorized -> DemoStatusColors.onSuccess
-        is PaymentOutcome.Failed -> MaterialTheme.colorScheme.onError
-        is PaymentOutcome.Unconfirmed -> DemoStatusColors.onWarning
+        is DemoResult.Authorized -> DemoStatusColors.onSuccess
+        is DemoResult.Failed -> MaterialTheme.colorScheme.onError
+        is DemoResult.Unconfirmed -> DemoStatusColors.onWarning
     }
     val glyph = when (outcome) {
-        is PaymentOutcome.Authorized -> "✓"
-        is PaymentOutcome.Failed -> "✕"
-        is PaymentOutcome.Unconfirmed -> "!"
+        is DemoResult.Authorized -> "✓"
+        is DemoResult.Failed -> "✕"
+        is DemoResult.Unconfirmed -> "!"
     }
     val title = stringResource(
         when (outcome) {
-            is PaymentOutcome.Authorized -> R.string.result_authorized
-            is PaymentOutcome.Failed -> R.string.result_failed
-            is PaymentOutcome.Unconfirmed -> R.string.result_unconfirmed
+            is DemoResult.Authorized -> R.string.result_authorized
+            is DemoResult.Failed -> R.string.result_failed
+            is DemoResult.Unconfirmed -> R.string.result_unconfirmed
         },
     )
     val detail = when (outcome) {
-        is PaymentOutcome.Authorized -> outcome.detail
-        is PaymentOutcome.Failed -> outcome.detail
-        is PaymentOutcome.Unconfirmed -> outcome.detail
+        is DemoResult.Authorized -> outcome.detail
+        is DemoResult.Failed -> outcome.detail
+        is DemoResult.Unconfirmed -> outcome.detail
     }
 
     DemoCard(color = accent.copy(alpha = 0.14f)) {
@@ -122,7 +122,7 @@ private fun StatusBanner(outcome: PaymentOutcome) {
                 style = MaterialTheme.typography.bodyMedium,
                 textAlign = TextAlign.Center,
             )
-            if (outcome is PaymentOutcome.Unconfirmed) {
+            if (outcome is DemoResult.Unconfirmed) {
                 Text(
                     text = stringResource(R.string.result_unconfirmed_hint),
                     style = MaterialTheme.typography.bodyMedium,

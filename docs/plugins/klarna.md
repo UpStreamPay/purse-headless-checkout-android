@@ -83,9 +83,9 @@ sequenceDiagram
         Co-->>App: Listener.onRequiresAction()
         Co->>Rd: launch (in-app WebView)
         Rd-->>Co: Approved / Canceled / Failed
-        Co-->>App: onResult(globalStatus = null) — outcome unconfirmed
+        Co-->>App: onOutcome(ReturnedFromRedirect) — confirm against the session
     else no redirect
-        Co-->>App: onResult(globalStatus)
+        Co-->>App: onOutcome(Completed(result))
     end
 ```
 
@@ -110,9 +110,9 @@ sequenceDiagram
 4. **The category is the generic `"klarna"`**, letting the client token's own
    `payment_method_categories` decide what renders, rather than hardcoding `pay_later`/`pay_over_time`.
 5. **A declined authorization is not an error.** `postValidation` throws `KlarnaAuthorizationDeclined`
-   and `submit()` reports it as `Listener.onCanceled()`.
+   and `submit()` reports it as `PaymentOutcome.Canceled`.
 6. **`onErrorOccurred` is dual-purpose**: mid-authorize it fails the suspended continuation; outside
-   one (e.g. a load-time failure) it reports `onError` directly. Errors are described in full
+   one (e.g. a load-time failure) it reports a `PaymentOutcome.Failed` directly. Errors are described in full
    (`name`, `message`, `action`, `invalidFields`, `sessionId`, `isFatal`) because
    `KlarnaPaymentsSDKError.message` alone can't tell a token/category mismatch from a transient load
    failure.
@@ -162,13 +162,14 @@ Compose this only when the Klarna row is selected — an unselected row does no 
 | Callback | Fires |
 |---|---|
 | `onReady(ready)` | `onLoaded` — the widget rendered; show the pay trigger |
-| `onResult(summary, globalStatus)` | Terminal, no redirect pending. `globalStatus == null` after a redirect return means "outcome unknown" |
+| `onOutcome(PaymentOutcome.Completed)` | Terminal, no redirect pending — `status` is the API's verdict (`SUCCESS`, or a refusal) |
+| `onOutcome(PaymentOutcome.ReturnedFromRedirect)` | The shopper came back from a redirect — not an outcome, confirm with `awaitPaymentOutcome()` |
 | `onRequiresAction()` | A redirect (external banking / identity verification) is being launched |
 | `onPaymentId(id)` | Informational `payment_id` off the confirmation-page JWT |
-| `onCanceled()` | Klarna **declined** to authorize/finalize, or the redirect was dismissed |
-| `onError(msg)` | Widget load, `/init`, `/validate`, authorize outright failure, or redirect launch |
+| `onOutcome(PaymentOutcome.Canceled)` | Klarna **declined** to authorize/finalize, or the redirect was dismissed | |
+| `onOutcome(PaymentOutcome.Failed)` | Widget load, `/init`, `/validate`, authorize outright failure, or redirect launch |; `error` is the typed `PurseException` (`PartnerUiException` for the partner's own failures) |
 
-An `onError` **before** any submit (a widget that fails to load) is not a failed payment — leave the
+A `PaymentOutcome.Failed` **before** any submit (a widget that fails to load) is not a failed payment — leave the
 shopper able to pick another method instead of showing a failure screen.
 
 ## Failure modes
@@ -176,11 +177,11 @@ shopper able to pick another method instead of showing a failure screen.
 | Symptom | Cause |
 |---|---|
 | `PaymentApiException: klarna init returned no klarna_client_token in logs` | Backend didn't create a Klarna session for this item |
-| `ERROR_INVALID_CLIENT_TOKEN` in `onError` | Stale/malformed token — check the logged JWT payload |
+| `ERROR_INVALID_CLIENT_TOKEN` in a `Failed` outcome | Stale/malformed token — check the logged JWT payload |
 | Widget shows a generic "see our terms" card, no installment breakdown | Klarna's own `payment_method_categories` for this amount/market has no installments product — visible in the logged JWT payload |
 | `"operation not permitted"` | Something called `loadPaymentReview()` on a non-US market — see specificity 3 |
-| `onCanceled()` right after tapping Pay | `/validate` succeeded but Klarna declined the authorization |
-| `onError("call prepare() first")` | `submit()` before the widget was prepared |
+| `Canceled` right after tapping Pay | `/validate` succeeded but Klarna declined the authorization |
+| `Failed(PartnerUiException("call prepare() first"))` | `submit()` before the widget was prepared |
 | Redirect returns into a *new* Activity instance, widget gone | Missing `launchMode="singleTask"` or a mismatched scheme |
 
 ## Files

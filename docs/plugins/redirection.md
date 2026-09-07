@@ -131,9 +131,9 @@ sequenceDiagram
         Rd->>PSP: GET / POST-form / injected HTML
         PSP-->>Rd: shopper completes, returns
         Rd-->>Co: Approved / Canceled / Failed
-        Co-->>App: onResult(globalStatus = null) — outcome unconfirmed
+        Co-->>App: onOutcome(ReturnedFromRedirect) — confirm against the session
     else no redirect returned
-        Co-->>App: onResult("… (no redirect returned)", globalStatus) + Log.w
+        Co-->>App: onOutcome(Completed(result)) + Log.w "no redirect to follow"
     end
 ```
 
@@ -189,13 +189,14 @@ item, listener)` does exactly this, with `hasUi = false`.
 | Callback | Fires |
 |---|---|
 | `onReady(ready)` | `/init` returned — there's no form, so the shopper can submit immediately |
-| `onResult(summary, globalStatus)` | Terminal. `globalStatus == null` after a redirect return means "outcome unknown"; a non-null one with `"(no redirect returned)"` means specificity 1 |
+| `onOutcome(PaymentOutcome.Completed)` | Terminal, no redirect pending — `status` is the API's verdict (`SUCCESS`, or a refusal) |
+| `onOutcome(PaymentOutcome.ReturnedFromRedirect)` | The shopper came back from a redirect — not an outcome, confirm with `awaitPaymentOutcome()` |
 | `onRequiresAction()` | The PSP's hosted page is being opened |
 | `onPaymentId(id)` | Informational `payment_id` off the confirmation-page JWT |
-| `onCanceled()` | The shopper dismissed the page without completing |
-| `onError(msg)` | `/init`, `/validate`, or redirect launch failed |
+| `onOutcome(PaymentOutcome.Canceled)` | The shopper dismissed the page without completing | |
+| `onOutcome(PaymentOutcome.Failed)` | `/init`, `/validate`, or redirect launch failed |; `error` is the typed `PurseException` (`PartnerUiException` for the partner's own failures) |
 
-An `onError` **before** any submit (an `/init` that fails) is not a failed payment — leave the shopper
+A `PaymentOutcome.Failed` **before** any submit (an `/init` that fails) is not a failed payment — leave the shopper
 able to pick another method.
 
 ## Failure modes
@@ -204,9 +205,9 @@ able to pick another method.
 |---|---|
 | The method never appears as a row | Neither route in [Detection](#detection) matched — check `template=` / `plugin=` in the demo's session dump |
 | `CardPlugin` resolved where you expected this one | A vault vendor outranks the template (see the priority table) |
-| `onResult("… (no redirect returned)")` | `/validate` carried no redirect, or it was suppressed as the widget's own confirmation page — see specificity 1 and `RedirectionResolver`'s doc |
+| `Completed` with a `Log.w "no redirect to follow"` | `/validate` carried no redirect, or it was suppressed as the widget's own confirmation page — see specificity 1 and `RedirectionResolver`'s doc |
 | `PaymentApiException: redirection init not successful` | Backend refused the `/init` for this item |
-| `onError("call prepare() first")` | `submit()` before `/init` came back |
+| `Failed(PartnerUiException("call prepare() first"))` | `submit()` before `/init` came back |
 | The PSP page refuses to render | Some providers block embedded WebViews — see the caveat in [plugins/README](README.md#shared-redirects-and-3-d-secure) |
 | `PurseCheckoutException.NoPluginRegistered` | The item resolved to no plugin at all — a near-miss `template` value is the usual cause |
 

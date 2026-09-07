@@ -223,12 +223,12 @@ class CardCoordinator internal constructor(
                     is SubmitResult.Error -> {
                         submitting = false
                         dispatch(PluginEvent.ClientError(tokenized.message))
-                        listener.onError(tokenized.message)
+                        fail(tokenized.message)
                     }
                 }
             } catch (e: Exception) {
                 submitting = false
-                listener.onError(e.message)
+                fail(e)
             }
         }
     }

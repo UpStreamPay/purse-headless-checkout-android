@@ -6,6 +6,7 @@ import eu.purse.core.api.PaymentApiException
 import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.error.PurseException
 import eu.purse.core.session.PurseSessionException
+import eu.purse.partnerui.PartnerUiException
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -50,6 +51,7 @@ class PurseErrorCodeCoverageTest {
         PurseCheckoutException.MethodNotSimulable("purse-creditcard"),
         PurseCheckoutException.LoanSimulationFailed("no plugin_result"),
         PaymentApiException("transport", status = null, path = "/validate"),
+        PartnerUiException("Google Pay failed: DEVELOPER_ERROR"),
     ).associateBy { it.code }
 
     @Test

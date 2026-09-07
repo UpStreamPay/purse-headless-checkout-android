@@ -90,9 +90,9 @@ sequenceDiagram
         Co-->>App: Listener.onRequiresAction()
         Co->>Rd: launch (in-app WebView)
         Rd-->>Co: Approved / Canceled / Failed
-        Co-->>App: onResult(globalStatus = null) — outcome unconfirmed
+        Co-->>App: onOutcome(ReturnedFromRedirect) — confirm against the session
     else no redirect
-        Co-->>App: onResult(globalStatus)
+        Co-->>App: onOutcome(Completed(result))
     end
 ```
 
@@ -154,14 +154,15 @@ behind the element shape.
 | Callback | Fires |
 |---|---|
 | `onReady(ready)` | `isReadyToPay` resolved — show the button only when `true` |
-| `onResult(summary, globalStatus)` | Terminal, no redirect pending. `globalStatus == null` means "came back from a redirect, outcome unknown" — not success, not failure |
+| `onOutcome(PaymentOutcome.Completed)` | Terminal, no redirect pending — `status` is the API's verdict (`SUCCESS`, or a refusal) |
+| `onOutcome(PaymentOutcome.ReturnedFromRedirect)` | The shopper came back from a redirect — not an outcome, confirm with `awaitPaymentOutcome()` |
 | `onRequiresAction()` | A 3-D Secure step is being launched (informational) |
 | `onPaymentId(id)` | Informational `payment_id` off the confirmation-page JWT |
-| `onCanceled()` | Sheet dismissed (`CommonStatusCodes.CANCELED`), or the redirect WebView dismissed |
-| `onError(msg)` | `prepare` failed, sheet failed, `/validate` threw, or the redirect failed |
+| `onOutcome(PaymentOutcome.Canceled)` | Sheet dismissed (`CommonStatusCodes.CANCELED`), or the redirect WebView dismissed | |
+| `onOutcome(PaymentOutcome.Failed)` | `prepare` failed, sheet failed, `/validate` threw, or the redirect failed |; `error` is the typed `PurseException` (`PartnerUiException` for the partner's own failures) |
 
-`globalStatus` is **not** a success flag: a non-`SUCCESS` value is a declined payment, not an error.
-Map it three ways (`Unconfirmed` / `Authorized` / `Failed`) as `PaymentOutcome.of` does in the demo.
+`Completed.status` is the API's verdict: a non-`SUCCESS` value is a declined payment, not an error. The
+demo's `DemoResult.of` maps the four outcomes onto its three screens (authorized / failed / unconfirmed).
 
 ## Failure modes
 
@@ -169,7 +170,7 @@ Map it three ways (`Unconfirmed` / `Authorized` / `Failed`) as `PaymentOutcome.o
 |---|---|
 | `PaymentApiException: googlepay init returned no plugin_result.logs` | Backend didn't return a gateway config — the method is offered in `protocols` but not configured |
 | `PaymentApiException: … is not valid JSON` | The partner's `logs` string didn't parse — wrong partner branch, or a backend change |
-| `onError("call prepare() first")` | `launchSheet` before `prepare` resolved |
+| `Failed(PartnerUiException("call prepare() first"))` | `launchSheet` before `prepare` resolved |
 | Sheet shows, `/validate` returns `409` | A second submit for the same session — see specificity 3 |
 | `product-320 refine failed, keeping defaults` (warning only) | Worldline unreachable; networks fall back to `[MASTERCARD, VISA]` |
 | Nothing happens on tap | `submitting` is still `true` from a prior flow that ended in success |
