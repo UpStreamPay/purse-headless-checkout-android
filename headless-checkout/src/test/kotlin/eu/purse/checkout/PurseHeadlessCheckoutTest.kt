@@ -1169,4 +1169,25 @@ class PurseHeadlessCheckoutTest {
         assertEquals(thrown.disabled.message, DisabledState.PartnerUiFatalError().message)
         assertFalse(checkout.isPaymentFulfilled.value)
     }
+
+    @Test
+    fun `after teardown every operation fails with CHECKOUT_TORN_DOWN`() {
+        val checkout = checkout()
+        val card = checkout.primaryMethods.single { it.method == Method.CreditCard }
+        checkout.setPrimary(card)
+
+        checkout.teardown()
+
+        assertTrue(checkout.isTornDown.value)
+        val submit = assertThrows(PurseCheckoutException.CheckoutTornDown::class.java) {
+            runBlocking { checkout.submitPayment() }
+        }
+        assertEquals(PurseErrorCode.CHECKOUT_TORN_DOWN, submit.code)
+        assertThrows(PurseCheckoutException.CheckoutTornDown::class.java) { checkout.host(card) }
+        assertThrows(PurseCheckoutException.CheckoutTornDown::class.java) { runBlocking { checkout.paymentStatus() } }
+        assertThrows(PurseCheckoutException.CheckoutTornDown::class.java) {
+            runBlocking { checkout.setSession(CheckoutTestSessions.widgetData()) }
+        }
+        checkout.teardown()   // idempotent
+    }
 }

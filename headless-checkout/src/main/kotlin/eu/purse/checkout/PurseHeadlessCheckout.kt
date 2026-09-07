@@ -1,6 +1,7 @@
 // Web: packages/headless-checkout/src/headless-checkout.ts + session/payment/payment.ts
 // Same: session, method list, split, submit, tokens, setSession, monitoring events.
-// Differs: Svelte stores → StateFlow; `host(item)` seam for coordinators; `awaitPaymentOutcome` for the app's return from a redirect.
+// Differs: Svelte stores → StateFlow; `host(item)` seam for coordinators; `awaitPaymentOutcome` for the app's return from a redirect;
+//          the submit latch throws SubmitBlocked and sets SUBMITTING on every item; teardown() refuses later calls.
 package eu.purse.checkout
 
 import android.util.Log
@@ -170,6 +171,11 @@ class PurseHeadlessCheckout private constructor(
 
     /** `true` between `submitPayment` start and return — overlays [DisabledState.Submitting] on every item. */
     @Volatile private var submitting = false
+
+    private val _isTornDown = MutableStateFlow(false)
+
+    /** `true` once [teardown] ran; every further operation throws [PurseCheckoutException.CheckoutTornDown]. */
+    val isTornDown: StateFlow<Boolean> = _isTornDown.asStateFlow()
 
     /** The current [PaymentSession]; emits again whenever [setSession] swaps it. */
     private val _paymentSession = MutableStateFlow(initialSession)
@@ -349,6 +355,11 @@ class PurseHeadlessCheckout private constructor(
         )
     }
 
+    /** @throws PurseCheckoutException.CheckoutTornDown after [teardown]. */
+    private fun requireOpen() {
+        if (_isTornDown.value) throw PurseCheckoutException.CheckoutTornDown()
+    }
+
     /**
      * Refuse to put a disabled item in the split — web's `setAsPrimarySource` (`METHOD_DISABLED`).
      * Checked against the live list, so a stale instance from an earlier emission is judged on the
@@ -399,9 +410,11 @@ class PurseHeadlessCheckout private constructor(
      *
      * @throws PurseCheckoutException.SessionExpired when the new session is already expired.
      * @throws PurseCheckoutException.SubmitBlocked while a payment is being submitted.
+     * @throws PurseCheckoutException.CheckoutTornDown after [teardown].
      * @throws eu.purse.core.session.PurseSessionException.SessionMalformed if [widgetData] can't be decoded.
      */
     suspend fun setSession(widgetData: String) {
+        requireOpen()
         if (_sessionState.value == SessionState.SUBMITTING) throw PurseCheckoutException.SubmitBlocked(SessionState.SUBMITTING)
         val (newParams, newSession, newRoot) = resolve(widgetData, lockedEnvironment)
         if (newSession.id == session.id) {
@@ -766,11 +779,14 @@ class PurseHeadlessCheckout private constructor(
     }
 
     /**
-     * Release everything this checkout owns — stops the expiry watchdog and any background work.
-     * The instance is unusable afterwards; web's `teardown()`. Call it when the checkout screen is
-     * dismissed for good (not on configuration changes).
+     * Release everything this checkout owns — stops the expiry watchdog and any background work,
+     * and gives every live plugin its `destroyClient`. Web's `teardown()`. Call it when the checkout
+     * screen is dismissed for good (not on configuration changes). Afterwards [isTornDown] is `true`
+     * and every operation that reaches the network, hands out a host or replaces the session throws
+     * [PurseCheckoutException.CheckoutTornDown]; calling it again is a no-op.
      */
     fun teardown() {
+        if (!_isTornDown.compareAndSet(expect = false, update = true)) return
         // Give every tracked plugin its destroyClient (web parity), then cancel everything.
         val plugins = activePlugins.values.toList()
         activePlugins.clear()
@@ -1177,6 +1193,7 @@ class PurseHeadlessCheckout private constructor(
      * @throws IllegalArgumentException for a secondary method or a saved gift card.
      */
     fun host(item: PaymentItem): PluginHost {
+        requireOpen()
         require(item is PrimaryMethod || item is PaymentToken) { "${item.id} cannot be driven by a plugin coordinator" }
         trackPlugin(item)
         return object : PluginHost {
@@ -1228,11 +1245,13 @@ class PurseHeadlessCheckout private constructor(
      * invalid form (see [setFulfilled]).
      * @throws PurseCheckoutException.SessionExpired if the session expired (state moves to `EXPIRED`).
      * @throws PurseCheckoutException.SubmitBlocked if a submit is in flight or the session is spent.
+     * @throws PurseCheckoutException.CheckoutTornDown after [teardown].
      * @throws PurseCheckoutException.ValidateFailed if `/validate` failed — when its `outcomeUnknown`
      * is `true` the request left the device and the payment may exist: check [paymentStatus].
      * @throws PurseCheckoutException.NoPluginRegistered while no `:partner-ui` plugins exist yet.
      */
     suspend fun submitPayment(skipOnBeforeValidate: Boolean = false): ValidationResult {
+        requireOpen()
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_SUBMIT_PAYMENT,
             payload = monitoringPayload(
@@ -1427,8 +1446,11 @@ class PurseHeadlessCheckout private constructor(
      */
     suspend fun simulateLoans(method: PrimaryMethod, product: LoanProduct): List<LoanSimulation> = loans.simulateAll(method, product)
 
-    private fun apiClient(): PaymentApiClient =
-        PaymentApiClient(params.apiKey, paymentApiRoot, params.entityId, session.id)
+    /** Every network path goes through here, so one [requireOpen] covers them all. */
+    private fun apiClient(): PaymentApiClient {
+        requireOpen()
+        return PaymentApiClient(params.apiKey, paymentApiRoot, params.entityId, session.id)
+    }
 
     companion object {
         /**

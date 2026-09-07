@@ -1,6 +1,6 @@
 // Web: packages/headless-checkout/src/utils/error/error.ts (`PurseHeadlessCheckoutError`)
 // Same: typed codes on every failure.
-// Differs: a sealed hierarchy instead of one class with a code.
+// Differs: a sealed hierarchy instead of one class with a code; SubmitBlocked / CheckoutTornDown are thrown where web only logs.
 package eu.purse.checkout
 
 import eu.purse.checkout.payment.item.DisabledState
@@ -39,6 +39,9 @@ sealed class PurseCheckoutException(
             },
             PurseErrorCode.SUBMIT_BLOCKED,
         )
+
+    /** Any call after `teardown()`. */
+    class CheckoutTornDown : PurseCheckoutException("the checkout has been torn down", PurseErrorCode.CHECKOUT_TORN_DOWN)
 
     /**
      * Selecting a method or saved token whose [DisabledState] is set — web's `METHOD_DISABLED`
