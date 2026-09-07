@@ -15,6 +15,7 @@ instead of web's `Klarna.Payments` JS SDK.
 | UI surface | native `KlarnaPaymentView` inflated into a `ViewGroup` you own |
 | Native step vs `/validate` | **`authorize()` runs AFTER `/validate`**, from inside `postValidation` — the plugin family's biggest asymmetry |
 | Gates `isPaymentFulfilled`? | No — readiness is "the widget loaded", reported via `Listener.onReady` |
+| Artifact | `eu.purse:headless-checkout-klarna` (optional) + Klarna's Maven repository `https://x.klarnacdn.net/mobile-sdk/` |
 | Obtain with | `rememberKlarnaCoordinator(listener)`, then set `container` before `prepare` — or simply `rememberPaymentElement` |
 | Manifest work | **Yes** — you must declare a `singleTask` deep link, see below |
 
@@ -124,8 +125,8 @@ sequenceDiagram
 ## Return URL — the one thing you must declare
 
 Klarna's `returnURL` must resume the **same Activity instance** hosting the live `KlarnaPaymentView`
-(unlike Google Pay's 3-D Secure, whose Activity ships inside `:partner-ui`). So the host app declares
-it:
+(unlike Google Pay's 3-D Secure, whose Activity ships inside the SDK). So the host app declares
+it (the plugin itself is the optional `eu.purse:headless-checkout-klarna` artifact):
 
 ```xml
 <activity android:name=".MainActivity" android:launchMode="singleTask" ...>

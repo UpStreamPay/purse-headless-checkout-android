@@ -4,6 +4,10 @@ One task per section. Start with [getting started](getting-started.md); look up 
 [API reference](consumer-api.md). Snippets assume Compose; in a View-based screen collect flows with
 `lifecycleScope.launch { checkout.x.collect { … } }` instead of `collectAsState()`.
 
+Google Pay, PayPal and Klarna live in their own artifacts (`eu.purse:headless-checkout-googlepay`,
+`-paypal`, `-klarna`); the recipes for them assume the matching dependency is declared — see
+[getting started §2](getting-started.md#2-install).
+
 1. [Session state](#1-session-state)
 2. [Method list](#2-method-list)
 3. [Card](#3-card)
@@ -85,6 +89,8 @@ if (cardMethod.canBeRegistered) {                           // save_token_mode P
 
 ## 4. Google Pay and PayPal
 
+Requires `eu.purse:headless-checkout-googlepay` and/or `eu.purse:headless-checkout-paypal`.
+
 ```kotlin
 val element = rememberPaymentElement(checkout, method, listener)
 PaymentElementUi(element, Modifier.fillMaxWidth().height(56.dp))   // the branded button is the submit
@@ -96,7 +102,9 @@ creates an orphan order. No manifest work for either.
 
 ## 5. Klarna
 
-Declare the deep link on the Activity hosting the widget (see getting started §2), then:
+Requires `eu.purse:headless-checkout-klarna` and Klarna's Maven repository
+(`maven("https://x.klarnacdn.net/mobile-sdk/")`). Declare the deep link on the Activity hosting the
+widget (see getting started §2), then:
 
 ```kotlin
 val element = rememberPaymentElement(checkout, klarnaMethod, listener)   // klarnaReturnUrl defaults to "{packageName}.klarna://return"
@@ -283,6 +291,18 @@ try {
 
 Transient `/init` failures are retried by the SDK; do not add your own retry loop.
 
+**A method shows up but cannot pay.** If the session offers Google Pay, PayPal or Klarna and the
+matching artifact is not on your classpath, the method is still listed (the session decides that),
+but its payment element has no UI and `submit()` reports on `onError`:
+
+```
+no plugin registered for klarna/installments — add the `eu.purse:headless-checkout-klarna` dependency to offer this method
+```
+
+The same line is logged at `PurseHeadlessCheckout.init` (tag `PurseHeadlessCheckout`, level W), and
+`submitPayment` throws `PurseCheckoutException.NoPluginRegistered`. Add the dependency, or
+`PluginRegistry.disable(partner, method)` to hide the method in this build.
+
 ## 13. Locale, texts, theme
 
 ```kotlin
@@ -356,6 +376,12 @@ override fun onDestroy() {
 or drive a native step from your own control:
 
 ```kotlin
+import eu.purse.partnerui.plugins.vaults.purse.creditcard.rememberCardCoordinator      // in headless-checkout-android
+import eu.purse.partnerui.rememberRedirectionCoordinator                               // in headless-checkout-android
+import eu.purse.partnerui.plugins.generics.googlepay.rememberGooglePayCoordinator      // in headless-checkout-googlepay
+import eu.purse.partnerui.plugins.partners.paypal.wallet.rememberPaypalCoordinator     // in headless-checkout-paypal
+import eu.purse.partnerui.plugins.partners.klarna.rememberKlarnaCoordinator            // in headless-checkout-klarna
+
 val host = remember(method.id) { checkout.host(method) }             // remember it: the card form is keyed on it
 val card = rememberCardCoordinator(host, listener)                    // PurseCardForm(card) + card.submit()
 val googlePay = rememberGooglePayCoordinator(listener)                // prepare(host); GooglePayButton(googlePay, theme = …)
@@ -363,5 +389,7 @@ val paypal = rememberPaypalCoordinator(listener)                      // prepare
 val klarna = rememberKlarnaCoordinator(listener)                      // container = …; prepare(host, returnUrl); submit()
 val redirection = rememberRedirectionCoordinator(listener)            // prepare(host); submit()
 ```
+
+Each partner's `remember*Coordinator` ships with its artifact, in the plugin's own package.
 
 Per-method internals (`/init` shapes, sequence diagrams, failure modes): [docs/plugins](../plugins/README.md).

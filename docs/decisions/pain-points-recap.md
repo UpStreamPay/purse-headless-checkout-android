@@ -78,7 +78,7 @@ found by comparing this port against `usp-widget` directly:
 - **Redirect-based methods need app-side manifest declarations; web needs none.** Klarna (built,
   though outside the ticket's four) needs the host app to declare its own `singleTask` intent-filter
   so its return URL resumes the right Activity. **PayPal, now built, needs none** — its return goes to
-  a self-contained Activity `:partner-ui` ships (scheme `${applicationId}.paypal`) and the SDK
+  a self-contained Activity `eu.purse.partnerui` ships (scheme `${applicationId}.paypal`) and the SDK
   supplies the matching `redirect_uri` itself, so Klarna remains the only method imposing manifest
   work on the integrator. Still new integration surface with no web equivalent, but confined to one
   method rather than spreading.

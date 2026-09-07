@@ -4,23 +4,40 @@ This SDK is a **headless** port of Purse's web `usp-widget` — it owns the *con
 payment* and lets a merchant build their own checkout UI on top. It mirrors the web packages
 (`../../../Development/purse/usp-widget/packages`) rather than the older native drop-in.
 
-## Modules
+## Layout
 
-| Module | Package | Mirrors web | Responsibility |
-|---|---|---|---|
-| `:core` | `eu.purse.core` | `sdk` + `model` + `common` | Payment API client, environment targets, the `Partner`/`Method`/`VaultVendor`/`CardBrand` enums, `MethodConfiguration`, the raw `LegacyPaymentSession` DTO + its base64 `widget.data` decode, and the typed `ItemPayload`/`ValidationResult`. No orchestration. |
-| `:partner-ui` | `eu.purse.partnerui` + `.redirect` + `.plugins.generics.googlepay` + `.plugins.generics.redirection` + `.plugins.partners.klarna` + `.plugins.partners.paypal.wallet` + `.plugins.vaults.purse.creditcard` | `partner-ui` (contract + `plugins/generics/googlepay` + `plugins/generics/redirection` + `plugins/partners/klarna-installments` + `plugins/partners/paypal/wallet` + `plugins/vaults/purse/creditcard`) | The plugin lifecycle **contract** — `PartnerUiPlugin`, `PartnerUiContext`, `PluginRegistry` (with runtime `register`/`registerVault`/`registerGeneric`) — the **shared redirect machinery** (`eu.purse.partnerui.redirect`: `RedirectionResolver` + the in-app-WebView return Activity, a sibling of `plugins/` because all five plugins use it) — **and** the concrete **Google Pay (Ingenico/Worldline)**, **Klarna**, **PayPal (wallet)**, **Purse vault credit-card** and **generic redirection template** plugins living in the same module: pure protocol plus, respectively, the Play-Services sheet coordinator, the native `KlarnaPaymentView` coordinator, a coordinator driving PayPal's own browser switch, a Compose-first coordinator wrapping the SecureFields Android SDK, and a coordinator that does nothing but `/init` → `/validate` → follow the redirect. Registered by default (`PluginRegistry`'s own `init` block). Each reaches `:headless-checkout` only through the `PluginHost` interface — implemented by `PurseHeadlessCheckout.host(item)` — so the module dependency never points from `:partner-ui` to `:headless-checkout`. |
-| `:headless-checkout` | `eu.purse.checkout` | `headless-checkout` | `PurseHeadlessCheckout`: session decode, the built payment model, the splitter, and the plugin-driven "create payment" pipeline. |
-| `:app` | `eu.purse.checkout.demo` | playground | Smoke test: mint a session via alfred → `init` → print methods/split; drives Google Pay, PayPal, Klarna, or a Purse-vaulted card. |
+One Gradle module, `:headless-checkout`, is the SDK — published as `eu.purse:headless-checkout-android`
+with the card and redirection methods inside. Google Pay, Klarna and PayPal each bring a partner SDK
+(Klarna's even its own Maven repository), so they are optional sibling modules/artifacts
+(`:partner-googlepay`, `:partner-klarna`, `:partner-paypal`), each contributing a `PartnerModule`
+that `PluginRegistry` discovers through `ServiceLoader` (see
+[decisions/distribution.md](../decisions/distribution.md)). The SDK's three packages mirror the web
+packages; the demo `:app` is never published.
 
-Dependency direction: `app → { headless-checkout, partner-ui }`, `headless-checkout →
-{ core, partner-ui }`, `partner-ui → core`.
+| Package | Mirrors web | Responsibility |
+|---|---|---|
+| `eu.purse.core` | `sdk` + `model` + `common` | Payment API client, environment targets, the `Partner`/`Method`/`VaultVendor`/`CardBrand` enums, `MethodConfiguration`, the raw `LegacyPaymentSession` DTO + its base64 `widget.data` decode, and the typed `ItemPayload`/`ValidationResult`. No orchestration. |
+| `eu.purse.partnerui` (+ `.redirect`, `.plugins.generics.redirection`, `.plugins.vaults.purse.creditcard`) | `partner-ui` (contract + `plugins/generics/redirection` + `plugins/vaults/purse/creditcard`) | The plugin lifecycle **contract** — `PartnerUiPlugin`, `PartnerUiContext`, `PluginRegistry` (with runtime `register`/`registerVault`/`registerGeneric`), and the `PartnerModule` seam an optional partner artifact plugs into — the **shared redirect machinery** (`eu.purse.partnerui.redirect`: `RedirectionResolver` + the in-app-WebView return Activity, a sibling of `plugins/` because every plugin uses it) — **and** the two plugins every merchant gets: the **Purse vault credit-card** plugin (protocol + a Compose-first coordinator wrapping the SecureFields Android SDK) and the **generic redirection template** (protocol + a coordinator that does nothing but `/init` → `/validate` → follow the redirect). Both are the SDK's built-in `PartnerModule`s. Each plugin reaches the engine only through the `PluginHost` interface — implemented by `PurseHeadlessCheckout.host(item)`. |
+| `eu.purse.partnerui.plugins.generics.googlepay` (`:partner-googlepay`) | `partner-ui/plugins/generics/googlepay` | **Optional artifact.** The Google Pay (Ingenico/Worldline, Adyen, default) plugin: pure protocol plus the Play-Services sheet coordinator and Google's button; `GooglePayModule` registers it for `(ingenico, googlepay)` and as the `googlepay` method fallback. Brings Play Services Wallet. |
+| `eu.purse.partnerui.plugins.partners.klarna` (`:partner-klarna`) | `partner-ui/plugins/partners/klarna-installments` | **Optional artifact.** The Klarna plugin: pure protocol plus the native `KlarnaPaymentView` coordinator; `KlarnaModule` registers `(klarna, installments)`. Brings the Klarna Mobile SDK and its Maven repository. |
+| `eu.purse.partnerui.plugins.partners.paypal.wallet` (`:partner-paypal`) | `partner-ui/plugins/partners/paypal/wallet` | **Optional artifact.** The PayPal wallet plugin: pure protocol plus a coordinator driving PayPal's own browser switch and its self-contained return Activity; `PaypalModule` registers `(paypal, wallet)`. Brings the PayPal Android SDK. |
+| `eu.purse.checkout` | `headless-checkout` | `PurseHeadlessCheckout`: session decode, the built payment model, the splitter, the plugin-driven "create payment" pipeline, and `rememberPaymentElement`. |
+| `eu.purse.checkout.demo` (`:app`) | playground | Smoke test: mint a session via alfred → `init` → print methods/split; drives Google Pay, PayPal, Klarna, or a Purse-vaulted card. |
+
+Dependency direction: `app → { headless-checkout, partner-* }`, `partner-* → headless-checkout`; inside
+the SDK, `checkout → { partnerui, core }`, `partnerui → core`, never back — `partnerui` reaches the
+engine only through `PluginHost` (a convention every file's `// Web: / Same: / Differs:` header and
+this page keep, since the three packages share one module). The optional partner modules are found at
+runtime, never referenced: each ships a `PartnerModule` in
+`META-INF/services/eu.purse.partnerui.PartnerModule`, `PluginRegistry` loads them with `ServiceLoader`
+at class load, and `rememberPaymentElement` asks the plugin's module for its Compose surface
+(`PaymentSurface`) instead of switching over concrete plugin classes.
 
 ## The purse-payment concept
 
 1. **Session (V2).** A merchant backend hands the app a base64 `widget.data` blob wrapping
    `{ api_key, api_url, environment, entity_id, payment_session }`. `SessionCodec.decode` (in
-   `:core`) canonicalizes it to a `LegacyPaymentSession`; there is no separate V2 domain model.
+   `eu.purse.core`) canonicalizes it to a `LegacyPaymentSession`; there is no separate V2 domain model.
 2. **Build.** `PaymentSessionBuilder` turns `protocols.{partner}.{method}` into a means-of-payment
    list (`PaymentItem`: `PrimaryMethod` / `SecondaryMethod`), applying the availability rules.
 3. **Split.** `PursePaymentSplitter` models **one primary + N secondaries** in integer cents.
@@ -49,7 +66,7 @@ Amounts are decimal major-currency units; the splitter works in integer cents (�
 
 ## Secondaries (co-payment)
 
-Secondaries (gift cards, vouchers, loyalty) are a **`:headless-checkout` concern, not a `:partner-ui`
+Secondaries (gift cards, vouchers, loyalty) are an **`eu.purse.checkout` concern, not an `eu.purse.partnerui`
 plugin** — matching web. The flow, in `payment.secondary`:
 
 1. `PurseHeadlessCheckout.getSecondaryToken(method, pan, cvv)` validates the card against the
@@ -57,7 +74,7 @@ plugin** — matching web. The flow, in `payment.secondary`:
 2. `applySecondary(token, amount?)` draws it into the split, honouring its `SecondaryTakePolicy`
    (`NONE` = splittable gift card, `MAX` = non-splittable loyalty).
 3. At `submitPayment`, secondary splits build their `/validate` payload from the same
-   `SecondaryConfig` (no plugin), while primary splits go through a `:partner-ui` plugin.
+   `SecondaryConfig` (no plugin), while primary splits go through a `eu.purse.partnerui` plugin.
 
 ### API (`PurseHeadlessCheckout`)
 
@@ -125,7 +142,7 @@ through the config) and `classifyInitError` (a partner refusal → typed excepti
 defaults. **`ancv-connect` itself is still not shipped**, but its holder→poll flow is now
 expressible through those hooks rather than blocked on an SDK change.
 
-## Plugin lifecycle (`:partner-ui`)
+## Plugin lifecycle (`eu.purse.partnerui`)
 
 A plugin integrates one `(partner, method)` pair — except a **generic template** plugin, which serves
 whichever pairs the session labels with its template. `getPlugin` resolves **vault → generic template
@@ -142,15 +159,16 @@ validate:  validateUi(optional) → preValidation ─ host POSTs /validate ─�
 teardown:  destroyClient
 ```
 
-Concrete plugins live inside `:partner-ui` (alongside the contract, like web) and are registered by
-default — `PluginRegistry`'s own `init` block registers all five, mirroring web's
-`getPlugin`, which needs no
-registration step at all. The
+The card and redirection plugins live inside `eu.purse.partnerui` (alongside the contract) and
+register themselves at class load through the SDK's two built-in `PartnerModule`s; Google Pay, Klarna
+and PayPal live in their optional modules and register the same way once their artifact is on the
+classpath (`ServiceLoader`). The net effect mirrors web's `getPlugin`, which needs no registration
+step at all. The
 session (checked in `getPlugin` against `protocols`) is the real gate on whether a method is
 offered — that's already decided server-side, so no app-side setup call is required for a built-in
 plugin to work. `PluginRegistry.disable`/`enable` opt a built-in method out/back in for a specific
-app build; `register`/`registerFallback`/`registerGeneric` remain for a plugin that isn't bundled in
-`:partner-ui` itself. A `(partner, method)` with no plugin at all (e.g. a non-Purse-vaulted card/CB)
+app build; `register`/`registerFallback`/`registerGeneric` (or a whole `PartnerModule` via
+`PluginRegistry.install`) remain for a plugin that isn't one of Purse's own. A `(partner, method)` with no plugin at all (e.g. a non-Purse-vaulted card/CB)
 still makes `submitPayment` throw `PurseCheckoutException.NoPluginRegistered`.
 
 Each shipped plugin has its own reference page — `/init` contract, sequence diagram, quirks, failure
@@ -211,7 +229,7 @@ Three things set it apart:
   `prepare` does no network work at all.
 - **The return URL needs no configuration, from the integrator or the backend.** The SDK puts its own
   `redirect_uri` in the approval URL, built from the `urlScheme` it is handed; the matching Activity
-  and deep link (`${applicationId}.paypal`) ship in `:partner-ui`'s manifest. This is the one place
+  and deep link (`${applicationId}.paypal`) ship in the PayPal artifact's manifest. This is the one place
   the redirect-return gap in [pain-points-recap](../decisions/pain-points-recap.md) turns out not to
   bite.
 - **Its client id comes from the session, not `/init`** — `merchant_specifics.client_id`, the inverse

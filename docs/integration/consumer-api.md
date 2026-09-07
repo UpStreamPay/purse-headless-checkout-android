@@ -14,8 +14,9 @@ Everything here is the Kotlin analog of web's `@upstreampay/headless-checkout` +
 
 ### Plugins are active by default — no setup call needed
 
-Every plugin `:partner-ui` ships (Google Pay, Klarna, PayPal, Purse-vaulted card, the generic
-redirection template) is registered automatically in `PluginRegistry`; there is nothing to call. Whether a method actually shows
+Every plugin on the classpath — Purse-vaulted card and the generic redirection template from the
+SDK itself, Google Pay / Klarna / PayPal from their optional artifacts — is registered
+automatically in `PluginRegistry`; there is nothing to call. Whether a method actually shows
 up is gated by the **session** alone — the same thing that already decides it server-side, in the
 merchant's Purse configuration. `paymentMethods` simply won't include a method the session doesn't
 offer.
@@ -360,9 +361,13 @@ PSP's own behaviour — what its `/init` returns, where its native step sits rel
 its quirks and failure modes, with sequence diagrams — has a page of its own under
 **[docs/plugins](../plugins/README.md)**.
 
+Google Pay, PayPal and Klarna ship as optional artifacts (`eu.purse:headless-checkout-googlepay`,
+`-paypal`, `-klarna`); their classes below exist only when the artifact is on the classpath. Card and
+redirection are in `headless-checkout-android` itself.
+
 Three pieces make up the pattern for every such plugin:
 
-1. A **`*Host` interface** in `:partner-ui` — what the plugin's coordinator needs from the checkout,
+1. A **`*Host` interface** in `eu.purse.partnerui` — what the plugin's coordinator needs from the checkout,
    implemented by `PurseHeadlessCheckout`.
 2. A **`*Coordinator`** class — drives the plugin's native SDK, reports outcomes via a `Listener`.
 3. A **`setCollected`** call — stashes sheet/widget output so `submitPayment`'s `/validate` payload
@@ -481,6 +486,9 @@ payment either — leave the shopper able to pick another method.
 
 #### Google Pay
 
+Artifact `eu.purse:headless-checkout-googlepay`, package `eu.purse.partnerui.plugins.generics.googlepay`.
+
+
 > Deep dive — `/init` shapes per gateway, sequence diagram, quirks, failure modes:
 > **[docs/plugins/google-pay.md](../plugins/google-pay.md)**.
 
@@ -492,6 +500,9 @@ shows itself only once ready and passes button looks (`theme`, `type`, `cornerRa
 
 #### PayPal
 
+Artifact `eu.purse:headless-checkout-paypal`, package `eu.purse.partnerui.plugins.partners.paypal.wallet`.
+
+
 > Deep dive — the out-of-app approval round trip, sequence diagram, quirks, failure modes:
 > **[docs/plugins/paypal.md](../plugins/paypal.md)**.
 
@@ -500,10 +511,13 @@ creates the PayPal order waits for `submit()`, so merely showing the button neve
 order. `submit()` runs `/init`, launches PayPal's approval (the PayPal app when installed, else a
 Custom Tab), and captures via `/validate` once the buyer approves; with a saved token on the host it
 captures straight away. `onRequiresAction` fires for the approval, and again only if `/validate` chains
-a 3-D Secure step. **No manifest work**: the approval returns to an Activity `:partner-ui` ships
+a 3-D Secure step. **No manifest work**: the approval returns to an Activity `eu.purse.partnerui` ships
 (scheme `${applicationId}.paypal`).
 
 #### Klarna
+
+Artifact `eu.purse:headless-checkout-klarna`, package `eu.purse.partnerui.plugins.partners.klarna`.
+
 
 > Deep dive — why `authorize()` runs after `/validate`, sequence diagram, quirks, failure modes:
 > **[docs/plugins/klarna.md](../plugins/klarna.md)**.
@@ -584,12 +598,15 @@ for this template it means the PSP never handed over its page.
 
 ### Registering a new plugin, or opting a built-in one out (`PluginRegistry`)
 
-The `register*` functions are only relevant if you're adding a plugin that isn't bundled in
-`:partner-ui` itself — built-in ones are already registered, see
+The `register*` functions are only relevant if you're adding a plugin that isn't one of Purse's own —
+built-in ones are already registered, and the optional partner artifacts register themselves, see
 [§1](#plugins-are-active-by-default--no-setup-call-needed).
 
 | Function | Signature |
 |---|---|
+| `install` | `fun install(module: PartnerModule)` — add a whole module (its plugins + how they render); every Purse partner artifact on the classpath is installed automatically through `ServiceLoader`, so this is for a module of your own, or for a build that strips `META-INF/services`. Installing the same module twice is a no-op. |
+| `modules` | `val modules: List<PartnerModule>` — what is installed, built-ins (card, redirection) first. |
+| `moduleFor` | `fun moduleFor(plugin: PartnerUiPlugin): PartnerModule?` — the module that renders a plugin. |
 | `register` | `fun register(partner: Partner, method: Method, builder: PluginBuilder)` |
 | `registerFallback` | `fun registerFallback(method: Method, builder: PluginBuilder)` |
 | `registerVault` | `fun registerVault(vendor: VaultVendor, builder: PluginBuilder)` |
@@ -607,9 +624,38 @@ yourself and disagreeing with the registry. Full chain and rationale:
 
 ---
 
+### Writing your own partner module (`PartnerModule`)
+
+An artifact that adds a payment method contributes one `PartnerModule` — the seam Purse's own
+Google Pay, Klarna and PayPal artifacts use. `PluginRegistry` finds them through `ServiceLoader`
+(`META-INF/services/eu.purse.partnerui.PartnerModule`, a `class` with a public no-arg constructor)
+or you hand one over with `PluginRegistry.install(module)`.
+
+```kotlin
+interface PartnerModule {
+    fun register(registry: PluginRegistry)                       // add your plugins: register / registerFallback / registerGeneric / registerVault
+    fun renders(plugin: PartnerUiPlugin): Boolean                // `plugin is MyPlugin`
+    @Composable fun rememberSurface(plugin: PartnerUiPlugin, request: SurfaceRequest): PaymentSurface
+}
+
+class SurfaceRequest(val host: PluginHost, val isToken: Boolean, val key: Any, val listener: PaymentElementListener, val appReturnUrl: String? = null)
+class PaymentSurface(val hasUi: Boolean, val selfSubmitting: Boolean, onSubmit: () -> Unit, val ui: @Composable (Modifier) -> Unit) {
+    fun submit()
+    companion object { fun headless(onSubmit: () -> Unit): PaymentSurface }   // nothing on screen; submit runs the flow
+}
+```
+
+`rememberSurface` is where you create your coordinator (`PaymentCoordinator` subclass), wire its
+Activity-result launchers and run `prepare(request.host)`; `rememberPaymentElement` then wraps the
+returned `PaymentSurface` exactly as it does for the shipped methods. `PartnerArtifacts.forMethod` /
+`missingPluginMessage` are the table behind the "add this dependency" hint the SDK gives when a
+Purse artifact is missing; they know only Purse's own artifacts.
+
+---
+
 ## 7. Declaring your own deep link for Klarna
 
-Unlike Google Pay's 3-D Secure return (a self-contained Activity `:partner-ui` ships), Klarna's
+Unlike Google Pay's 3-D Secure return (a self-contained Activity `eu.purse.partnerui` ships), Klarna's
 `returnURL` must resume the **same Activity** hosting the live `KlarnaPaymentView`. Your app must
 declare a matching `singleTask` intent-filter:
 
@@ -626,8 +672,8 @@ declare a matching `singleTask` intent-filter:
 
 Pass the matching URL (e.g. `"$packageName.klarna://return"`) as `rememberPaymentElement`'s
 `klarnaReturnUrl` (its default is exactly that), or to `KlarnaCoordinator.prepare(host, returnUrl)`.
-No manifest change is required for Google Pay or PayPal — both of their return Activities ship
-inside `:partner-ui`.
+No manifest change is required for Google Pay or PayPal — the 3-D Secure return Activity ships in
+`headless-checkout-android`, PayPal's approval return Activity in `headless-checkout-paypal`.
 
 ---
 
@@ -660,8 +706,9 @@ While in flight, every item reads `DisabledState.Submitting`; the lock lifts whe
 - `PurseCheckoutException.CheckoutTornDown` — after `teardown()`.
 - `PurseCheckoutException.HookFailed` — your `onBeforeValidate` hook threw (code
   `ON_BEFORE_VALIDATE_HOOK_FAILED`, your exception as `cause`); nothing was sent.
-- `PurseCheckoutException.NoPluginRegistered` — no `:partner-ui` plugin registered for the chosen
-  primary's `(partner, method)`.
+- `PurseCheckoutException.NoPluginRegistered` — no plugin registered for the chosen primary's
+  `(partner, method)`. For Google Pay, Klarna or PayPal this means the optional artifact is missing;
+  `PartnerArtifacts.missingPluginMessage(partner, method)` (and the warning `init` logs) name it.
 - `PurseCheckoutException.ValidateFailed` — `/validate` failed. **Check `outcomeUnknown`**: `true`
   means the request left the device and no answer came back, so the payment may exist server-side —
   reconcile with `awaitPaymentOutcome()` instead of telling the shopper it failed.
@@ -719,7 +766,7 @@ interactive plugin.
 |---|---|---|
 | `PurseCheckoutException.PaymentNotFulfilled` | `submitPayment` | Split doesn't cover the amount / no primary set. |
 | `PurseCheckoutException.ItemNotFulfilled` | `submitPayment` | An item in the split has an incomplete or invalid form (web's `ELEMENT_NOT_FULFILLED`). |
-| `PurseCheckoutException.NoPluginRegistered` | `submitPayment` | No `:partner-ui` plugin for the chosen `(partner, method)`. |
+| `PurseCheckoutException.NoPluginRegistered` | `submitPayment` | No `eu.purse.partnerui` plugin for the chosen `(partner, method)`. |
 | `PurseCheckoutException.ValidateFailed` | `submitPayment` | `/validate` failed. `outcomeUnknown == true` means the request left and nothing answered: reconcile with `awaitPaymentOutcome()`. |
 | `PurseCheckoutException.SessionExpired` | `submitPayment`, `setSession` | The session (or the new one) is expired (`EXPIRED_SESSION`). |
 | `PurseCheckoutException.SubmitBlocked` | `submitPayment`, `setSession` | A submit is in flight, or the session's one validation is spent (`SUBMIT_BLOCKED`). |

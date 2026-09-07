@@ -16,7 +16,8 @@ fields themselves.
 | Native step vs `/validate` | tokenize **before**, then `/init` and `/validate` back to back |
 | Gates `isPaymentFulfilled`? | **Yes** — the only plugin that does |
 | Saved cards | **Yes** — `host(token)`: a CVV-only form when `token.requiresCvv` (`Mode.TOKEN_CVV`), no form behind the no-CVV gates (`Mode.TOKEN_NO_CVV`) |
-| Manifest work | None (3-D Secure uses the Activity `:partner-ui` ships) |
+| Artifact | `eu.purse:headless-checkout-android` (always present) |
+| Manifest work | None (3-D Secure uses the Activity the SDK ships) |
 
 Because the vault family resolves first, this plugin serves *any* partner's `creditcard` as long as
 the session marks it Purse-vaulted — `CardPlugin(partner)` carries whichever partner that is into the

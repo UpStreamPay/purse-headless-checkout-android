@@ -19,7 +19,8 @@ Pay-now only. Registration / vaulting and BNPL ("Pay Later") are out of scope �
 | Native step vs `/validate` | **approval runs BEFORE `/validate`**, but after this plugin's own `/init` |
 | Gates `isPaymentFulfilled`? | No — there is no form; readiness is just "the session offers PayPal" |
 | Obtain with | `rememberPaypalCoordinator(listener)` — Compose-managed launchers; or simply `rememberPaymentElement` |
-| Manifest work | **None** — the return Activity and its deep link ship in `:partner-ui` |
+| Artifact | `eu.purse:headless-checkout-paypal` (optional) |
+| Manifest work | **None** — the return Activity and its deep link ship in the artifact's manifest |
 
 PayPal is the only shipped method whose payment step takes the shopper **out of the app and back**.
 Everything else either stays in-app (Google Pay's sheet, Klarna's widget, the card form) or leaves
@@ -159,7 +160,7 @@ sequenceDiagram
 
 ## Return URL — nothing to declare
 
-The return Activity and its deep link ship in `:partner-ui`'s own manifest, scheme
+The return Activity and its deep link ship in the PayPal artifact's own manifest, scheme
 `${applicationId}.paypal` (namespaced exactly like the shared `${applicationId}.redirect`, so the
 two can never collide):
 

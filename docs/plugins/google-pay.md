@@ -14,6 +14,7 @@ with a per-partner config parser), driving Google's own `PaymentsClient` instead
 | UI surface | **xpay** — Google's branded button *is* the submit action; there's no row to select and no form to validate |
 | Native step vs `/validate` | sheet runs **before** `/validate`; its token becomes `partner_data.session` |
 | Gates `isPaymentFulfilled`? | No (nothing to validate — see [plugins README](README.md#form-completeness-gates-the-payment)) |
+| Artifact | `eu.purse:headless-checkout-googlepay` (optional) |
 | Obtain with | `rememberGooglePayCoordinator(listener)` — Compose-managed launchers; or simply `rememberPaymentElement` |
 
 ## What `/init` must return
@@ -130,7 +131,8 @@ sequenceDiagram
    That looks wrong and is faithful: web's `adyen.ts` does exactly the same
    (`merchantName: paymentMethods.gatewayMerchantId`). Left as-is so both SDKs send the same request.
 9. **No manifest work for the 3-D Secure return** — `RedirectionCheckoutActivity` ships inside
-   `:partner-ui` (unlike Klarna's return URL, which needs your own Activity).
+   the SDK (unlike Klarna's return URL, which needs your own Activity). The plugin itself is the
+   optional `eu.purse:headless-checkout-googlepay` artifact.
 
 ## Host integration
 

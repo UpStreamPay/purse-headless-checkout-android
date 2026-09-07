@@ -18,8 +18,9 @@ covers, and the PSP's own hosted page is the entire shopper-facing surface.
 | UI surface | none — the PSP's hosted page, opened in the shared redirect WebView |
 | Native step vs `/validate` | **the redirect IS the payment step**, and it happens after `/validate` |
 | Gates `isPaymentFulfilled`? | No — there is no form to validate (web dispatches `fulfilled: true` at `/init` time for the same reason) |
+| Artifact | `eu.purse:headless-checkout-android` (always present) |
 | Obtain with | `rememberRedirectionCoordinator(listener)` — or simply `rememberPaymentElement` (`hasUi = false`) |
-| Manifest work | None — the redirect Activity ships in `:partner-ui`'s own manifest |
+| Manifest work | None — the redirect Activity ships in the SDK's own manifest |
 
 ## Detection
 
