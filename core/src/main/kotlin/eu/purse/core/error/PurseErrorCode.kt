@@ -1,6 +1,6 @@
 // Web: packages/headless-checkout/src/utils/error/error-codes.ts
 // Same: same codes.
-// Differs: nothing.
+// Differs: SUBMIT_BLOCKED and CHECKOUT_TORN_DOWN are thrown here where web only logs (or has no lifecycle end).
 package eu.purse.core.error
 
 /**
@@ -9,12 +9,22 @@ package eu.purse.core.error
  * merchant integrating both platforms handles one vocabulary; codes web can't produce on Android
  * (DOM payment-element rendering, wallet UI states) are added only once the matching feature ships.
  *
+ * Two codes are Android-only, because the situations are refused here where web stays silent:
+ * [SUBMIT_BLOCKED] (web posts the `HEADLESS_CHECKOUT_SUBMIT_BLOCKED` monitoring event and returns)
+ * and [CHECKOUT_TORN_DOWN] (web's `teardown` leaves the instance usable).
+ *
  * Each code links to the shared docs at [documentationLink], like web's `getErrorDocLink`.
  */
 enum class PurseErrorCode {
     // Session
     EXPIRED_SESSION,
     SESSION_MALFORMED,
+
+    /** `submitPayment` on a session that is being submitted, already submitted, or terminated. */
+    SUBMIT_BLOCKED,
+
+    /** Any operation after `teardown()`. */
+    CHECKOUT_TORN_DOWN,
 
     // Payment process
     VALIDATE_FAILED,
@@ -24,6 +34,9 @@ enum class PurseErrorCode {
     UI_VALIDATION_FAILED_ERROR,
     ON_BEFORE_VALIDATE_HOOK_FAILED,
     METHOD_NOT_IMPLEMENTED,
+
+    /** Selecting a method (or saved token) whose `disabled` state is set — web's `setAsPrimarySource`. */
+    METHOD_DISABLED,
 
     // Secondary methods
     FAILED_TO_INIT_SECONDARY_TOKEN,
