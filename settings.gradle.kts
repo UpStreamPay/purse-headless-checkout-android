@@ -25,7 +25,7 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "dropin-android"
+rootProject.name = "purse-headless-checkout-android"
 
 // Minimal demo host — mints a session via alfred and drives the headless SDK. ≈ web playground.
 include(":app")

@@ -26,7 +26,7 @@ dependencyResolutionManagement {
         maven("https://x.klarnacdn.net/mobile-sdk/")   // Klarna's SDK is not on Maven Central
     }
 }
-includeBuild("../dropinandroid") {
+includeBuild("../purse-headless-checkout-android") {
     dependencySubstitution {
         substitute(module("eu.purse:headless-checkout")).using(project(":headless-checkout"))
         substitute(module("eu.purse:partner-ui")).using(project(":partner-ui"))
