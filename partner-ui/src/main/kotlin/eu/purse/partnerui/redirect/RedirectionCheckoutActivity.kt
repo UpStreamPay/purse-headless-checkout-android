@@ -55,9 +55,10 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
             startRedirect()
         } else {
             // Recreated after process death mid-challenge: the WebView (and any in-progress ACS
-            // state) is gone, and re-POSTing the form would risk a double submit. Resolve to a
-            // clean cancel so the caller returns to a defined state and the shopper can retry.
-            finishWith(STATUS_CANCELED, message = "redirect interrupted by process death")
+            // state) is gone, and re-POSTing the form would risk a double submit. The payment may
+            // nonetheless have completed while we were away, so this is a *return*, never a cancel —
+            // the caller checks the session status and learns the real outcome.
+            finishWith(STATUS_APPROVED, message = "redirect interrupted by process death — check the session status")
         }
     }
 
