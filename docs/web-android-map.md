@@ -81,6 +81,11 @@ adds or removes a divergence.
 | Klarna return | page URL | host app must declare a `singleTask` deep link | `KlarnaPaymentView` resumes the same Activity |
 | Payment confirmation after redirect | merchant success page | `paymentStatus()` / `awaitPaymentOutcome()` polling | the app returns to the launching screen |
 | `setSession` survivors | resets the split | keeps an unchanged primary selected | AC of US-24 |
+| Second submit | latch posts `HEADLESS_CHECKOUT_SUBMIT_BLOCKED` and returns silently | same latch, atomic, **throws** `SubmitBlocked` (`SUBMIT_BLOCKED`) and re-checks expiry first | a merchant needs a code to react to, not a silent no-op (SDK-12218) |
+| `SUBMITTING` disabled state | declared, never set | overlaid on every selectable item while `submitPayment` runs | US-22 |
+| `teardown()` | unsubscribes the event bus; instance stays usable | releases everything, `isTornDown`, later calls throw `CheckoutTornDown` | US-25 |
+| Redirect WebView | page navigation | `https`-only navigation, file/content access off, return intent checked against the app's own scheme | US-08 / US-09 |
+| Process death during a redirect | n/a | recreation reports a *return* (check the session), never a cancel | US-27 |
 | Saved gift cards | listed in `mops` | `savedSecondaryTokens` flow, balances re-`/init`ed sequentially | `InitGuard` would coalesce parallel `/init`s of one issuer |
 | Loan simulation total | `(n − 1) × recurring + initial + final`, and the drop-in draws `n + 1` lines | `initial + (n − 2) × recurring + final`, `n` lines | `instalment_number` is the total count; web counts one instalment twice (bug to report on web) |
 | Monitoring envelope | `wrapper`, `env`, … | same plus `platform: "android"` | matches the native vault SDKs |

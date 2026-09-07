@@ -292,11 +292,31 @@ torn down and gets a new `itemGenerations` generation so `rememberPaymentElement
 applied gift cards are dropped; the watchdog restarts; `paymentSession` emits the swap); CDN method
 icons (`PurseAssets`); typed
 payment confirmation (`paymentStatus()` / `awaitPaymentOutcome()` over `sessionTransactions()`);
-and a hardened redirect WebView (progress, first-page watchdog, network-failure surfacing,
-process-death safety); BNPL loan simulation (`PrimaryMethod.simulable` off the `simulable` label,
+and a hardened redirect WebView (progress, first-page watchdog, network-failure surfacing); BNPL
+loan simulation (`PrimaryMethod.simulable` off the `simulable` label,
 `simulateLoan` / `simulateLoans` over the entity-scoped `POST /simulation/…` endpoints, `LoanProduct` /
 `LoanSimulation` mapped as web's `mapPluginResultToSimulation` — counts and amounts, no per-instalment
 dates — and the `METHOD_IS_NOT_SIMULABLE` / `INVALID_LOAN_SIMULATION` codes).
+
+Since then (SDK-12218, reliability): **one submit per session** — `submitPayment` re-checks
+expiry against the server clock, then an atomic latch (`compareAndSet` on `sessionState` plus web's
+`validationConsumed`) lets exactly one call through; the loser gets `SubmitBlocked`
+(`SUBMIT_BLOCKED`), a declined payment counts as spent, and a zero-amount session needs a primary.
+Every otherwise-selectable item reads `DisabledState.Submitting` while the call is in flight. Every
+`DisabledState` carries web's displayable `message`; a disabled item cannot enter the split
+(`MethodDisabled`, web's `METHOD_DISABLED`, judged on the live state — coordinators route it
+through `selectAndCapture` so a wallet approval on a dead method ends as a submit failure) and a
+technically disabled one gets a `PaymentElement` with no UI. The splitter ports web's
+`ensureTakePolicy` / `isMethodLimitReached` (`INVALID_TAKE_AMOUNT`, `MAX_AMOUNT_REACHED`,
+`USAGE_LIMIT_ERROR` off `usage_per_session_limit`) instead of clamping. Every `suspend` function
+dispatches its network call to `Dispatchers.IO`; `sessionTransactions` / `paymentStatus` became
+`suspend`, so no public function blocks. `ValidateFailed.outcomeUnknown` flags a `/validate` that
+left without an answer. `teardown()` sets `isTornDown` and every later operation throws
+`CheckoutTornDown`. All exceptions share one `PurseException` root (`code`, `documentationLink`),
+`PurseSessionException` (`SESSION_MALFORMED`) and `PaymentApiException` (`API_ERROR`) included;
+`PurseErrorCodeCoverageTest` exercises every code. The redirect WebView follows `https` pages only,
+with file/content access off, accepts a return intent only on the app's own scheme, and reports
+recreation after process death as a *return* to reconcile, never a cancel.
 
 Since then (SDK-12216): **CVV re-entry on a saved card** — `PaymentToken.requiresCvv` (the inverse
 of web's no-CVV gates) arms the per-item fulfillment gate at `setPrimaryToken`, `host(token)`

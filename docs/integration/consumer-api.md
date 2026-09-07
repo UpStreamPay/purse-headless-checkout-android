@@ -105,8 +105,10 @@ you fetched a fresh one — without tearing the screen down. What survives follo
 | Amount, expiry watchdog, `sessionState` | — | the new session's amount; the watchdog restarts; state returns to `READY` |
 
 Same session id → ignored with a warning, as on web. **Throws** `PurseCheckoutException.SessionExpired`
-(`EXPIRED_SESSION`) when the new session is already expired — the old one stays in force — and
-`IllegalStateException` while a payment is being submitted. Emits `HEADLESS_CHECKOUT_SET_SESSION`.
+(`EXPIRED_SESSION`) when the new session is already expired — the old one stays in force —
+`PurseCheckoutException.SubmitBlocked` (`SUBMIT_BLOCKED`) while a payment is being submitted, and
+`PurseCheckoutException.CheckoutTornDown` (`CHECKOUT_TORN_DOWN`) after `teardown()`. Emits
+`HEADLESS_CHECKOUT_SET_SESSION`.
 
 Keying UI on `(item.id, generation)` is what makes "keep what is still valid" work on the screen:
 `rememberPaymentElement` already does it, so an unchanged card keeps its SecureFields form and
@@ -122,10 +124,11 @@ it from a coroutine scope; there is no callback-based equivalent.
 
 | Property | Type | Fires when |
 |---|---|---|
-| `sessionState` | `StateFlow<SessionState>` | Lifecycle transitions: `READY` → `SUBMITTING` → `SUBMITTED`/`ERROR`, or `EXPIRED` at init if the session already expired (and back to `READY` after `setSession`). |
+| `sessionState` | `StateFlow<SessionState>` | Lifecycle transitions: `READY` → `SUBMITTING` → `SUBMITTED`/`ERROR`, or `EXPIRED` at init, on the watchdog's tick, or when a `submitPayment` re-checks the clock (and back to `READY` after `setSession`). |
+| `isTornDown` | `StateFlow<Boolean>` | `true` once `teardown()` ran; every later operation throws `CheckoutTornDown`. |
 | `paymentSession` | `StateFlow<PaymentSession>` | The session in force; emits again when `setSession` swaps it — rebuild session-derived UI (amount header, method list) from here. |
 | `itemGenerations` | `StateFlow<Map<String, Int>>` | Per-item generation counters bumped by `setSession` for items that did not survive; key anything you remember per item on `(item.id, generation)` — `generationOf(item)` reads the current one. |
-| `paymentMethods` | `StateFlow<List<PaymentItem>>` | Any time the split changes — each item's `disabled` state is recomputed against the new `remainingAmountToPay`. |
+| `paymentMethods` | `StateFlow<List<PaymentItem>>` | Any time the split changes — each item's `disabled` state is recomputed against the new `remainingAmountToPay`. While `submitPayment` is in flight every otherwise-selectable item (here, on `paymentTokens` and on `savedSecondaryTokens`) reads `DisabledState.Submitting`, lifted when it returns. |
 | `remainingAmountToPay` | `StateFlow<BigDecimal>` | After `setPrimary`, `applySecondary`, or `removeSecondary`. |
 | `isPaymentFulfilled` | `StateFlow<Boolean>` | Same triggers as above, plus every `setFulfilled` — `true` once the split covers the full amount **and** every item in it whose plugin collects a form reports that form complete and valid (see [§6](#form-completeness-gates-the-payment)). |
 | `amountSplit` | `StateFlow<List<PaymentSplit>>` | Same triggers — the current list of `(amount, source)` slices that `submitPayment` will send. |
@@ -193,16 +196,27 @@ Four concrete subtypes:
 
 ### `DisabledState` (sealed)
 
-| Code | Meaning |
-|---|---|
-| `PaymentFulfilled` | The remaining amount owed by a primary is already zero. |
-| `MinAmountNotMet(minAmount, restToPay)` | The item's minimum is above what's left to pay. |
-| `MaxAmountExceeded(maxAmount)` | Never applies to secondaries — a gift card can hold more than the order needs. |
-| `PluginIncompatible` | The resolved plugin rejected the current client/session in its eligibility check. |
+Web's codes with web's names; every state carries a displayable `message` (web's wording) and the
+amount-driven ones their context. `code` is the enum to branch on.
 
-Web additionally has technical/fatal codes (`TOKEN_INIT_FAILED`, `PARTNER_UI_FATAL_ERROR`, …) that
-only arise once a plugin is actually rendering/submitting — out of scope here; see the pain points
-recap.
+| State | Behaviour | Meaning |
+|---|---|---|
+| `MethodUnstable` | filtered out of the list | The platform suspended the method (`stable == false`). |
+| `AmountConditionUnreachable(minAmount, maxAmount, orderAmount)` | filtered out of the list | The method's minimum is above the whole order. |
+| `PluginIncompatible` | filtered out of the list | The plugin rejected this client/session in its eligibility check. |
+| `FatalErrorBeforeRender(reason)` | filtered out of the list | The plugin failed before mounting anything. |
+| `PaymentFulfilled` | UI cleared, recomputed on amount change | The remaining amount owed by a primary is already zero. |
+| `MinAmountNotMet(minAmount, restToPay)` | UI cleared, recomputed on amount change | The item's minimum is above what's left to pay. |
+| `MaxAmountExceeded(maxAmount, restToPay)` | UI cleared, recomputed on amount change | Never applies to secondaries — a gift card can hold more than the order needs. |
+| `TokenInitFailed` | technically disabled: no UI, permanent | A saved gift card's `/init` failed. |
+| `PartnerUiFatalError(reason)` | technically disabled: no UI, permanent | The partner plugin reported an unrecoverable failure. |
+| `PartnerUiRecoverableError(reason)` | dimmed, UI stays mounted, clears on `Ready` or an amount change | The partner is broken for now, not for good. |
+| `Submitting` | all items, for the duration of `submitPayment` | A payment is being submitted. |
+
+Predicates: `isFiltered`, `isTechnicallyDisabled`, `requiresUiClear`, `isRecoverable`,
+`isRecomputable`. A disabled item cannot enter the split — `setPrimary` / `setPrimaryToken` throw
+`MethodDisabled`, `applySecondary(saved)` throws `SecondaryTokenizationFailed` — and a technically
+disabled one gets a `PaymentElement` with no UI. Merchants show `message`; the demo shows `code`.
 
 ### `PaymentSplit`
 
@@ -221,10 +235,10 @@ or an applied `SecondaryToken`). The full list is what `submitPayment` sends to 
 |---|---|---|
 | `primaryMethods` | `List<PrimaryMethod>` | Filtered view of `paymentMethods.value`. |
 | `secondaryMethods` | `List<SecondaryMethod>` | Filtered view of `paymentMethods.value`. |
-| `setPrimary` | `fun setPrimary(method: PrimaryMethod?)` | Choose (or clear, with `null`) the primary covering the remaining amount. Triggers a `refresh()` of all reactive state. |
+| `setPrimary` | `fun setPrimary(method: PrimaryMethod?)` | Choose (or clear, with `null`) the primary covering the remaining amount. Throws `MethodDisabled` (`METHOD_DISABLED`) for a disabled method, judged on the live state. Triggers a `refresh()` of all reactive state. |
 | `secondaryConfig` | `fun secondaryConfig(method: SecondaryMethod): SecondaryConfig?` | The per-partner form/take-policy rules for a secondary method — `null` if none registered (shipped or via `SecondaryConfigs.register`; e.g. `ancv-connect` is not shipped). |
 | `getSecondaryToken` | `suspend fun getSecondaryToken(method: SecondaryMethod, pan: String, cvv: String? = null): SecondaryToken` | `POST /init` — tokenizes a card and returns its balance **without** touching the split. Validate PAN/CVV via `secondaryConfig` first. |
-| `applySecondary` | `fun applySecondary(token: SecondaryToken, amount: BigDecimal? = null)` | Draws an already-tokenized `token` into the split, clamped to `min(amount, balance, remaining, limit)`. `amount == null` takes as much as the order needs. |
+| `applySecondary` | `fun applySecondary(token: SecondaryToken, amount: BigDecimal? = null)` | Draws an already-tokenized `token` into the split. `amount == null` takes as much as the order needs, capped by the balance and the method's `payment_max_amount`. An explicit `amount` is checked like web's `ensureTakePolicy`: throws `InvalidTake` — `INVALID_TAKE_AMOUNT` (negative, above the balance or above what is left), `MAX_AMOUNT_REACHED` (above the method's maximum), `USAGE_LIMIT_ERROR` (the method's `usage_per_session_limit` is already used up by other tokens in the split). |
 | `removeSecondary` | `fun removeSecondary(token: SecondaryToken)` | Removes a previously applied token from the split. |
 | `appliedSecondaries` | `List<SecondaryToken>` | Applied tokens, in the order they were added. |
 | `registrationOf` | `fun registrationOf(token: SecondaryToken): RegistrationState` | The save decision for a **temporary** gift card — defaults from its method's `SaveTokenMode`; always `registered = false` for a saved one. |
@@ -241,7 +255,8 @@ or an applied `SecondaryToken`). The full list is what `submitPayment` sends to 
   carries no balance.
 - `PaymentApiException` — network/transport failure.
 
-Blocking network work happens via `suspend`; move it to `Dispatchers.IO` at the call site.
+Every `suspend` function of the checkout runs its network call on `Dispatchers.IO` itself — call it
+from any dispatcher, the main one included. No public function blocks.
 
 ### `SecondaryToken`
 
@@ -626,29 +641,45 @@ Runs the plugin-driven `/validate` pipeline over the current split. Must be call
 `isPaymentFulfilled` is `true`. Sets `sessionState` to `SUBMITTING`, then `SUBMITTED`/`ERROR` —
 or back to `READY` when a merchant `onBeforeValidate` hook aborted it before anything was sent.
 
+**One submit per session.** Before anything leaves the device the session's expiry is re-checked
+against the server clock, then an atomic latch moves `READY`/`ERROR` to `SUBMITTING`: a second call
+while one is in flight (a double tap, from any thread), or after the API has answered about the
+payment — approved *or declined* — is refused with `SubmitBlocked` and never reaches the PSP. Only a
+`/validate` the API refused outright (a 5xx, a transport failure) leaves the session submittable.
+While in flight, every item reads `DisabledState.Submitting`; the lock lifts when the call returns.
+
 **Throws:**
 - `PurseCheckoutException.PaymentNotFulfilled` — the split doesn't cover the amount, or no primary
-  is set.
+  is set (a zero-amount session needs a primary too).
 - `PurseCheckoutException.ItemNotFulfilled` — an item in the split has a form that isn't complete and
   valid (see [§6](#form-completeness-gates-the-payment)).
+- `PurseCheckoutException.SessionExpired` — the session expired (`EXPIRED_SESSION`); `sessionState`
+  moves to `EXPIRED`. Recover with `setSession`.
+- `PurseCheckoutException.SubmitBlocked` — a submit is in flight or the session is spent
+  (`SUBMIT_BLOCKED`; `state` says which). Also posted as `HEADLESS_CHECKOUT_SUBMIT_BLOCKED`.
+- `PurseCheckoutException.CheckoutTornDown` — after `teardown()`.
 - `PurseCheckoutException.HookFailed` — your `onBeforeValidate` hook threw (code
   `ON_BEFORE_VALIDATE_HOOK_FAILED`, your exception as `cause`); nothing was sent.
 - `PurseCheckoutException.NoPluginRegistered` — no `:partner-ui` plugin registered for the chosen
   primary's `(partner, method)`.
-- `PurseCheckoutException.ValidateFailed` — a client-side or API validation step failed.
-- `PaymentApiException` — network/transport failure.
+- `PurseCheckoutException.ValidateFailed` — `/validate` failed. **Check `outcomeUnknown`**: `true`
+  means the request left the device and no answer came back, so the payment may exist server-side —
+  reconcile with `awaitPaymentOutcome()` instead of telling the shopper it failed.
 
 Most callers reach `submitPayment` indirectly, through `PluginHost.submitPayment`, which coordinators
-call for you.
+call for you; the coordinator's `onError` carries the same message.
 
-### Re-checking status after a redirect
+### Re-checking status after a redirect or an unknown outcome
 
 ```kotlin
-fun sessionTransactions(): JSONArray
+suspend fun sessionTransactions(): JSONArray
+suspend fun paymentStatus(): PaymentSessionStatus
+suspend fun awaitPaymentOutcome(timeoutMs: Long = 60_000, pollIntervalMs: Long = 3_000): PaymentSessionStatus
 ```
 
 `GET /{entityId}/sessions/{sessionId}` — the source of truth to check after a redirect/3-D Secure
-return, rather than trusting a locally-held result. Blocking; call off the main thread.
+return, or after a `ValidateFailed` whose `outcomeUnknown` is `true`, rather than trusting a
+locally-held result. Runs on `Dispatchers.IO`.
 
 ---
 
@@ -689,18 +720,25 @@ interactive plugin.
 | `PurseCheckoutException.PaymentNotFulfilled` | `submitPayment` | Split doesn't cover the amount / no primary set. |
 | `PurseCheckoutException.ItemNotFulfilled` | `submitPayment` | An item in the split has an incomplete or invalid form (web's `ELEMENT_NOT_FULFILLED`). |
 | `PurseCheckoutException.NoPluginRegistered` | `submitPayment` | No `:partner-ui` plugin for the chosen `(partner, method)`. |
-| `PurseCheckoutException.ValidateFailed` | `submitPayment` | Client-side or API validation step failed. |
+| `PurseCheckoutException.ValidateFailed` | `submitPayment` | `/validate` failed. `outcomeUnknown == true` means the request left and nothing answered: reconcile with `awaitPaymentOutcome()`. |
+| `PurseCheckoutException.SessionExpired` | `submitPayment`, `setSession` | The session (or the new one) is expired (`EXPIRED_SESSION`). |
+| `PurseCheckoutException.SubmitBlocked` | `submitPayment`, `setSession` | A submit is in flight, or the session's one validation is spent (`SUBMIT_BLOCKED`). |
+| `PurseCheckoutException.CheckoutTornDown` | everything after `teardown()` | The checkout was released (`CHECKOUT_TORN_DOWN`). |
+| `PurseCheckoutException.MethodDisabled` | `setPrimary`, `setPrimaryToken`, a self-submitting coordinator's approval | The item's `disabled` state is set — `disabled` says why (`METHOD_DISABLED`). |
+| `PurseCheckoutException.InvalidTake` | `applySecondary` with an explicit amount | `INVALID_TAKE_AMOUNT`, `MAX_AMOUNT_REACHED` or `USAGE_LIMIT_ERROR`. |
 | `PurseCheckoutException.HookFailed` | `submitPayment` (`onBeforeValidate`), coordinators (`onRedirection`) | A merchant hook threw — `hook` names it, `cause` is the merchant's exception. `ON_BEFORE_VALIDATE_HOOK_FAILED` aborts the submit with nothing sent; `POST_VALIDATE_FAILED` (`onRedirection`) opens no redirect. Neither moves the split. |
 | `PurseCheckoutException.NoSecondaryConfig` | `getSecondaryToken` | No `SecondaryConfig` registered for this secondary method. |
 | `PurseCheckoutException.InvalidSecondaryCard` | `getSecondaryToken` | Client-side PAN/CVV validation failed. |
 | `PurseCheckoutException.SecondaryTokenizationFailed` | `getSecondaryToken` | `/init` unsuccessful, or the card carries no balance. |
 | `PurseCheckoutException.MethodNotSimulable` | `simulateLoan` / `simulateLoans` | The method has no `simulable` label (`METHOD_IS_NOT_SIMULABLE`). |
 | `PurseCheckoutException.LoanSimulationFailed` | `simulateLoan` / `simulateLoans` | The simulation API answered without a schedule — no `plugin_result`, or a refusal like `EMPTY_SIMULATION` (`INVALID_LOAN_SIMULATION`; the API's code is on the cause). |
-| `PurseSessionException.SessionMalformed` | `PurseHeadlessCheckout.init` | `widget.data` couldn't be decoded, or is missing required fields. |
-| `PaymentApiException` | Any Payment API call | Network/transport failure, non-2xx/3xx status, or an unusable response body. |
+| `PurseSessionException.SessionMalformed` | `PurseHeadlessCheckout.init`, `setSession` | `widget.data` couldn't be decoded, or is missing required fields (`SESSION_MALFORMED`). |
+| `PaymentApiException` | Any Payment API call | Network/transport failure, non-2xx/3xx status, or an unusable response body (`API_ERROR`; the backend's own reason is `errorCode`, `outcomeUnknown` when no answer came back). |
 
-All of the above are unchecked (`Exception` subclasses) — catch at whatever layer makes sense for
-your app's error UI.
+All of the above extend `eu.purse.core.error.PurseException`: unchecked, with a stable `code`
+(`PurseErrorCode`, web's names), a `message` and a `documentationLink`. Catch the root for generic
+handling and branch on `code`. Every code the SDK raises is exercised by
+`PurseErrorCodeCoverageTest`.
 
 ---
 
@@ -708,7 +746,7 @@ your app's error UI.
 
 | Type | Values / shape | Notes |
 |---|---|---|
-| `SessionState` | `IDLE, READY, SUBMITTING, SUBMITTED, ERROR, EXPIRED, TERMINATED` | Web's `PurseHeadlessCheckoutSessionState`. |
+| `SessionState` | `READY, SUBMITTING, SUBMITTED, ERROR, EXPIRED, TERMINATED` | Web's `PurseHeadlessCheckoutSessionState` minus `idle` (a checkout cannot exist without a session). |
 | `PurseEnvironment` | `DEVELOPMENT, TEST, SANDBOX, PRODUCTION` | Each carries its own `paymentApiRoot`. |
 | `PurseSessionParams` | `apiKey, apiUrl, environment, entityId, paymentSession` | The decoded `widget.data`. |
 | `MethodConfiguration` | `stable, template, labels, position, vault, settings` | Raw `configurations` block; `isSecondary` derives from `labels`. |

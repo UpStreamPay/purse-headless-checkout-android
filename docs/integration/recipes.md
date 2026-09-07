@@ -218,6 +218,11 @@ override fun onResult(summary: String, globalStatus: String?) {
 `checkout.paymentStatus()` is the one-shot version; `sessionTransactions()` the raw JSON. The
 response lists operations, not payments: one captured payment is an `AUTHORIZE` and a `CAPTURE` row.
 
+The same check covers a submit that was interrupted: a `ValidateFailed` whose `outcomeUnknown` is
+`true` (the request left, nothing answered) means the payment may exist — poll before showing an
+error. A return from the redirect WebView after the app was killed lands here too, never on
+`onCanceled`.
+
 ## 10. Hooks
 
 ```kotlin
@@ -340,6 +345,10 @@ override fun onDestroy() {
     if (isFinishing) checkout.teardown()     // not on configuration changes
 }
 ```
+
+`teardown()` releases the watchdog, the background work and every live partner client. Afterwards
+`isTornDown` is `true` and any operation throws `CheckoutTornDown` (`CHECKOUT_TORN_DOWN`); a second
+`teardown()` is a no-op.
 
 ## 17. Below the element: coordinators
 
