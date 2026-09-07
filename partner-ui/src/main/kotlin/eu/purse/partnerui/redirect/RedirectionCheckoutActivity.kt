@@ -1,6 +1,7 @@
 // Web: none — web navigates the page
 // Same: —
-// Differs: in-app WebView with progress, first-page watchdog, network-failure surfacing, deep-link return.
+// Differs: in-app WebView with progress, first-page watchdog, network-failure surfacing, deep-link return;
+//          https-only navigation and a scheme-checked return intent.
 package eu.purse.partnerui.redirect
 
 import android.content.Intent
@@ -29,8 +30,10 @@ import androidx.appcompat.app.AppCompatActivity
  * browser/Custom Tab. If a specific partner's challenge breaks here, that partner needs its own
  * redirect path rather than reverting this one.
  *
- * A returned [RedirectionCheckoutResult.Approved] only means the shopper reached one of those URLs —
- * the caller must still re-check the session status to learn the real outcome.
+ * A returned [RedirectionCheckoutResult.Approved] only means the shopper reached one of those URLs
+ * (or came back to this Activity at all) — the caller must still re-check the session status to
+ * learn the real outcome. That is also why a return intent fired by another app cannot approve a
+ * payment: it is checked against this app's own return scheme, and even then only says "came back".
  *
  * What the WebView may load is an allow-list: `https` pages, plus the two return destinations
  * above. Everything else (`http`, `file`, `javascript`, `intent`, another app's scheme) is refused
@@ -223,10 +226,16 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
 
     override fun onNewIntent(newIntent: Intent) {
         super.onNewIntent(newIntent)
+        // Only a VIEW of this app's own return scheme, after the redirect was launched, counts as
+        // the shopper returning. The Activity is exported (the browser must reach it), so anything
+        // else — another app's intent, a different scheme — is ignored rather than trusted.
+        val isReturn = launched && newIntent.action == Intent.ACTION_VIEW && newIntent.data?.scheme == returnScheme
+        if (!isReturn) {
+            Log.w(TAG, "ignoring intent ${newIntent.action} ${newIntent.data}")
+            return
+        }
         setIntent(newIntent)
-        // Any onNewIntent beyond the initial launch came through this Activity's own scoped
-        // intent-filter (${applicationId}.redirect) — that's the shopper returning.
-        if (launched) finishWith(STATUS_APPROVED)
+        finishWith(STATUS_APPROVED)
     }
 
     override fun onResume() {
