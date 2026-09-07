@@ -1,0 +1,24 @@
+name: Auto-tag on main
+
+# Conventional commits on main decide the next semantic version; the shared release-manager
+# pushes the `v<version>` tag, which triggers staging.yml. See docs/contributing/release.md.
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - CHANGELOG.md   # ignore the chore(release) commit pushed by release-manager itself
+
+jobs:
+  release-manager:
+    uses: UpStreamPay/usp-reusable-workflows/.github/workflows/release-manager.yaml@reusable-v0
+    permissions:
+      contents: write
+      id-token: write
+    with:
+      skip-version-file: true   # version lives in the git tag, not a JSON file
+      # conventionalcommits (not angular) so `feat!:` / `fix!:` bump the major.
+      preset: conventionalcommits
+    secrets:
+      GITHUB_ACCESS_TOKEN: ${{ secrets.USP_GITHUB_ADMIN_ACCES_TOKEN }}

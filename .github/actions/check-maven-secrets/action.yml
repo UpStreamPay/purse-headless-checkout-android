@@ -1,0 +1,42 @@
+name: Check Maven publishing secrets
+description: >
+  Verifies the four secrets required for Maven Central publishing.
+  Outputs ok=true when all are set; emits a warning and ok=false otherwise.
+
+inputs:
+  maven-central-username:
+    required: true
+  maven-central-password:
+    required: true
+  gpg-private-key:
+    required: true
+  gpg-passphrase:
+    required: true
+
+outputs:
+  ok:
+    description: 'true if all secrets are present, false otherwise'
+    value: ${{ steps.check.outputs.ok }}
+
+runs:
+  using: composite
+  steps:
+    - id: check
+      shell: bash
+      env:
+        MAVEN_CENTRAL_USERNAME: ${{ inputs.maven-central-username }}
+        MAVEN_CENTRAL_PASSWORD: ${{ inputs.maven-central-password }}
+        GPG_PRIVATE_KEY:        ${{ inputs.gpg-private-key }}
+        GPG_PASSPHRASE:         ${{ inputs.gpg-passphrase }}
+      run: |
+        missing=()
+        [ -z "$MAVEN_CENTRAL_USERNAME" ] && missing+=("MAVEN_CENTRAL_USERNAME")
+        [ -z "$MAVEN_CENTRAL_PASSWORD" ] && missing+=("MAVEN_CENTRAL_PASSWORD")
+        [ -z "$GPG_PRIVATE_KEY" ]         && missing+=("GPG_PRIVATE_KEY")
+        [ -z "$GPG_PASSPHRASE" ]          && missing+=("GPG_PASSPHRASE")
+        if [ ${#missing[@]} -ne 0 ]; then
+          echo "::warning::Publish skipped — missing secrets: ${missing[*]}"
+          echo "ok=false" >> "$GITHUB_OUTPUT"
+        else
+          echo "ok=true" >> "$GITHUB_OUTPUT"
+        fi

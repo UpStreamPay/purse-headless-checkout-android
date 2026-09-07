@@ -1,0 +1,57 @@
+name: Release to Maven Central
+
+# Manual step: rebuilds from the latest `v*` tag and publishes with automaticRelease so the Central
+# Portal promotes the artifacts to Maven Central, then publishes the draft GitHub release.
+# See docs/contributing/release.md.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check-secrets:
+    runs-on: ubuntu-latest
+    outputs:
+      ok: ${{ steps.check.outputs.ok }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: check
+        uses: ./.github/actions/check-maven-secrets
+        with:
+          maven-central-username: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          maven-central-password: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          gpg-private-key:        ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase:         ${{ secrets.GPG_PASSPHRASE }}
+
+  release:
+    needs: check-secrets
+    if: needs.check-secrets.outputs.ok == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0   # needed for git describe
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Set SDK version from latest tag
+        run: echo "SDK_VERSION=$(git describe --tags --abbrev=0 | sed 's/^v//')" >> "$GITHUB_ENV"
+
+      - name: Publish to Maven Central
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey:          ${{ secrets.GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword:  ${{ secrets.GPG_PASSPHRASE }}
+        run: ./gradlew publishAllPublicationsToMavenCentralRepository -PautoRelease=true
+
+      - name: Publish the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release edit "v${SDK_VERSION}" --draft=false
