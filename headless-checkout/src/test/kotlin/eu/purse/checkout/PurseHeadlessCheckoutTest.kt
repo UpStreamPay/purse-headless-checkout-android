@@ -1133,4 +1133,25 @@ class PurseHeadlessCheckoutTest {
             runBlocking { checkout.submitPayment() }
         }
     }
+
+    @Test
+    fun `every selectable item reads SUBMITTING while a submit is in flight and is released afterwards`() {
+        FakePaymentApi().use { api ->
+            lateinit var checkout: PurseHeadlessCheckout
+            var duringSubmit: Map<String, DisabledState?> = emptyMap()
+            api.on("validate") {
+                duringSubmit = checkout.paymentMethods.value.associate { it.id to it.disabled }
+                200 to SUCCESS_ANSWER
+            }
+            checkout = coveredCheckout(api)
+            val giftCard = checkout.secondaryMethods.single()
+            assertNull(giftCard.disabled)
+
+            runBlocking { checkout.submitPayment() }
+
+            assertEquals(DisabledState.Submitting, duringSubmit[giftCard.id])
+            assertTrue("nothing is selectable mid-submit", duringSubmit.values.all { it != null })
+            assertNull(checkout.paymentMethods.value.single { it.id == giftCard.id }.disabled)
+        }
+    }
 }

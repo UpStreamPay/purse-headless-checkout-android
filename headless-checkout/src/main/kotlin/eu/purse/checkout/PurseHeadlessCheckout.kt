@@ -168,6 +168,9 @@ class PurseHeadlessCheckout private constructor(
      */
     @Volatile private var validationConsumed = false
 
+    /** `true` between `submitPayment` start and return — overlays [DisabledState.Submitting] on every item. */
+    @Volatile private var submitting = false
+
     /** The current [PaymentSession]; emits again whenever [setSession] swaps it. */
     private val _paymentSession = MutableStateFlow(initialSession)
     val paymentSession: StateFlow<PaymentSession> = _paymentSession.asStateFlow()
@@ -961,6 +964,7 @@ class PurseHeadlessCheckout private constructor(
     /** The saved gift cards, minus filtered states — what [savedSecondaryTokens] renders. */
     private fun visibleSavedSecondaryTokens(): List<SavedSecondaryToken> =
         meansOfPayment.filterIsInstance<SavedSecondaryToken>().filterNot { it.disabled?.isFiltered == true }
+            .map { it.lockedWhileSubmitting() as SavedSecondaryToken }
 
     // --- interactive plugins (e.g. Google Pay) ---------------------------------------------------
 
@@ -1193,6 +1197,7 @@ class PurseHeadlessCheckout private constructor(
      * server clock first, then an atomic latch turns `READY`/`ERROR` into `SUBMITTING` — a second
      * call while one is in flight, or after the API has answered about the payment (approved or
      * declined), is refused with [PurseCheckoutException.SubmitBlocked] and never reaches the PSP.
+     * While in flight every item reads [DisabledState.Submitting]; the lock lifts on return.
      *
      * @throws PurseCheckoutException.PaymentNotFulfilled if the split doesn't cover the amount.
      * @throws PurseCheckoutException.ItemNotFulfilled if an item in the split has an incomplete or
@@ -1214,6 +1219,8 @@ class PurseHeadlessCheckout private constructor(
         if (!splitter.fulfilled) throw PurseCheckoutException.PaymentNotFulfilled()
         unfulfilledItemId()?.let { throw PurseCheckoutException.ItemNotFulfilled(it) }
         acquireSubmitLock()
+        submitting = true
+        publishItems()
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_STARTED,
             payload = monitoringPayload("session_id" to session.id, "nb_items" to splitter.splits.size),
@@ -1262,6 +1269,9 @@ class PurseHeadlessCheckout private constructor(
                 monitoringPayload("message" to e.message),
             )
             throw e
+        } finally {
+            submitting = false
+            publishItems()
         }
     }
 
@@ -1342,10 +1352,28 @@ class PurseHeadlessCheckout private constructor(
     /** [meansOfPayment] minus filtered states and saved instruments — what [paymentMethods] renders. */
     private fun visibleMethods(): List<PaymentItem> =
         meansOfPayment.filterNot { it.disabled?.isFiltered == true || it is PaymentToken || it is SavedSecondaryToken }
+            .map { it.lockedWhileSubmitting() }
 
     /** The saved tokens, minus filtered states — what [paymentTokens] renders. */
     private fun visibleTokens(): List<PaymentToken> =
         meansOfPayment.filterIsInstance<PaymentToken>().filterNot { it.disabled?.isFiltered == true }
+            .map { it.lockedWhileSubmitting() as PaymentToken }
+
+    /**
+     * The public view of an item while a submit is in flight: every otherwise-enabled item reads
+     * [DisabledState.Submitting] (web's `SUBMITTING` code) until `submitPayment` returns. An overlay
+     * on the published lists only — the internal list keeps its real states, so nothing has to be
+     * undone afterwards.
+     */
+    private fun PaymentItem.lockedWhileSubmitting(): PaymentItem =
+        if (submitting && disabled == null) withDisabled(DisabledState.Submitting) else this
+
+    /** Re-publish the three item lists — after the submit lock flips. */
+    private fun publishItems() {
+        _paymentMethods.value = visibleMethods()
+        _paymentTokens.value = visibleTokens()
+        _savedSecondaryTokens.value = visibleSavedSecondaryTokens()
+    }
 
     // --- BNPL loan simulation (SDK-12216 / US-51) ---------------------------------------------------
 
