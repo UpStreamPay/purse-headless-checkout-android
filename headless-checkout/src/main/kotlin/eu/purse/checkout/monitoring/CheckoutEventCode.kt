@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout/src/monitoring/monitoringConfigs.ts
+// Same: the same 40 codes and levels.
+// Differs: nothing.
 package eu.purse.checkout.monitoring
 
 /**
@@ -45,6 +48,7 @@ enum class CheckoutEventCode {
     HEADLESS_CHECKOUT_SET_WALLET_SESSION,
     HEADLESS_CHECKOUT_SET_WALLET_SESSION_FAILED,
     HEADLESS_CHECKOUT_SUBMIT_PAYMENT,
+    HEADLESS_CHECKOUT_SUBMIT_BLOCKED,
     HEADLESS_CHECKOUT_TOKEN_DELETE,
     HEADLESS_CHECKOUT_TOKEN_EDIT,
     HEADLESS_CHECKOUT_TOKEN_SET_FAVORITE,

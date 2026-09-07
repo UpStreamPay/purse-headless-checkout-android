@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout secondaries token shape
+// Same: balance, total, pan, name, expiry, take policy.
+// Differs: implements `SplitSource`; carries `saveTokenMode` for keep-this-card.
 package eu.purse.checkout.payment.secondary
 
 import eu.purse.checkout.payment.split.SplitSource
@@ -31,8 +34,13 @@ data class SecondaryToken(
     /** Raw expiry as returned by the partner (format varies); blank when absent. */
     val expirationDate: String = "",
     val takePolicy: SecondaryTakePolicy = SecondaryTakePolicy.NONE,
-    /** Per-session draw cap for this instrument, if the method sets one. */
+    /** The method's `payment_max_amount` — the most one instrument may draw, if the method sets one. */
     val limit: BigDecimal? = null,
+    /**
+     * The method's `usage_per_session_limit` — how many instruments of this `(partner, method)` may
+     * sit in one split; `null` or zero means unlimited (web's `limit`).
+     */
+    val usageLimit: Int? = null,
     /**
      * The method's effective save-token policy — web's temporary secondary token `saveTokenMode`.
      * Drives [canBeRegistered]; the checkout defaults the registration decision from it.

@@ -13,12 +13,12 @@ covers, and the PSP's own hosted page is the entire shopper-facing surface.
 | | |
 |---|---|
 | Partner / method | **whatever the session says** — see [Detection](#detection) |
-| Family | **generic template** — `RedirectionModule` registers it under `configurations.template == "redirection"`, not under any `(partner, method)` pair |
+| Family | **generic template** — `PluginRegistry` registers it under `configurations.template == "redirection"`, not under any `(partner, method)` pair |
 | Native SDK | none |
 | UI surface | none — the PSP's hosted page, opened in the shared redirect WebView |
 | Native step vs `/validate` | **the redirect IS the payment step**, and it happens after `/validate` |
 | Gates `isPaymentFulfilled`? | No — there is no form to validate (web dispatches `fulfilled: true` at `/init` time for the same reason) |
-| Lifecycle caveat | `RedirectionCoordinator` **must be constructed in the Activity's `onCreate`** — it registers an `ActivityResult` launcher |
+| Obtain with | `rememberRedirectionCoordinator(listener)` — or simply `rememberPaymentElement` (`hasUi = false`) |
 | Manifest work | None — the redirect Activity ships in `:partner-ui`'s own manifest |
 
 ## Detection
@@ -106,7 +106,7 @@ sequenceDiagram
     participant Rd as RedirectionCheckoutActivity
     participant PSP as PSP hosted page
 
-    App->>Co: prepare(checkout.redirectionHost(item))
+    App->>Co: prepare(checkout.host(item))
     Co->>Co: RedirectionMapper.browserData(activity, locale)
     Co->>Pl: buildRequest(context, browser)
     Pl->>Api: POST /init
@@ -172,24 +172,16 @@ sequenceDiagram
 ## Using it
 
 ```kotlin
-class MainActivity : ComponentActivity() {
-    private lateinit var redirection: RedirectionCoordinator
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        redirection = RedirectionCoordinator(this, listener)   // MUST be here
-    }
+@Composable
+fun RedirectionRow(checkout: PurseHeadlessCheckout, item: PrimaryMethod, listener: PaymentElementListener) {
+    val coordinator = rememberRedirectionCoordinator(listener)
+    LaunchedEffect(coordinator, item.id) { coordinator.prepare(checkout.host(item)) }   // /init — on selection, not before
+    Button(onClick = { coordinator.submit() }) { Text("Pay") }   // after onReady(true)
 }
-
-// when a redirection row is selected — not before (see specificity 6)
-redirection.prepare(checkout.redirectionHost(item))
-
-// in your Pay button, after Listener.onReady(true)
-redirection.submit()
 ```
 
-One coordinator drives one item at a time. A session offering two redirection methods reuses the same
-instance — `prepare` rebinds it to whichever the shopper selected.
+Compose this only when the row is selected (see specificity 6). `rememberPaymentElement(checkout,
+item, listener)` does exactly this, with `hasUi = false`.
 
 ## Outcomes
 
@@ -223,9 +215,7 @@ able to pick another method.
 |---|---|
 | `RedirectionPlugin.kt` | `buildRequest` (`/init`), `preValidation` (`step_id` + browser), `TEMPLATE`, `RedirectionRequest` |
 | `RedirectionMapper.kt` | `/init` body, `browserData`, `step_id` extraction, init-status check |
-| `RedirectionCoordinator.kt` | `/init` on prepare, submit, redirect resolution + launch |
-| `RedirectionHost.kt` | The seam — implemented by `PurseHeadlessCheckout.redirectionHost(item)` |
-| `RedirectionModule.kt` | `PluginRegistry.registerGeneric("redirection", …)` |
+| `RedirectionCoordinator.kt` | `/init` on prepare; reports a missing redirect (the shared submit/redirect flow lives in `PaymentCoordinator`) |
 
 Web reference: `usp-widget/packages/partner-ui/src/plugins/generics/redirection/`, plus
 `packages/sdk/src/redirection/redirection-manager.ts` for the resolution this SDK's shared

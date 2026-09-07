@@ -16,12 +16,12 @@ class CardMapperTest {
 
     @Test
     fun `init parses the step id`() {
-        assertEquals(1, CardMapper.parseInit(cardInit(stepId = 1)).stepId)
+        assertEquals(1, CardMapper.parseInit(cardInit(stepId = 1)))
     }
 
     @Test
     fun `init step id is null when absent`() {
-        assertNull(CardMapper.parseInit(cardInit(stepId = null)).stepId)
+        assertNull(CardMapper.parseInit(cardInit(stepId = null)))
     }
 
     @Test

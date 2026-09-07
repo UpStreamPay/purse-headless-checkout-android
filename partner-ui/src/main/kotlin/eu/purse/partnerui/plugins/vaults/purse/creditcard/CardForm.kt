@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/plugins/generics/hostedfields lit form (labels, tooltips, errors)
+// Same: label above, help text under, error in place of help text.
+// Differs: Compose around SecureFields' `VaultField`s.
 package eu.purse.partnerui.plugins.vaults.purse.creditcard
 
 import androidx.compose.foundation.layout.Arrangement

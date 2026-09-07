@@ -25,26 +25,38 @@ fun DemoTheme(content: @Composable () -> Unit) {
     )
 }
 
+// Greyscale on purpose: the demo must not compete with the partners' own branded controls (Google
+// Pay, PayPal, Klarna) or suggest a Purse colour to a merchant. Only the outcome colours below carry hue.
 private val LightScheme = lightColorScheme(
-    primary = Color(0xFF4B3FD6),
+    primary = Color(0xFF1F1F1F),
     onPrimary = Color.White,
-    primaryContainer = Color(0xFFE3E0FF),
-    onPrimaryContainer = Color(0xFF190066),
-    secondary = Color(0xFF5B5D72),
-    surface = Color(0xFFFDFBFF),
-    surfaceVariant = Color(0xFFE5E1EC),
-    background = Color(0xFFF7F5FB),
+    primaryContainer = Color(0xFFE6E6E6),
+    onPrimaryContainer = Color(0xFF1F1F1F),
+    secondary = Color(0xFF5F5F5F),
+    onSecondary = Color.White,
+    surface = Color(0xFFFCFCFC),
+    onSurface = Color(0xFF1A1A1A),
+    surfaceVariant = Color(0xFFEDEDED),
+    onSurfaceVariant = Color(0xFF4A4A4A),
+    background = Color(0xFFF4F4F4),
+    onBackground = Color(0xFF1A1A1A),
+    outline = Color(0xFF8A8A8A),
 )
 
 private val DarkScheme = darkColorScheme(
-    primary = Color(0xFFC2C0FF),
-    onPrimary = Color(0xFF23008F),
-    primaryContainer = Color(0xFF3A2DB0),
-    onPrimaryContainer = Color(0xFFE3E0FF),
-    secondary = Color(0xFFC4C5DD),
-    surface = Color(0xFF131317),
-    surfaceVariant = Color(0xFF474551),
-    background = Color(0xFF0E0E12),
+    primary = Color(0xFFE6E6E6),
+    onPrimary = Color(0xFF1A1A1A),
+    primaryContainer = Color(0xFF3A3A3A),
+    onPrimaryContainer = Color(0xFFEDEDED),
+    secondary = Color(0xFFB8B8B8),
+    onSecondary = Color(0xFF1A1A1A),
+    surface = Color(0xFF161616),
+    onSurface = Color(0xFFEAEAEA),
+    surfaceVariant = Color(0xFF2E2E2E),
+    onSurfaceVariant = Color(0xFFBDBDBD),
+    background = Color(0xFF0F0F0F),
+    onBackground = Color(0xFFEAEAEA),
+    outline = Color(0xFF7A7A7A),
 )
 
 /**

@@ -1,3 +1,7 @@
+// Web: packages/headless-checkout `mapPluginResultToSimulation`
+// Same: field names; counts and amounts only (no per-instalment dates on web either).
+// Differs: `totalAmount` = initial + (n − 2) recurring + final. Web adds (n − 1) recurring on top of
+//          initial and final, which counts one instalment twice when `instalment_number` is the total.
 package eu.purse.core.payment
 
 import org.json.JSONObject
@@ -66,9 +70,12 @@ data class LoanSimulation(
             val final = result.decimal("final_instalment_amount")
             val recurring = result.decimal("instalment_amount")
             val count = result.optInt("instalment_number", 0)
-            val recurringCount = (count - 1).coerceAtLeast(0)
-            val total = recurring.multiply(BigDecimal(recurringCount)).add(initial).add(final)
-                .setScale(2, RoundingMode.HALF_UP)
+            // `instalment_number` counts every instalment: the initial one, the recurring ones and
+            // the final one. A single instalment is just the initial amount.
+            val total = when {
+                count <= 1 -> initial
+                else -> initial.add(recurring.multiply(BigDecimal(count - 2))).add(final)
+            }.setScale(2, RoundingMode.HALF_UP)
             return LoanSimulation(
                 initialInstallmentAmount = initial,
                 finalInstallmentAmount = final,

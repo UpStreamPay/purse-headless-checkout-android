@@ -1,3 +1,6 @@
+// Web: packages/model `vault.vendor_front_data`
+// Same: purse tenant id, pci-proxy merchant id.
+// Differs: nothing.
 package eu.purse.core.vault
 
 /**

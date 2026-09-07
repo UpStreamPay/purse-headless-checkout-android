@@ -61,7 +61,7 @@ found by comparing this port against `usp-widget` directly:
   match.** Web's `getPlugin` resolves off a static lookup table baked into the
   `@upstreampay/partner-ui` package — every plugin the package ships is live automatically, gated
   only by the session. Android's `PluginRegistry` used to start empty and only activate a method
-  once the host app called that method's `*Module.register()` — a merchant could forget one and
+  once the host app called that method's `register()` — a merchant could forget one and
   get no earlier signal than `PurseCheckoutException.NoPluginRegistered` at submit time. That was a
   redundant gate, not a necessary one: `getPlugin(partner, method, session)` already only resolves
   a match if `session.protocols[partner][method]` is present, i.e. whether a method is offered was
@@ -71,8 +71,8 @@ found by comparing this port against `usp-widget` directly:
   by default, mirroring web's static table; the session remains the only real gate, and a merchant
   who genuinely needs to suppress a shipped method for a specific app build gets an explicit
   opt-*out* (`PluginRegistry.disable(partner, method)` / `.enable(...)`) instead of the old opt-*in*.
-  `GooglePayModule.register()`/`KlarnaModule.register()` are still callable (idempotent) but no
-  longer required — the demo app's `MainActivity` no longer calls them. Filed as SDK follow-up work
+  The per-plugin `register()` calls were later removed altogether; registration lives in
+  `PluginRegistry.init`. Filed as SDK follow-up work
   off SDK-12039 — blocked on Jira write access for this session (drafted ticket text is in repo
   chat history / ask the author for it) rather than actually filed.
 - **Redirect-based methods need app-side manifest declarations; web needs none.** Klarna (built,
@@ -95,10 +95,9 @@ rather than one.
   merchant integrating **both** a View-based primary (Google Pay/Klarna) and the card plugin needs
   a Compose entry point somewhere in an otherwise View-based app (this repo's own demo does it via a
   single `ComposeView` embedded in its XML layout) — one more piece of integration surface web
-  merchants never have to think about. Upside: Compose's `rememberLauncherForActivityResult` sidesteps
-  the "construct in `onCreate`, before `STARTED`" lifecycle rule `GooglePayCoordinator`/
-  `KlarnaCoordinator` both carry — so it's not a strictly worse integration model, just a
-  **different** one, coexisting with the other two rather than replacing them.
+  merchants never have to think about. Since the KISS pass every coordinator is Compose-only
+  (`remember*Coordinator`, Compose-managed launchers), so there is one integration model rather than
+  two coexisting ones.
 
 ---
 

@@ -1,3 +1,6 @@
+// Web: pay.js `PaymentsClient`
+// Same: isReadyToPay, loadPaymentData.
+// Differs: thin wrapper over `Wallet.getPaymentsClient`.
 package eu.purse.partnerui.plugins.generics.googlepay
 
 import android.content.Context

@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/plugins/partners/paypal/wallet/index.ts
+// Same: /init creates the order, /validate captures; token mode patches `payment_data.token`.
+// Differs: token-mode /init runs inside `preValidation`.
 package eu.purse.partnerui.plugins.partners.paypal.wallet
 
 import eu.purse.core.payload.ItemPayload
@@ -99,3 +102,15 @@ class PaypalPlugin(override val partner: Partner) : PartnerUiPlugin {
         const val COLLECTED_PAYER_ID = "paypalPayerId"
     }
 }
+
+/**
+ * The merchant's PayPal REST client id for the PayPal SDK's `CoreConfig`. Session data
+ * (`merchant_specifics.client_id`), not `/init` data — the inverse of Google Pay's gateway config.
+ */
+data class PaypalConfig(val clientId: String)
+
+/** What the approval browser switch needs from `/init`: the PayPal order and the `step_id` `/validate` carries back. */
+data class PaypalRequest(
+    val orderId: String,
+    val stepId: Int?,
+)

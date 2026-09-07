@@ -1,3 +1,6 @@
+// Web: `merchant_specifics.integration_mode`
+// Same: `redirection` / `popup`.
+// Differs: nothing.
 package eu.purse.core.payment
 
 /**

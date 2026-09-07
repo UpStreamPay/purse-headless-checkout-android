@@ -1,7 +1,11 @@
+// Web: packages/partner-ui/src/commons/PartnerUI/types.ts (`PartnerUIContext`)
+// Same: partner, method, session, amount, api, register, token, options.
+// Differs: immutable; `collected` carries what the native step produced.
 package eu.purse.partnerui
 
 import eu.purse.core.api.PaymentApiClient
 import eu.purse.core.payment.Method
+import eu.purse.core.payment.MethodConfiguration
 import eu.purse.core.payment.Partner
 import eu.purse.core.session.LegacyPaymentSession
 import org.json.JSONObject
@@ -37,7 +41,13 @@ data class PartnerUiContext(
     val collected: Map<String, Any?> = emptyMap(),
     val options: PluginOptions = PluginOptions(),
     val dispatchEvent: (PluginEvent) -> Unit = {},
-)
+) {
+    /** `session.protocols[partner][method].configurations` — this item's own configuration. */
+    val configuration: MethodConfiguration? get() = session.protocols[partner]?.get(method)?.configurations
+
+    /** The Purse vault tenant (`vault.vendor_front_data.purse.tenant_id`) SecureFields is initialised with. */
+    val vaultTenantId: String? get() = session.vault?.vendorFrontData?.purse?.tenantId
+}
 
 /**
  * Presentation preferences forwarded to a plugin — web's `Options` (theme/locale/hostedForm…),

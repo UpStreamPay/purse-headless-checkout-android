@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout splitter primary source
+// Same: a method or a saved token can be the primary.
+// Differs: nothing.
 package eu.purse.checkout.payment.split
 
 /**

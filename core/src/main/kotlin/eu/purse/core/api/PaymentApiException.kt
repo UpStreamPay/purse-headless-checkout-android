@@ -1,9 +1,16 @@
+// Web: packages/sdk/src/API (fetch error shape)
+// Same: status + API error code; a terminal session answer is recognisable.
+// Differs: one exception type instead of per-status classes; shares the SDK's PurseException root (code API_ERROR).
 package eu.purse.core.api
+
+import eu.purse.core.error.PurseErrorCode
+import eu.purse.core.error.PurseException
 
 /**
  * Raised when a Payment API call (e.g. `/init`) fails at the network/transport level, returns a
  * non-2xx/3xx status, or produces a response the caller can't use (unsuccessful init, empty-balance
- * card). See [PaymentApiClient].
+ * card). See [PaymentApiClient]. Always [PurseErrorCode.API_ERROR] on the SDK side; the backend's
+ * own reason is [errorCode].
  *
  * Mirrors web's `ApiError` (usp-widget `packages/sdk/src/API/types.ts`): carries the HTTP [status]
  * (null for a pure transport failure), the backend's body [errorCode] (the `error` field, e.g.
@@ -18,7 +25,14 @@ class PaymentApiException(
     val errorCode: String? = null,
     /** The request path that failed, e.g. `/init`. */
     val path: String? = null,
-) : Exception(message, cause) {
+) : PurseException(message, PurseErrorCode.API_ERROR, cause) {
+
+    /**
+     * Whether the request may have reached the server even though no answer came back — a transport
+     * failure with no [status]. After a `/validate`, this means the payment may exist; check the
+     * session status instead of reporting a failure.
+     */
+    val outcomeUnknown: Boolean get() = status == null
 
     /**
      * The session itself is spent — already submitted, expired, or gone — so every further call is

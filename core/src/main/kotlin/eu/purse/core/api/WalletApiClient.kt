@@ -1,3 +1,6 @@
+// Web: packages/sdk/src/API wallet client (`setWalletSession`, token edit/delete/favorite)
+// Same: same routes and headers.
+// Differs: nothing.
 package eu.purse.core.api
 
 import org.json.JSONArray

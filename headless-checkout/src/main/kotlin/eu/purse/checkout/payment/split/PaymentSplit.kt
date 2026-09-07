@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout/src/session/payment/splitter/types.ts
+// Same: source + amount.
+// Differs: nothing.
 package eu.purse.checkout.payment.split
 
 import java.math.BigDecimal

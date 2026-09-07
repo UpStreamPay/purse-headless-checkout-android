@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/plugins/partners/paypal/wallet (JS SDK button)
+// Same: branded button.
+// Differs: `com.paypal.android:payment-buttons` in an `AndroidView`.
 package eu.purse.partnerui.plugins.partners.paypal.wallet
 
 import androidx.compose.runtime.Composable

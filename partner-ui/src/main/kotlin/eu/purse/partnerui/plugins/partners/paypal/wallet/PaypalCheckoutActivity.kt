@@ -1,3 +1,6 @@
+// Web: none — web opens the JS SDK popup in-page
+// Same: —
+// Differs: self-contained Activity running `PayPalWebCheckoutClient`; deep link `${applicationId}.paypal` ships here.
 package eu.purse.partnerui.plugins.partners.paypal.wallet
 
 import android.content.Intent

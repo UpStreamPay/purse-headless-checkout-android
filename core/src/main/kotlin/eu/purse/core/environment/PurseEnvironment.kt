@@ -1,3 +1,6 @@
+// Web: packages/sdk/src/types.ts (`Target`) and the per-environment API roots
+// Same: same targets and roots.
+// Differs: a release build can lock the environment and ignore the session's `api_url`.
 package eu.purse.core.environment
 
 /**

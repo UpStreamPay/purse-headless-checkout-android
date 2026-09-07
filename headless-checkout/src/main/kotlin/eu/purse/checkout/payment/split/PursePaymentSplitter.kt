@@ -1,7 +1,12 @@
+// Web: packages/headless-checkout/src/session/payment/splitter/payment-splitter.ts
+// Same: one primary + N secondaries, secondaries first, primary absorbs the rest; take-policy and usage-limit refusals.
+// Differs: integer cents; no autofill middlewares.
 package eu.purse.checkout.payment.split
 
+import eu.purse.checkout.PurseCheckoutException
 import eu.purse.checkout.payment.secondary.SecondaryTakePolicy
 import eu.purse.checkout.payment.secondary.SecondaryToken
+import eu.purse.core.error.PurseErrorCode
 import java.math.BigDecimal
 import java.math.RoundingMode
 
@@ -43,10 +48,12 @@ class PursePaymentSplitter(orderAmount: BigDecimal) {
     val appliedSecondaries: List<SecondaryToken> get() = secondaries.values.map { it.first }
 
     /**
-     * True once payment can be submitted: a zero-amount session, secondaries covering the whole
-     * amount, or a primary selected to cover the remainder — mirroring web's completion rule.
+     * True once payment can be submitted: secondaries covering the whole (non-zero) amount, or a
+     * primary selected to cover the remainder — mirroring web's completion rule. A zero-amount
+     * session is never fulfilled by itself: an information request still needs the primary the
+     * shopper is registering, and anything else has nothing to submit.
      */
-    val fulfilled: Boolean get() = amountCents == 0L || remainingCents() == 0L || primary != null
+    val fulfilled: Boolean get() = primary != null || (amountCents > 0L && remainingCents() == 0L)
 
     /** The submittable set: each applied token's slice, plus the primary's remainder when one is set. */
     val splits: List<PaymentSplit>
@@ -63,21 +70,56 @@ class PursePaymentSplitter(orderAmount: BigDecimal) {
     }
 
     /**
-     * Draw an applied [token] down against what's left. The draw is capped at the token's balance,
-     * its per-session limit, and the remaining amount. A [SecondaryTakePolicy.MAX] token
-     * (non-splittable, e.g. loyalty) always takes the full cap; a [SecondaryTakePolicy.NONE] token
-     * takes [requestedAmount] (or the full cap when null). Re-applying replaces the prior slice.
+     * Draw an applied [token] down against what's left. With no [requestedAmount] the draw is the
+     * most the token can cover: its balance, the method's `payment_max_amount` ([SecondaryToken.limit])
+     * and the remaining amount. A [SecondaryTakePolicy.MAX] token (non-splittable, e.g. loyalty)
+     * always takes that cap. Re-applying replaces the prior slice.
+     *
+     * An explicit [requestedAmount] is checked like web's `ensureTakePolicy`, not silently clamped:
+     * @throws PurseCheckoutException.InvalidTake `INVALID_TAKE_AMOUNT` when negative, above the
+     * balance or above what is left to pay; `MAX_AMOUNT_REACHED` when above the method's maximum;
+     * `USAGE_LIMIT_ERROR` when the method's `usage_per_session_limit` is already used up by other
+     * tokens in the split (web's `isMethodLimitReached`).
      */
     fun takeSplit(token: SecondaryToken, requestedAmount: BigDecimal? = null) {
         val alreadyThis = secondaries[token.id]?.second ?: 0L
         val remainingWithoutThis = amountCents - (rawSecondarySumCents() - alreadyThis)
         val limitCents = token.limit?.let(::toCents) ?: Long.MAX_VALUE
         val cap = minOf(toCents(token.balance), remainingWithoutThis, limitCents).coerceAtLeast(0L)
+
+        val usageLimit = token.usageLimit ?: 0
+        if (alreadyThis == 0L && usageLimit > 0) {
+            val sameMethod = secondaries.values.count { (other, _) -> other.partner == token.partner && other.method == token.method }
+            if (sameMethod >= usageLimit) {
+                throw PurseCheckoutException.InvalidTake(
+                    "${token.partner.wireValue}/${token.method.wireValue} can be used at most $usageLimit time(s) per session",
+                    PurseErrorCode.USAGE_LIMIT_ERROR,
+                )
+            }
+        }
+
         val take = when (token.takePolicy) {
             SecondaryTakePolicy.MAX -> cap
-            SecondaryTakePolicy.NONE -> minOf(requestedAmount?.let(::toCents) ?: cap, cap).coerceAtLeast(0L)
+            SecondaryTakePolicy.NONE -> requestedAmount?.let { checkedTake(toCents(it), token, remainingWithoutThis, limitCents) } ?: cap
         }
         if (take == 0L) secondaries.remove(token.id) else secondaries[token.id] = token to take
+    }
+
+    private fun checkedTake(requested: Long, token: SecondaryToken, remainingWithoutThis: Long, limitCents: Long): Long {
+        fun invalid(reason: String) = PurseCheckoutException.InvalidTake(
+            "cannot take ${fromCents(requested)} from ${token.id}: $reason",
+            PurseErrorCode.INVALID_TAKE_AMOUNT,
+        )
+        if (requested < 0L) throw invalid("amount must be positive")
+        if (requested > remainingWithoutThis) throw invalid("only ${fromCents(remainingWithoutThis)} is left to pay")
+        if (requested > toCents(token.balance)) throw invalid("balance is ${token.balance.toPlainString()}")
+        if (requested > limitCents) {
+            throw PurseCheckoutException.InvalidTake(
+                "cannot take ${fromCents(requested)} from ${token.id}: the method's maximum is ${fromCents(limitCents)}",
+                PurseErrorCode.MAX_AMOUNT_REACHED,
+            )
+        }
+        return requested
     }
 
     fun clearSplit(token: SecondaryToken) {

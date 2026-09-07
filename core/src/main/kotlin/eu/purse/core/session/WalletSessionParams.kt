@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout `OnePayWalletSession`
+// Same: same fields.
+// Differs: nothing.
 package eu.purse.core.session
 
 /**

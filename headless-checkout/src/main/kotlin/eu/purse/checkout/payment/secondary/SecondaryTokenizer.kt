@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout `buildSecondaryPaymentToken` + secondaries/init-mappers.ts
+// Same: POST /init, parse, optional poll, classify a refusal.
+// Differs: nothing.
 package eu.purse.checkout.payment.secondary
 
 import eu.purse.checkout.PurseCheckoutException

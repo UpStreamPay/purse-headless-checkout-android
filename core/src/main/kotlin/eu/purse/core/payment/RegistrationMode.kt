@@ -1,3 +1,6 @@
+// Web: packages/model registration settings
+// Same: same values.
+// Differs: nothing.
 package eu.purse.core.payment
 
 /**

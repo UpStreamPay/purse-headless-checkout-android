@@ -1,3 +1,6 @@
+// Web: none
+// Same: —
+// Differs: `ActivityResultContract` for the redirect Activity: Approved / Canceled / Failed.
 package eu.purse.partnerui.redirect
 
 import android.content.Context

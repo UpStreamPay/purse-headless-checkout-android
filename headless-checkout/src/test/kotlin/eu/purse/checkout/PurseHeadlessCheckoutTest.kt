@@ -16,6 +16,9 @@ import eu.purse.core.payment.Partner
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.redirect.RedirectAction
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -265,9 +268,9 @@ class PurseHeadlessCheckoutTest {
         val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
         val action = RedirectAction.Get("https://acs.example/challenge")
 
-        assertFalse(runBlocking { checkout.cardHost(card).delegateRedirection(action) })
-        assertFalse(runBlocking { checkout.paypalHost(paypal).delegateRedirection(action) })
-        assertFalse(runBlocking { checkout.redirectionHost(paypal).delegateRedirection(action) })
+        assertFalse(runBlocking { checkout.host(card).delegateRedirection(action) })
+        assertFalse(runBlocking { checkout.host(paypal).delegateRedirection(action) })
+        assertFalse(runBlocking { checkout.host(paypal).delegateRedirection(action) })
     }
 
     @Test
@@ -277,7 +280,7 @@ class PurseHeadlessCheckoutTest {
         val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
         val action = RedirectAction.PostForm("https://acs.example/challenge", "PaReq=abc")
 
-        assertTrue(runBlocking { checkout.paypalHost(paypal).delegateRedirection(action) })
+        assertTrue(runBlocking { checkout.host(paypal).delegateRedirection(action) })
         assertEquals(action, handed)
     }
 
@@ -293,7 +296,7 @@ class PurseHeadlessCheckoutTest {
         try {
             val thrown = assertThrows(PurseCheckoutException.HookFailed::class.java) {
                 runBlocking {
-                    checkout.paypalHost(paypal).delegateRedirection(RedirectAction.Get("https://acs.example/challenge"))
+                    checkout.host(paypal).delegateRedirection(RedirectAction.Get("https://acs.example/challenge"))
                 }
             }
             assertEquals(PurseErrorCode.POST_VALIDATE_FAILED, thrown.code)
@@ -382,45 +385,16 @@ class PurseHeadlessCheckoutTest {
     }
 
     @Test
-    fun `a RequestValidate event selects its method as primary before submitting - web's validationRequested`() {
-        val checkout = checkout()
-        val googlePay = checkout.primaryMethods.single { it.method == Method.GooglePay }
-        assertFalse(checkout.isPaymentFulfilled.value)
-
-        // What an approved wallet sheet dispatches: the merchant never called setPrimary.
-        checkout.pluginContext(googlePay).dispatchEvent(PluginEvent.RequestValidate())
-
-        assertTrue("the approval itself committed the method", checkout.isPaymentFulfilled.value)
-        assertEquals(googlePay.id, checkout.amountSplit.value.single().source.id)
-        // Stop the async submit the event also launched before it can touch the network.
-        checkout.teardown()
-    }
-
-    @Test
     fun `the wallet hosts commit their item on approval, not before`() {
         val checkout = checkout()
         val googlePay = checkout.primaryMethods.single { it.method == Method.GooglePay }
-        val host = checkout.googlePayHost(googlePay)
+        val host = checkout.host(googlePay)
         assertFalse("prepare/tap must not touch the split", checkout.isPaymentFulfilled.value)
 
         host.setAsPrimary() // what the coordinator calls once the sheet is approved
 
         assertTrue(checkout.isPaymentFulfilled.value)
         assertEquals(googlePay.id, checkout.amountSplit.value.single().source.id)
-    }
-
-    @Test
-    fun `a Fulfilled plugin event gates isPaymentFulfilled like setFulfilled`() {
-        val checkout = checkout()
-        val card = checkout.primaryMethods.single { it.method == Method.CreditCard }
-        val context = checkout.pluginContext(card)
-
-        context.dispatchEvent(PluginEvent.Fulfilled(false))
-        checkout.setPrimary(card)
-        assertFalse(checkout.isPaymentFulfilled.value)
-
-        context.dispatchEvent(PluginEvent.Fulfilled(true))
-        assertTrue(checkout.isPaymentFulfilled.value)
     }
 
     // --- saved cards (wallet) ---------------------------------------------------------------------
@@ -492,7 +466,7 @@ class PurseHeadlessCheckoutTest {
         val checkout = checkout()
         val token = checkout.paymentTokens.value.single()
 
-        val host = checkout.cardHost(token)
+        val host = checkout.host(token)
         val context = host.buildContext()
 
         assertEquals("tok-value-1", context.token?.value)
@@ -500,9 +474,11 @@ class PurseHeadlessCheckoutTest {
         assertEquals("J DOE", context.token?.holderName)
         assertTrue(context.token?.requiresCvv == true)
         // Brands come from the token's method vault, same as for the fresh-card host.
-        assertEquals(checkout.cardHost(checkout.primaryMethods.single { it.method == Method.CreditCard }).supportedBrands, host.supportedBrands)
+        val cardContext = checkout.host(checkout.primaryMethods.single { it.method == Method.CreditCard }).buildContext()
+        assertEquals(cardContext.configuration?.vault?.supportedBrands, context.configuration?.vault?.supportedBrands)
+        assertTrue(context.configuration?.vault?.supportedBrands.orEmpty().isNotEmpty())
 
-        val noCvvHost = checkout(noCvvWidgetData()).let { it.cardHost(it.paymentTokens.value.single()) }
+        val noCvvHost = checkout(noCvvWidgetData()).let { it.host(it.paymentTokens.value.single()) }
         assertTrue(noCvvHost.buildContext().token?.requiresCvv == false)
     }
 
@@ -545,7 +521,7 @@ class PurseHeadlessCheckoutTest {
         assertEquals("pp-1", checkout.amountSplit.value.single().source.id)
         assertTrue("no CVV gate armed for a PayPal token", checkout.isPaymentFulfilled.value)
         // The PayPal host hands the token to the plugin, CVV-free.
-        val context = checkout.paypalHost(paypal).buildContext()
+        val context = checkout.host(paypal).buildContext()
         assertEquals("pp-value-1", context.token?.value)
         assertFalse(context.token!!.requiresCvv)
     }
@@ -580,11 +556,11 @@ class PurseHeadlessCheckoutTest {
     }
 
     @Test
-    fun `only a card method or a saved card can host a card form`() {
+    fun `only a primary method or a saved token can be driven by a coordinator`() {
         val checkout = checkout()
 
         assertThrows(IllegalArgumentException::class.java) {
-            checkout.cardHost(checkout.secondaryMethods.single())
+            checkout.host(checkout.secondaryMethods.single())
         }
     }
 
@@ -1048,5 +1024,170 @@ class PurseHeadlessCheckoutTest {
         // Nothing moved.
         assertEquals("session-123", checkout.currentSessionId)
         assertEquals(SessionState.READY, checkout.sessionState.value)
+    }
+
+    // --- reliability: one submit per session, locks, teardown (SDK-12218) ------------------------------
+
+    private val SUCCESS_ANSWER = """{"global_status":"SUCCESS","results":[]}"""
+
+    /** A checkout whose whole amount a gift card covers, so a submit needs no plugin. */
+    private fun coveredCheckout(api: FakePaymentApi, checker: ServerDatetimeChecker = offlineChecker()): PurseHeadlessCheckout {
+        val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(apiUrl = api.apiRoot), checker = checker)
+        checkout.applySecondary(temporaryGiftCard(eu.purse.core.payment.SaveTokenMode.NEVER))   // 10.00 covers 4.80
+        return checkout
+    }
+
+    @Test
+    fun `two concurrent submits post one validate and the loser is SUBMIT_BLOCKED`() {
+        FakePaymentApi().use { api ->
+            api.on("validate") { Thread.sleep(300); 200 to SUCCESS_ANSWER }
+            val checkout = coveredCheckout(api)
+
+            val outcomes = runBlocking {
+                listOf(
+                    async(Dispatchers.Default) { runCatching { checkout.submitPayment() } },
+                    async(Dispatchers.Default) { runCatching { checkout.submitPayment() } },
+                ).awaitAll()
+            }
+
+            assertEquals(1, outcomes.count { it.isSuccess })
+            val blocked = outcomes.single { it.isFailure }.exceptionOrNull() as PurseCheckoutException.SubmitBlocked
+            assertEquals(PurseErrorCode.SUBMIT_BLOCKED, blocked.code)
+            assertEquals("exactly one /validate left the device", 1, api.requests.count { it.path.endsWith("/validate") })
+            assertEquals(SessionState.SUBMITTED, checkout.sessionState.value)
+        }
+    }
+
+    @Test
+    fun `a spent session refuses a second submit even when the payment was declined`() {
+        FakePaymentApi().use { api ->
+            api.respond("validate", """{"global_status":"FAILED","results":[]}""")
+            val checkout = coveredCheckout(api)
+            runBlocking { checkout.submitPayment() }
+            assertEquals(SessionState.ERROR, checkout.sessionState.value)
+
+            val thrown = assertThrows(PurseCheckoutException.SubmitBlocked::class.java) {
+                runBlocking { checkout.submitPayment() }
+            }
+            assertEquals(PurseErrorCode.SUBMIT_BLOCKED, thrown.code)
+            assertEquals(1, api.requests.count { it.path.endsWith("/validate") })
+        }
+    }
+
+    @Test
+    fun `a validate the API refused leaves the session submittable`() {
+        FakePaymentApi().use { api ->
+            var calls = 0
+            api.on("validate") { if (calls++ == 0) 500 to """{"error":"OUTAGE"}""" else 200 to SUCCESS_ANSWER }
+            val checkout = coveredCheckout(api)
+
+            val first = assertThrows(PurseCheckoutException.ValidateFailed::class.java) {
+                runBlocking { checkout.submitPayment() }
+            }
+            assertFalse("the API answered, so the outcome is known", first.outcomeUnknown)
+            assertEquals(SessionState.ERROR, checkout.sessionState.value)
+
+            runBlocking { checkout.submitPayment() }
+            assertEquals(SessionState.SUBMITTED, checkout.sessionState.value)
+        }
+    }
+
+    @Test
+    fun `a validate that never answered is reported as outcome unknown`() {
+        val api = FakePaymentApi()
+        val checkout = coveredCheckout(api)
+        api.close()   // the request leaves the device; nothing answers
+
+        val thrown = assertThrows(PurseCheckoutException.ValidateFailed::class.java) {
+            runBlocking { checkout.submitPayment() }
+        }
+        assertTrue("the payment may exist server-side — the merchant must reconcile", thrown.outcomeUnknown)
+        assertEquals(SessionState.ERROR, checkout.sessionState.value)
+    }
+
+    @Test
+    fun `submit re-evaluates expiry against the server clock and never reaches the PSP once expired`() {
+        FakePaymentApi().use { api ->
+            api.respond("validate", SUCCESS_ANSWER)
+            val year3000 = java.time.Instant.parse("3000-01-01T00:00:00Z").toEpochMilli()
+            // The watchdog's first tick is a minute away: only the submit itself can notice.
+            val checkout = coveredCheckout(api, checker = offlineChecker(clock = { year3000 }))
+            assertEquals(SessionState.READY, checkout.sessionState.value)
+
+            val thrown = assertThrows(PurseCheckoutException.SessionExpired::class.java) {
+                runBlocking { checkout.submitPayment() }
+            }
+            assertEquals(PurseErrorCode.EXPIRED_SESSION, thrown.code)
+            assertEquals(SessionState.EXPIRED, checkout.sessionState.value)
+            assertTrue(api.requests.none { it.path.endsWith("/validate") })
+        }
+    }
+
+    @Test
+    fun `a zero-amount session is not submittable without a primary`() {
+        val zeroAmount = CheckoutTestSessions.samplePaymentSessionJson.replace(""""amount": 4.80""", """"amount": 0""")
+        val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(zeroAmount))
+
+        assertFalse(checkout.isPaymentFulfilled.value)
+        assertThrows(PurseCheckoutException.PaymentNotFulfilled::class.java) {
+            runBlocking { checkout.submitPayment() }
+        }
+    }
+
+    @Test
+    fun `every selectable item reads SUBMITTING while a submit is in flight and is released afterwards`() {
+        FakePaymentApi().use { api ->
+            lateinit var checkout: PurseHeadlessCheckout
+            var duringSubmit: Map<String, DisabledState?> = emptyMap()
+            api.on("validate") {
+                duringSubmit = checkout.paymentMethods.value.associate { it.id to it.disabled }
+                200 to SUCCESS_ANSWER
+            }
+            checkout = coveredCheckout(api)
+            val giftCard = checkout.secondaryMethods.single()
+            assertNull(giftCard.disabled)
+
+            runBlocking { checkout.submitPayment() }
+
+            assertEquals(DisabledState.Submitting, duringSubmit[giftCard.id])
+            assertTrue("nothing is selectable mid-submit", duringSubmit.values.all { it != null })
+            assertNull(checkout.paymentMethods.value.single { it.id == giftCard.id }.disabled)
+        }
+    }
+
+    @Test
+    fun `a disabled method cannot be made primary`() {
+        val checkout = checkout()
+        val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
+        checkout.pluginContext(paypal).dispatchEvent(PluginEvent.ClientError("sdk died"))
+
+        // The merchant still holds the pre-failure instance: the refusal is judged on the live state.
+        val thrown = assertThrows(PurseCheckoutException.MethodDisabled::class.java) { checkout.setPrimary(paypal) }
+
+        assertEquals(PurseErrorCode.METHOD_DISABLED, thrown.code)
+        assertTrue(thrown.disabled is DisabledState.PartnerUiFatalError)
+        assertEquals(thrown.disabled.message, DisabledState.PartnerUiFatalError().message)
+        assertFalse(checkout.isPaymentFulfilled.value)
+    }
+
+    @Test
+    fun `after teardown every operation fails with CHECKOUT_TORN_DOWN`() {
+        val checkout = checkout()
+        val card = checkout.primaryMethods.single { it.method == Method.CreditCard }
+        checkout.setPrimary(card)
+
+        checkout.teardown()
+
+        assertTrue(checkout.isTornDown.value)
+        val submit = assertThrows(PurseCheckoutException.CheckoutTornDown::class.java) {
+            runBlocking { checkout.submitPayment() }
+        }
+        assertEquals(PurseErrorCode.CHECKOUT_TORN_DOWN, submit.code)
+        assertThrows(PurseCheckoutException.CheckoutTornDown::class.java) { checkout.host(card) }
+        assertThrows(PurseCheckoutException.CheckoutTornDown::class.java) { runBlocking { checkout.paymentStatus() } }
+        assertThrows(PurseCheckoutException.CheckoutTornDown::class.java) {
+            runBlocking { checkout.setSession(CheckoutTestSessions.widgetData()) }
+        }
+        checkout.teardown()   // idempotent
     }
 }

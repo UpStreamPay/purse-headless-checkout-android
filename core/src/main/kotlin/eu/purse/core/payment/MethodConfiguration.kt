@@ -1,3 +1,6 @@
+// Web: packages/model `protocols[partner][method].configurations`
+// Same: vault, template, labels, settings / merchant_specifics.
+// Differs: nothing.
 package eu.purse.core.payment
 
 import eu.purse.core.vault.CardBrand

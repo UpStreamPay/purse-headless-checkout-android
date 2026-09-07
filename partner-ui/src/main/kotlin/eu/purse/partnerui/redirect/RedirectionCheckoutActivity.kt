@@ -1,11 +1,17 @@
+// Web: none — web navigates the page
+// Same: —
+// Differs: in-app WebView with progress, first-page watchdog, network-failure surfacing, deep-link return;
+//          https-only navigation and a scheme-checked return intent.
 package eu.purse.partnerui.redirect
 
 import android.content.Intent
+import android.net.Uri
 import android.os.Bundle
 import android.util.Log
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
 import android.webkit.WebResourceResponse
+import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
@@ -24,8 +30,14 @@ import androidx.appcompat.app.AppCompatActivity
  * browser/Custom Tab. If a specific partner's challenge breaks here, that partner needs its own
  * redirect path rather than reverting this one.
  *
- * A returned [RedirectionCheckoutResult.Approved] only means the shopper reached one of those URLs —
- * the caller must still re-check the session status to learn the real outcome.
+ * A returned [RedirectionCheckoutResult.Approved] only means the shopper reached one of those URLs
+ * (or came back to this Activity at all) — the caller must still re-check the session status to
+ * learn the real outcome. That is also why a return intent fired by another app cannot approve a
+ * payment: it is checked against this app's own return scheme, and even then only says "came back".
+ *
+ * What the WebView may load is an allow-list: `https` pages, plus the two return destinations
+ * above. Everything else (`http`, `file`, `javascript`, `intent`, another app's scheme) is refused
+ * — the challenge chain never legitimately needs it, and file/content access is switched off.
  */
 class RedirectionCheckoutActivity : AppCompatActivity() {
 
@@ -43,9 +55,10 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
             startRedirect()
         } else {
             // Recreated after process death mid-challenge: the WebView (and any in-progress ACS
-            // state) is gone, and re-POSTing the form would risk a double submit. Resolve to a
-            // clean cancel so the caller returns to a defined state and the shopper can retry.
-            finishWith(STATUS_CANCELED, message = "redirect interrupted by process death")
+            // state) is gone, and re-POSTing the form would risk a double submit. The payment may
+            // nonetheless have completed while we were away, so this is a *return*, never a cancel —
+            // the caller checks the session status and learns the real outcome.
+            finishWith(STATUS_APPROVED, message = "redirect interrupted by process death — check the session status")
         }
     }
 
@@ -58,6 +71,10 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
                     finishWith(STATUS_FAILED, message = "missing redirect url")
                     return
                 }
+                if (!isAllowedPage(Uri.parse(url))) {
+                    finishWith(STATUS_FAILED, message = "refused redirect url: $url")
+                    return
+                }
                 renderWebView().loadUrl(url)
             }
 
@@ -66,6 +83,11 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
                 val formData = intent.getStringExtra(RedirectionCheckoutContract.EXTRA_FORM_DATA)
                 if (url.isNullOrBlank() || formData == null) {
                     finishWith(STATUS_FAILED, message = "missing redirect url/form data")
+                    return
+                }
+                // A form POST bypasses shouldOverrideUrlLoading, so its target is checked here.
+                if (!isAllowedPage(Uri.parse(url))) {
+                    finishWith(STATUS_FAILED, message = "refused redirect url: $url")
                     return
                 }
                 val html = FormRedirectHtmlBuilder.buildAutoSubmitFormHtml(url, formData)
@@ -96,7 +118,16 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
      */
     private fun renderWebView(): WebView {
         val view = WebView(this)
-        view.settings.javaScriptEnabled = true
+        view.settings.apply {
+            // Challenge pages and the auto-submit form need script; nothing here needs local files,
+            // content providers, popups or cleartext resources.
+            javaScriptEnabled = true
+            javaScriptCanOpenWindowsAutomatically = false
+            setSupportMultipleWindows(false)
+            allowFileAccess = false
+            allowContentAccess = false
+            mixedContentMode = WebSettings.MIXED_CONTENT_NEVER_ALLOW
+        }
 
         // Loading affordance: an indeterminate bar over the (initially blank) page, gone once the
         // first page renders — a 3DS chain can spend seconds on blank interstitials.
@@ -142,6 +173,10 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
                     finishWith(STATUS_APPROVED)
                     return true
                 }
+                if (!isAllowedPage(url)) {
+                    Log.w(TAG, "refused navigation to $url")
+                    return true
+                }
                 return false
             }
 
@@ -182,6 +217,9 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
     private fun isReturnUrl(url: String): Boolean =
         (returnUrlPrefix?.let { url.startsWith(it) } ?: false) || url.isWidgetConfirmationRedirect()
 
+    /** The navigation allow-list: an `https` page. Return destinations are recognized before this. */
+    private fun isAllowedPage(url: Uri): Boolean = url.scheme.equals("https", ignoreCase = true)
+
     private val returnScheme: String get() = "$packageName.redirect"
 
     private val returnUrlPrefix: String?
@@ -189,10 +227,16 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
 
     override fun onNewIntent(newIntent: Intent) {
         super.onNewIntent(newIntent)
+        // Only a VIEW of this app's own return scheme, after the redirect was launched, counts as
+        // the shopper returning. The Activity is exported (the browser must reach it), so anything
+        // else — another app's intent, a different scheme — is ignored rather than trusted.
+        val isReturn = launched && newIntent.action == Intent.ACTION_VIEW && newIntent.data?.scheme == returnScheme
+        if (!isReturn) {
+            Log.w(TAG, "ignoring intent ${newIntent.action} ${newIntent.data}")
+            return
+        }
         setIntent(newIntent)
-        // Any onNewIntent beyond the initial launch came through this Activity's own scoped
-        // intent-filter (${applicationId}.redirect) — that's the shopper returning.
-        if (launched) finishWith(STATUS_APPROVED)
+        finishWith(STATUS_APPROVED)
     }
 
     override fun onResume() {

@@ -1,7 +1,7 @@
 # Consumer API Reference — Headless Checkout (Android)
 
-Audience: a merchant engineer building a checkout UI on top of this SDK. This page documents the
-full **public** surface — every function, reactive property ("event"), and callback a host app can
+Audience: a merchant engineer building a checkout UI on top of this SDK. Start with
+[getting started](getting-started.md); this page documents the full **public** surface — every function, reactive property ("event"), and callback a host app can
 call or observe — module by module. It does not cover internals (plugin protocol classes, mappers,
 splitter math); see [Headless checkout architecture](../architecture/headless-checkout.md) for that.
 
@@ -15,9 +15,7 @@ Everything here is the Kotlin analog of web's `@upstreampay/headless-checkout` +
 ### Plugins are active by default — no setup call needed
 
 Every plugin `:partner-ui` ships (Google Pay, Klarna, PayPal, Purse-vaulted card, the generic
-redirection template) is registered automatically; you don't call `GooglePayModule.register()` /
-`KlarnaModule.register()` / `PaypalModule.register()` / `CardModule.register()` /
-`RedirectionModule.register()` yourself. Whether a method actually shows
+redirection template) is registered automatically in `PluginRegistry`; there is nothing to call. Whether a method actually shows
 up is gated by the **session** alone — the same thing that already decides it server-side, in the
 merchant's Purse configuration. `paymentMethods` simply won't include a method the session doesn't
 offer.
@@ -29,8 +27,7 @@ though the backend might offer it), opt it out explicitly:
 PluginRegistry.disable(Partner.Klarna, Method.Installments)   // eu.purse.partnerui
 ```
 
-`PluginRegistry.enable(partner, method)` reverses it. Calling `GooglePayModule.register()` /
-`KlarnaModule.register()` yourself is harmless (idempotent) but unnecessary — they exist mainly for
+`PluginRegistry.enable(partner, method)` reverses it. `register` / `registerGeneric` / `registerVault` exist for
 tests that want to register a plugin in isolation.
 
 ### `PurseHeadlessCheckout.init`
@@ -108,13 +105,15 @@ you fetched a fresh one — without tearing the screen down. What survives follo
 | Amount, expiry watchdog, `sessionState` | — | the new session's amount; the watchdog restarts; state returns to `READY` |
 
 Same session id → ignored with a warning, as on web. **Throws** `PurseCheckoutException.SessionExpired`
-(`EXPIRED_SESSION`) when the new session is already expired — the old one stays in force — and
-`IllegalStateException` while a payment is being submitted. Emits `HEADLESS_CHECKOUT_SET_SESSION`.
+(`EXPIRED_SESSION`) when the new session is already expired — the old one stays in force —
+`PurseCheckoutException.SubmitBlocked` (`SUBMIT_BLOCKED`) while a payment is being submitted, and
+`PurseCheckoutException.CheckoutTornDown` (`CHECKOUT_TORN_DOWN`) after `teardown()`. Emits
+`HEADLESS_CHECKOUT_SET_SESSION`.
 
 Keying UI on `(item.id, generation)` is what makes "keep what is still valid" work on the screen:
 `rememberPaymentElement` already does it, so an unchanged card keeps its SecureFields form and
-whatever the shopper typed, while a changed method gets a fresh element. Recipe 19 shows the
-expired-session recovery loop.
+whatever the shopper typed, while a changed method gets a fresh element. See
+[recipes §15](recipes.md#15-refresh-the-session).
 
 ---
 
@@ -125,10 +124,11 @@ it from a coroutine scope; there is no callback-based equivalent.
 
 | Property | Type | Fires when |
 |---|---|---|
-| `sessionState` | `StateFlow<SessionState>` | Lifecycle transitions: `READY` → `SUBMITTING` → `SUBMITTED`/`ERROR`, or `EXPIRED` at init if the session already expired (and back to `READY` after `setSession`). |
+| `sessionState` | `StateFlow<SessionState>` | Lifecycle transitions: `READY` → `SUBMITTING` → `SUBMITTED`/`ERROR`, or `EXPIRED` at init, on the watchdog's tick, or when a `submitPayment` re-checks the clock (and back to `READY` after `setSession`). |
+| `isTornDown` | `StateFlow<Boolean>` | `true` once `teardown()` ran; every later operation throws `CheckoutTornDown`. |
 | `paymentSession` | `StateFlow<PaymentSession>` | The session in force; emits again when `setSession` swaps it — rebuild session-derived UI (amount header, method list) from here. |
 | `itemGenerations` | `StateFlow<Map<String, Int>>` | Per-item generation counters bumped by `setSession` for items that did not survive; key anything you remember per item on `(item.id, generation)` — `generationOf(item)` reads the current one. |
-| `paymentMethods` | `StateFlow<List<PaymentItem>>` | Any time the split changes — each item's `disabled` state is recomputed against the new `remainingAmountToPay`. |
+| `paymentMethods` | `StateFlow<List<PaymentItem>>` | Any time the split changes — each item's `disabled` state is recomputed against the new `remainingAmountToPay`. While `submitPayment` is in flight every otherwise-selectable item (here, on `paymentTokens` and on `savedSecondaryTokens`) reads `DisabledState.Submitting`, lifted when it returns. |
 | `remainingAmountToPay` | `StateFlow<BigDecimal>` | After `setPrimary`, `applySecondary`, or `removeSecondary`. |
 | `isPaymentFulfilled` | `StateFlow<Boolean>` | Same triggers as above, plus every `setFulfilled` — `true` once the split covers the full amount **and** every item in it whose plugin collects a form reports that form complete and valid (see [§6](#form-completeness-gates-the-payment)). |
 | `amountSplit` | `StateFlow<List<PaymentSplit>>` | Same triggers — the current list of `(amount, source)` slices that `submitPayment` will send. |
@@ -143,7 +143,7 @@ lifecycleScope.launch {
 }
 ```
 
-There is no `onDataUpdate`/`onAmountUpdate` push into a rendering surface the way web's
+There is no `onAmountUpdate` push into a rendering surface the way web's
 `<purse-partner-ui>` element gets it — the host owns re-rendering on every emission.
 
 ---
@@ -196,16 +196,27 @@ Four concrete subtypes:
 
 ### `DisabledState` (sealed)
 
-| Code | Meaning |
-|---|---|
-| `PaymentFulfilled` | The remaining amount owed by a primary is already zero. |
-| `MinAmountNotMet(minAmount, restToPay)` | The item's minimum is above what's left to pay. |
-| `MaxAmountExceeded(maxAmount)` | Never applies to secondaries — a gift card can hold more than the order needs. |
-| `PluginIncompatible` | The resolved plugin rejected the current client/session in its eligibility check. |
+Web's codes with web's names; every state carries a displayable `message` (web's wording) and the
+amount-driven ones their context. `code` is the enum to branch on.
 
-Web additionally has technical/fatal codes (`TOKEN_INIT_FAILED`, `PARTNER_UI_FATAL_ERROR`, …) that
-only arise once a plugin is actually rendering/submitting — out of scope here; see the pain points
-recap.
+| State | Behaviour | Meaning |
+|---|---|---|
+| `MethodUnstable` | filtered out of the list | The platform suspended the method (`stable == false`). |
+| `AmountConditionUnreachable(minAmount, maxAmount, orderAmount)` | filtered out of the list | The method's minimum is above the whole order. |
+| `PluginIncompatible` | filtered out of the list | The plugin rejected this client/session in its eligibility check. |
+| `FatalErrorBeforeRender(reason)` | filtered out of the list | The plugin failed before mounting anything. |
+| `PaymentFulfilled` | UI cleared, recomputed on amount change | The remaining amount owed by a primary is already zero. |
+| `MinAmountNotMet(minAmount, restToPay)` | UI cleared, recomputed on amount change | The item's minimum is above what's left to pay. |
+| `MaxAmountExceeded(maxAmount, restToPay)` | UI cleared, recomputed on amount change | Never applies to secondaries — a gift card can hold more than the order needs. |
+| `TokenInitFailed` | technically disabled: no UI, permanent | A saved gift card's `/init` failed. |
+| `PartnerUiFatalError(reason)` | technically disabled: no UI, permanent | The partner plugin reported an unrecoverable failure. |
+| `PartnerUiRecoverableError(reason)` | dimmed, UI stays mounted, clears on `Ready` or an amount change | The partner is broken for now, not for good. |
+| `Submitting` | all items, for the duration of `submitPayment` | A payment is being submitted. |
+
+Predicates: `isFiltered`, `isTechnicallyDisabled`, `requiresUiClear`, `isRecoverable`,
+`isRecomputable`. A disabled item cannot enter the split — `setPrimary` / `setPrimaryToken` throw
+`MethodDisabled`, `applySecondary(saved)` throws `SecondaryTokenizationFailed` — and a technically
+disabled one gets a `PaymentElement` with no UI. Merchants show `message`; the demo shows `code`.
 
 ### `PaymentSplit`
 
@@ -224,10 +235,10 @@ or an applied `SecondaryToken`). The full list is what `submitPayment` sends to 
 |---|---|---|
 | `primaryMethods` | `List<PrimaryMethod>` | Filtered view of `paymentMethods.value`. |
 | `secondaryMethods` | `List<SecondaryMethod>` | Filtered view of `paymentMethods.value`. |
-| `setPrimary` | `fun setPrimary(method: PrimaryMethod?)` | Choose (or clear, with `null`) the primary covering the remaining amount. Triggers a `refresh()` of all reactive state. |
+| `setPrimary` | `fun setPrimary(method: PrimaryMethod?)` | Choose (or clear, with `null`) the primary covering the remaining amount. Throws `MethodDisabled` (`METHOD_DISABLED`) for a disabled method, judged on the live state. Triggers a `refresh()` of all reactive state. |
 | `secondaryConfig` | `fun secondaryConfig(method: SecondaryMethod): SecondaryConfig?` | The per-partner form/take-policy rules for a secondary method — `null` if none registered (shipped or via `SecondaryConfigs.register`; e.g. `ancv-connect` is not shipped). |
 | `getSecondaryToken` | `suspend fun getSecondaryToken(method: SecondaryMethod, pan: String, cvv: String? = null): SecondaryToken` | `POST /init` — tokenizes a card and returns its balance **without** touching the split. Validate PAN/CVV via `secondaryConfig` first. |
-| `applySecondary` | `fun applySecondary(token: SecondaryToken, amount: BigDecimal? = null)` | Draws an already-tokenized `token` into the split, clamped to `min(amount, balance, remaining, limit)`. `amount == null` takes as much as the order needs. |
+| `applySecondary` | `fun applySecondary(token: SecondaryToken, amount: BigDecimal? = null)` | Draws an already-tokenized `token` into the split. `amount == null` takes as much as the order needs, capped by the balance and the method's `payment_max_amount`. An explicit `amount` is checked like web's `ensureTakePolicy`: throws `InvalidTake` — `INVALID_TAKE_AMOUNT` (negative, above the balance or above what is left), `MAX_AMOUNT_REACHED` (above the method's maximum), `USAGE_LIMIT_ERROR` (the method's `usage_per_session_limit` is already used up by other tokens in the split). |
 | `removeSecondary` | `fun removeSecondary(token: SecondaryToken)` | Removes a previously applied token from the split. |
 | `appliedSecondaries` | `List<SecondaryToken>` | Applied tokens, in the order they were added. |
 | `registrationOf` | `fun registrationOf(token: SecondaryToken): RegistrationState` | The save decision for a **temporary** gift card — defaults from its method's `SaveTokenMode`; always `registered = false` for a saved one. |
@@ -244,7 +255,8 @@ or an applied `SecondaryToken`). The full list is what `submitPayment` sends to 
   carries no balance.
 - `PaymentApiException` — network/transport failure.
 
-Blocking network work happens via `suspend`; move it to `Dispatchers.IO` at the call site.
+Every `suspend` function of the checkout runs its network call on `Dispatchers.IO` itself — call it
+from any dispatcher, the main one included. No public function blocks.
 
 ### `SecondaryToken`
 
@@ -323,9 +335,11 @@ data class LoanSimulation(
 ```
 
 `totalCost` is the price of the credit (excluding the financed amount); `totalAmount` is what the
-shopper pays in all — `(count - 1) × installmentAmount + initial + final`, rounded to two decimals,
-exactly web's arithmetic. Like web, the schedule carries **counts and amounts only**: the API
-returns no per-instalment dates.
+shopper pays in all — `initial + (count - 2) × installmentAmount + final`, rounded to two decimals.
+`installmentCount` counts every instalment, the first and the last included, so a 3× schedule is
+three lines: initial, one recurring, final. (Web's `mapPluginResultToSimulation` adds `count - 1`
+recurring instalments on top of initial and final and so over-counts one; do not copy it.) Like web,
+the schedule carries **counts and amounts only**: the API returns no per-instalment dates.
 
 **Throws:**
 - `PurseCheckoutException.MethodNotSimulable` (`METHOD_IS_NOT_SIMULABLE`) — the method has no
@@ -378,13 +392,9 @@ either. If you write your own coordinator around a form, call `setFulfilled` fro
 | Function | Signature | Notes |
 |---|---|---|
 | `setCollected` | `fun setCollected(item: PaymentItem, data: Map<String, Any?>)` | Stash data an interactive plugin collected (e.g. a Google Pay token + network), keyed to `item`. Threaded into that item's `preValidation` on the next `submitPayment`. |
-| `setFulfilled` | `fun setFulfilled(item: PaymentItem, fulfilled: Boolean)` | Report whether `item`'s own form is complete and valid — see [below](#form-completeness-gates-the-payment). Coordinators that collect a form call this for you. |
+| `setFulfilled` | `fun setFulfilled(item: PaymentItem, fulfilled: Boolean)` | Report whether `item`'s own form is complete and valid — see [above](#form-completeness-gates-the-payment). Coordinators that collect a form call this for you. |
 | `pluginContext` | `fun pluginContext(item: PaymentItem): PartnerUiContext` | Build the context object a plugin coordinator needs to drive its own steps before submit. |
-| `googlePayHost` | `fun googlePayHost(item: PaymentItem): GooglePayHost` | The `GooglePayHost` implementation for `item`. |
-| `klarnaHost` | `fun klarnaHost(item: PaymentItem, klarnaReturnUrl: String): KlarnaHost` | The `KlarnaHost` implementation for `item`. `klarnaReturnUrl` falls back to the session's own return URL if you don't have a better one. |
-| `paypalHost` | `fun paypalHost(item: PaymentItem): PaypalHost` | The `PaypalHost` implementation for `item`. No return URL argument — the PayPal SDK supplies its own, and the matching Activity ships in `:partner-ui`. |
-| `cardHost` | `fun cardHost(item: PaymentItem): CardHost` | The `CardHost` implementation for `item` — the card `PrimaryMethod` (fresh card, full form) or one of its saved `PaymentToken`s (a CVV-only form when `token.requiresCvv`, no form otherwise; the token reaches the plugin as `PartnerUiContext.token`). Throws `IllegalArgumentException` for anything else. |
-| `redirectionHost` | `fun redirectionHost(item: PaymentItem): RedirectionHost` | The `RedirectionHost` implementation for `item`. Not tied to a partner or method — ask for one per item the session routes to the redirection template. |
+| `host` | `fun host(item: PaymentItem): PluginHost` | The `PluginHost` a coordinator drives `item` through — a `PrimaryMethod`, or one of its saved `PaymentToken`s (the token reaches the plugin as `PartnerUiContext.token`). Throws `IllegalArgumentException` for a secondary method or a saved gift card. Asking for a host also gives the plugin web's `onSessionSet`. |
 
 ### `PartnerUiContext`
 
@@ -394,60 +404,68 @@ The object every plugin lifecycle hook receives:
 data class PartnerUiContext(
     val partner: Partner, val method: Method, val session: LegacyPaymentSession,
     val amount: BigDecimal, val api: PaymentApiClient,
-    val register: Boolean = false, val token: String? = null,
+    val register: Boolean = false, val token: PayToken? = null,
     val collected: Map<String, Any?> = emptyMap(),
     val options: PluginOptions = PluginOptions(),
     val dispatchEvent: (PluginEvent) -> Unit = {},
-)
+) {
+    val configuration: MethodConfiguration?   // session.protocols[partner][method].configurations
+    val vaultTenantId: String?                // vault.vendor_front_data.purse.tenant_id
+}
 ```
 
-Most consumers won't build this directly — `pluginContext` and the `*Host` builders above do it for
-you. `amount` is what a primary would still cover; `collected` carries whatever `setCollected` last
-stashed for this item.
+Most consumers won't build this directly — `pluginContext` and `host` do it for you. `amount` is what
+a primary would still cover; `collected` carries whatever `setCollected` last stashed for this item.
 
-### Google Pay
+### `PluginHost`
 
-> Deep dive — `/init` shapes per gateway, sequence diagram, quirks, failure modes:
-> **[docs/plugins/google-pay.md](../plugins/google-pay.md)**.
-
-**`GooglePayHost`** (implemented by `PurseHeadlessCheckout.googlePayHost(item)`):
+One interface for every coordinator (web has no equivalent: its plugins hold the checkout context
+directly). Implemented by `PurseHeadlessCheckout.host(item)`; you only meet it when you drive a
+coordinator yourself instead of going through `rememberPaymentElement`.
 
 | Member | Meaning |
 |---|---|
-| `environment: PurseEnvironment` | Drives Google Pay's `WalletConstants.ENVIRONMENT_TEST`/`PRODUCTION`. |
-| `redirectionReturnUrl: String?` | Session's own configured return URL — threaded into a genuine 3-D Secure redirect purely so the in-app WebView recognizes reaching it as completion. |
+| `environment: PurseEnvironment` | Drives the native SDK's own environment (Google Pay `ENVIRONMENT_TEST`/`PRODUCTION`, PayPal `SANDBOX`/`LIVE`, SecureFields' `VaultEnvironment`). |
+| `redirectionReturnUrl: String?` | The session's own return URL, threaded into a genuine 3-D Secure redirect so the in-app WebView recognizes reaching it as completion. Never auto-followed. |
 | `buildContext(): PartnerUiContext` | — |
 | `setCollected(data: Map<String, Any?>)` | — |
-| `suspend submitPayment(): ValidationResult` | — |
+| `setAsPrimary()` | Commit the item as the split's primary. Self-submitting flows call it on approval (web's `validationRequested`); a cancelled sheet leaves the split untouched. |
+| `setFulfilled(fulfilled: Boolean)` | The form's completeness, forwarded to `PurseHeadlessCheckout.setFulfilled(item, …)` — the card coordinator calls it, you don't. |
+| `suspend submitPayment(): ValidationResult` | Run the plugin-driven `/validate` pipeline over the current split. |
+| `suspend delegateRedirection(action): Boolean` | Your `onRedirection` hook, when set (`RedirectionDelegate`). |
 
-**`GooglePayCoordinator(activity: ComponentActivity, listener: Listener)`** — construct in the host
-Activity's `onCreate` (it registers `ActivityResult` launchers, which must happen before the
-Activity is `STARTED`).
+### Coordinators
 
-| Function | Signature | Notes |
-|---|---|---|
-| `prepare` | `fun prepare(host: GooglePayHost)` | Runs `/init` + Worldline refine, checks `isReadyToPay`. Call once the session is initialized. |
-| `launchSheet` | `fun launchSheet()` | Shows the Google Pay sheet. Call after `Listener.onReady(true)` and the button is tapped. No-op while a prior flow is still in progress. |
+Every method's interactive half is a `PaymentCoordinator`, obtained through a `remember*Coordinator`
+composable. They are **Compose-only**: the composable wires Compose-managed `ActivityResult` launchers,
+so a coordinator is created exactly where it renders and there is no "construct in `onCreate`"
+rule. A View-based app hosts one through a `ComposeView`. `rememberPaymentElement` does all of this
+for you; reach for a coordinator directly only to customise a button or drive a native step from your
+own control.
 
-**`GooglePayCoordinator.Listener`** callbacks:
+What they share:
+
+| Member | Meaning |
+|---|---|
+| `prepare(host)` | Bind the checkout's `host(item)` and run whatever the method needs before the shopper acts (`/init`, `isReadyToPay`, widget load). Klarna's takes the return URL too. |
+| `submit()` | Run the native step (if any), then `/validate` through the host, then follow the redirect the answer carries. No-op while a previous tap's flow is in progress. Google Pay's equivalent is `launchSheet()`. |
+| `PaymentElementListener` | The one outcome contract — see below. |
+
+**`PaymentElementListener`** callbacks (every member has a default):
 
 | Callback | Fires |
 |---|---|
-| `onReady(ready: Boolean)` | After `prepare()` resolves `isReadyToPay` — show the button only when `true`. |
-| `onResult(summary: String, globalStatus: String? = null)` | Terminal, non-error outcome with no follow-up redirect needed. `globalStatus` is the `/validate` response's own `global_status` when the outcome came from one, and `null` after a redirect return — see the note below. |
-| `onRequiresAction()` | A 3-D Secure step is being launched (informational). |
-| `onPaymentId(paymentId: String)` | Informational — a `payment_id` extracted from the widget's own confirmation-page redirect, when present. Never required for the payment to resolve. |
-| `onCanceled()` | Shopper dismissed the sheet or the redirect WebView without completing. |
-| `onError(message: String?)` | Any failure — sheet, `/validate`, or redirect launch. |
+| `onReady(ready: Boolean)` | The method's readiness changed — `isReadyToPay` for Google Pay, `prepare()` done for PayPal and redirection, the widget loaded for Klarna, the form's validity for the card. |
+| `onResult(summary: String, globalStatus: String? = null)` | Terminal, non-error outcome. `globalStatus` is the `/validate` response's own `global_status` when the outcome came from one, and `null` after a redirect return — see the note below. |
+| `onRequiresAction()` | A redirect step is being launched (3-D Secure, PayPal's approval, the PSP's page). |
+| `onPaymentId(paymentId: String)` | Informational — a `payment_id` the flow could read, when present. Never required for the payment to resolve. |
+| `onCanceled()` | The shopper backed out (sheet dismissed, approval abandoned, redirect page closed, Klarna declined to authorize). |
+| `onError(message: String?)` | Any failure — native step, `/init`, `/validate`, or redirect launch. |
 
-**Note on `onResult`/redirect return:** a returned-from-redirect `Approved` outcome means only that
-the shopper came back into the app — **not** that the payment succeeded. That's precisely the case
-`onResult` reports with a `null` `globalStatus`: don't render it as either success or failure. Re-check
-status independently (e.g. `sessionTransactions()`) rather than trusting it. Note also that a genuine
-redirect *replaces* the widget-confirmation one, so this is the same case where `onPaymentId` has
-nothing to report. See the [pain points recap](../decisions/pain-points-recap.md).
-
-`onResult`'s `globalStatus` is not a success flag either — a non-`SUCCESS` value is a declined payment,
+**Note on `onResult` after a redirect:** a returned-from-redirect outcome means only that the shopper
+came back into the app — **not** that the payment succeeded. That's the case `onResult` reports with a
+`null` `globalStatus`: don't render it as either success or failure. Re-check status independently
+(`paymentStatus()` / `awaitPaymentOutcome()`). A non-`SUCCESS` `globalStatus` is a declined payment,
 not an error. The demo's own three-way mapping (`PaymentOutcome.of`) is the shape to copy:
 
 ```kotlin
@@ -458,107 +476,61 @@ when {
 }
 ```
 
-### PayPal
+An `onError` before any submit (a widget that fails to load, a `/init` that throws) is not a failed
+payment either — leave the shopper able to pick another method.
+
+#### Google Pay
+
+> Deep dive — `/init` shapes per gateway, sequence diagram, quirks, failure modes:
+> **[docs/plugins/google-pay.md](../plugins/google-pay.md)**.
+
+`rememberGooglePayCoordinator(listener)`. `prepare(host)` runs `/init` + Worldline refine and
+`isReadyToPay`; `launchSheet()` shows the sheet (call it from the button's tap, after `onReady(true)`);
+an approved sheet commits the method as primary and captures. `isReady` and
+`allowedPaymentMethodsJson` are Compose state for the SDK's `GooglePayButton(coordinator)`, which
+shows itself only once ready and passes button looks (`theme`, `type`, `cornerRadius`).
+
+#### PayPal
 
 > Deep dive — the out-of-app approval round trip, sequence diagram, quirks, failure modes:
 > **[docs/plugins/paypal.md](../plugins/paypal.md)**.
 
-**`PaypalHost`** (implemented by `PurseHeadlessCheckout.paypalHost(item)`):
+`rememberPaypalCoordinator(listener)`. `prepare(host)` does **no network work** — the `/init` that
+creates the PayPal order waits for `submit()`, so merely showing the button never leaves an orphan
+order. `submit()` runs `/init`, launches PayPal's approval (the PayPal app when installed, else a
+Custom Tab), and captures via `/validate` once the buyer approves; with a saved token on the host it
+captures straight away. `onRequiresAction` fires for the approval, and again only if `/validate` chains
+a 3-D Secure step. **No manifest work**: the approval returns to an Activity `:partner-ui` ships
+(scheme `${applicationId}.paypal`).
 
-| Member | Meaning |
-|---|---|
-| `environment: PurseEnvironment` | `PRODUCTION` → PayPal `Environment.LIVE`, everything else → `SANDBOX`. |
-| `redirectionReturnUrl: String?` | Same role as Google Pay's — a *chained* 3-D Secure hop after `/validate`, **not** PayPal's own approval return (the SDK supplies that itself). |
-| `buildContext(): PartnerUiContext` | — |
-| `setCollected(data: Map<String, Any?>)` | — |
-| `suspend submitPayment(): ValidationResult` | — |
-
-**`PaypalCoordinator(activity: ComponentActivity, listener: Listener)`** — construct in the host
-Activity's `onCreate` (it registers `ActivityResult` launchers, which must happen before the
-Activity is `STARTED`).
-
-| Function | Signature | Notes |
-|---|---|---|
-| `prepare` | `fun prepare(host: PaypalHost)` | Attaches the host and reports readiness. **No network work** — see the note below. Call once the session is initialized. |
-| `submit` | `fun submit()` | Runs `/init` (creating the PayPal order), then launches PayPal's approval; captures via `/validate` once the buyer approves. Call on the branded button's tap. No-op while a prior flow is still in progress. |
-
-**`PaypalCoordinator.Listener`** callbacks:
-
-| Callback | Fires |
-|---|---|
-| `onReady(ready: Boolean)` | After `prepare()` — show the branded `PayPalButton` only when `true`. |
-| `onResult(summary: String, globalStatus: String? = null)` | Terminal, non-error outcome with no follow-up redirect needed — same semantics as Google Pay's. |
-| `onRequiresAction()` | PayPal's approval is being launched — and again if `/validate` chains a 3-D Secure step. |
-| `onPaymentId(paymentId: String)` | Same as Google Pay's — informational, when `/validate` carries one. |
-| `onCanceled()` | Buyer dismissed PayPal's approval, or the chained redirect, without completing. |
-| `onError(message: String?)` | Any failure — `/init`, a missing session `client_id`, the approval failing to present, `/validate`, or redirect launch. |
-
-**Note on where `/init` runs.** Unlike every other coordinator, PayPal's `prepare` makes no network
-call: the `/init` that creates the PayPal order waits for `submit()`, so merely showing the button
-never leaves an orphan order behind. Nothing to do on your side beyond calling `setPrimary` on the
-tap, as you would for Google Pay.
-
-**No manifest work.** PayPal's approval return goes to an Activity `:partner-ui` ships (scheme
-`${applicationId}.paypal`), not to yours — the opposite of Klarna, see [§7](#7-declaring-your-own-deep-link-for-klarna).
-
-Same caveats as Google Pay on `onResult`/redirect return, above.
-
-### Klarna
+#### Klarna
 
 > Deep dive — why `authorize()` runs after `/validate`, sequence diagram, quirks, failure modes:
 > **[docs/plugins/klarna.md](../plugins/klarna.md)**.
 
-**`KlarnaHost`** (implemented by `PurseHeadlessCheckout.klarnaHost(item, returnUrl)`):
+`rememberKlarnaCoordinator(listener)`. Set `container` (the `ViewGroup` the native widget inflates
+into — an `AndroidView`), then `prepare(host, returnUrl)` runs `/init` and loads the widget;
+`onReady(true)` fires when its content rendered. `submit()` runs `/validate`, which itself triggers
+Klarna's `authorize()` inside `KlarnaPlugin.postValidation`, only once `/validate` succeeded. The
+return URL must resume the **same Activity** hosting the widget — see
+[§7](#7-declaring-your-own-deep-link-for-klarna).
 
-| Member | Meaning |
-|---|---|
-| `returnUrl: String` | The deep-link URL `KlarnaPaymentView.returnURL` should carry. Must resume the **same Activity instance** hosting the widget — see [§7](#7-declaring-your-own-deep-link-for-klarna) below. |
-| `buildContext(): PartnerUiContext` | — |
-| `setCollected(data: Map<String, Any?>)` | — |
-| `suspend submitPayment(): ValidationResult` | — |
-
-**`KlarnaCoordinator(activity: ComponentActivity, container: ViewGroup, listener: Listener)`** —
-construct in the host Activity's `onCreate`. `container` is the `ViewGroup` the native widget
-renders into.
-
-| Function | Signature | Notes |
-|---|---|---|
-| `prepare` | `fun prepare(host: KlarnaHost)` | Runs `/init`, inflates the native `KlarnaPaymentView` into `container`. |
-| `submit` | `fun submit()` | Runs `/validate`, which itself triggers Klarna's own `authorize()`/`finalize()` internally (via `KlarnaPlugin.postValidation`, only once `/validate` succeeds) — not something `submit()` drives as a separate step. Call once `Listener.onReady(true)` fired and the shopper tapped your submit action. |
-
-**`KlarnaCoordinator.Listener`** callbacks:
-
-| Callback | Fires |
-|---|---|
-| `onReady(ready: Boolean)` | The widget finished loading content — show the pay trigger. |
-| `onResult(summary: String, globalStatus: String? = null)` | Terminal, non-error outcome with no follow-up redirect needed — same semantics as Google Pay's. |
-| `onRequiresAction()` | A redirect step (external banking/identity-verification app) is being launched. |
-| `onPaymentId(paymentId: String)` | Same as Google Pay's — informational, when `/validate` carries one. |
-| `onCanceled()` | Klarna declined to authorize/finalize, or the redirect was dismissed. |
-| `onError(message: String?)` | Any failure — widget load, `/validate`, authorize/finalize, or redirect launch. |
-
-Same caveats as Google Pay: a returned `Approved` redirect outcome is not proof of payment success,
-and an `onError` before any submit (a widget that fails to load) is not a failed payment — leave the
-shopper able to pick another method rather than showing them a failure screen.
-
-### Card (Purse vault / SecureFields)
+#### Card (Purse vault / SecureFields)
 
 > Deep dive — session prerequisites, sequence diagram, quirks, failure modes:
 > **[docs/plugins/card-purse-vault.md](../plugins/card-purse-vault.md)**.
 
-**Compose-first** — unlike `GooglePayCoordinator`/`KlarnaCoordinator` above (plain classes driving
-View-system widgets), the card plugin's interactive half is a `@Composable` function. Rendering it
-goes through the SDK's own `PurseCardForm(coordinator)` (or SecureFields' bare `VaultForm`/`VaultField`
-when you want no labels or messages) — your app needs a Compose entry point somewhere in its view
-hierarchy (this SDK's own demo is Compose throughout; a `ComposeView` embedded in an otherwise
-View-based layout works just as well).
+`rememberCardCoordinator(host, listener)` owns the SecureFields instance. The host's token (and its
+`requiresCvv`) selects the `CardCoordinator.Mode`: `FRESH_CARD` (full form), `TOKEN_CVV` (a saved card
+whose PSP still wants the CVV: CVV-only form) or `TOKEN_NO_CVV` (nothing to render, payable as-is).
 
 **`PurseCardForm(coordinator: CardCoordinator, modifier: Modifier = Modifier)`** — the card form
 web's hosted form renders: each secure field with its **label** above, its **help text** under it
 while focused, and its **error message** in place of the help text when the shopper leaves it empty
 (`requiredError`) or SecureFields rejects its content (`formatError`). It renders the four fields in
-`FRESH_CARD`, only the CVV in `TOKEN_CVV`, nothing in `TOKEN_NO_CVV`, and sizes itself — no fixed
-height needed. This is what `PaymentElementUi` shows for a card element.
+`FRESH_CARD`, only the CVV in `TOKEN_CVV`, nothing in `TOKEN_NO_CVV`, and sizes itself. This is what
+`PaymentElementUi` shows for a card element; SecureFields' bare `VaultForm(coordinator.sdk)` /
+`VaultField(...)` remain available for a custom layout.
 
 Copy comes from `PluginOptions.cardFormTexts` (`CardFormTexts`, one `CardFormTexts.FieldTexts` per
 field: `label`, `placeholder`, `helperText`, `requiredError`, `formatError`), every `null` falling
@@ -567,60 +539,29 @@ French. Styling comes from `PluginOptions.theme` (`PurseTheme`): the `input*` sc
 SecureFields' `VaultStyles`, `label*` and `helperText*` reach the texts around them, `global*` is the
 base every scope falls back to and `gap` the spacing between fields. `PurseTheme.resolve()` applies
 web's `Theme.build()` order — scope variant → scope → global variant → global — over web's default
-theme, so a partial theme never leaves a hole. See recipe 16.
+theme, so a partial theme never leaves a hole. See [recipes §13](recipes.md#13-locale-texts-theme).
+
+| Member | Signature | Notes |
+|---|---|---|
+| `sdk` | `val sdk: SecureFieldsAndroid` | The live SecureFields instance — render it through `PurseCardForm(coordinator)`, or bare `VaultForm` / `VaultField` for your own layout, only when `mode.rendersForm`. |
+| `theme` | `val theme: PurseTheme.Resolved` | The merchant's `PluginOptions.theme` resolved over web's defaults. |
+| `mode` | `val mode: CardCoordinator.Mode` | See above; `mode.rendersForm` is `false` only for `TOKEN_NO_CVV`. |
+| `formValid` | `var formValid: Boolean` (Compose state) | `false` until every configured field is valid (always `true` in `TOKEN_NO_CVV`). Drive your "Pay" button off this, or off `isPaymentFulfilled`, which the coordinator keeps in step for you. |
+| `submit` | `fun submit()` | Tokenizes via SecureFields (the card, or just the CVV), then `/init` + `/validate` through the host; in `TOKEN_NO_CVV` it skips tokenization. A no-op (never an error) while the form isn't complete and valid. |
 
 One trap worth naming: `rememberCardCoordinator` keys its SecureFields instance on the `host` object,
 so build the host with `remember(...)` rather than inline —
 
 ```kotlin
-val host = remember(method.id) { checkout.cardHost(method) }   // NOT checkout.cardHost(method)
+val host = remember(method.id) { checkout.host(method) }   // NOT checkout.host(method)
 val coordinator = rememberCardCoordinator(host, listener)
 ```
 
 — otherwise every recomposition hands it a new host, tearing down and rebuilding the card form (and
 losing whatever the shopper has typed) each time anything else on the screen changes.
+`rememberPaymentElement` does this for you.
 
-**`CardHost`** (implemented by `PurseHeadlessCheckout.cardHost(item)`):
-
-| Member | Meaning |
-|---|---|
-| `environment: PurseEnvironment` | Drives SecureFields' own `VaultEnvironment` (a distinct enum — converted internally). |
-| `vaultTenantId: String?` | Session's `vault.vendor_front_data.purse.tenant_id` — required by SecureFields' `tenantId` param. |
-| `supportedBrands: List<CardBrand>` | `item.configuration.vault.supportedBrands` — which card schemes SecureFields should accept. Empty falls back to VISA/MASTERCARD/CB. |
-| `redirectionReturnUrl: String?` | Same role as `GooglePayHost.redirectionReturnUrl` — threaded into a genuine 3-D Secure redirect. |
-| `buildContext(): PartnerUiContext` | — |
-| `setCollected(data: Map<String, Any?>)` | — |
-| `setFulfilled(fulfilled: Boolean)` | The form's completeness, forwarded to `PurseHeadlessCheckout.setFulfilled(item, …)` — the coordinator calls it, you don't. |
-| `suspend submitPayment(): ValidationResult` | — |
-
-**`rememberCardCoordinator(host: CardHost, listener: CardCoordinator.Listener): CardCoordinator`** —
-a composable, not a class you construct. No `onCreate`/`STARTED` lifecycle caveat (unlike Google
-Pay/Klarna) — call it from anywhere in your composition; its 3-D Secure redirect launcher
-(`rememberLauncherForActivityResult`) manages its own lifecycle.
-
-| Member | Signature | Notes |
-|---|---|---|
-| `sdk` | `val sdk: SecureFieldsAndroid` | The live SecureFields instance. Render it through `PurseCardForm(coordinator)` (labels, help texts, errors, theme), or with SecureFields' bare `VaultForm(coordinator.sdk)` / `VaultField(coordinator.sdk.cardNumber)` for your own layout — only when `mode.rendersForm`. |
-| `theme` | `val theme: PurseTheme.Resolved` | The merchant's `PluginOptions.theme` resolved over web's defaults — what `PurseCardForm` styles with, exposed for a custom layout that wants the same values. |
-| `mode` | `val mode: CardCoordinator.Mode` | `FRESH_CARD` (a `PrimaryMethod` host), `TOKEN_CVV` (a `PaymentToken` host whose `requiresCvv` is `true`: CVV-only form) or `TOKEN_NO_CVV` (payable as-is, nothing to render). `mode.rendersForm` is `false` only for the last. |
-| `formValid` | `var formValid: Boolean` (Compose state) | Whether the card form currently validates — `false` until every configured field is valid (always `true` in `TOKEN_NO_CVV`). Drive your "Pay" button's `enabled` off this, or off `isPaymentFulfilled`, which the coordinator keeps in step for you. |
-| `submit` | `fun submit()` | Tokenizes via SecureFields (the card, or just the CVV of a saved one), then runs `/init`+`/validate` through `host`; in `TOKEN_NO_CVV` it skips tokenization. Call once `formValid` is `true` and the shopper tapped "Pay". No-op while a prior tap's flow is still in progress, and a no-op (never an error — an unfilled form is not a failed payment) while the form isn't complete and valid. |
-
-**`CardCoordinator.Listener`** callbacks:
-
-| Callback | Fires |
-|---|---|
-| `onReady(ready: Boolean)` | The form's validity changed (mirrors `formValid`, provided as a callback too for symmetry with the other two coordinators). |
-| `onResult(summary: String, globalStatus: String? = null)` | Terminal, non-error outcome with no follow-up redirect needed — same semantics as Google Pay's. |
-| `onRequiresAction()` | A 3-D Secure step is being launched (informational). |
-| `onPaymentId(paymentId: String)` | Same as Google Pay's — informational, when `/validate` carries one. |
-| `onCanceled()` | The redirect was dismissed without completing. |
-| `onError(message: String?)` | Any failure — tokenization, `/validate`, or redirect launch. |
-
-Same caveat as Google Pay/Klarna: a returned `Approved` redirect outcome is not proof of payment
-success.
-
-### Redirection (generic template)
+#### Redirection (generic template)
 
 > Deep dive — how detection works, the browser block, sequence diagram, quirks, failure modes:
 > **[docs/plugins/redirection.md](../plugins/redirection.md)**.
@@ -635,40 +576,11 @@ fun isRedirection(item: PrimaryMethod) =
     PluginRegistry.getPlugin(item.partner, item.method, checkout.session.source) is RedirectionPlugin
 ```
 
-There is nothing to render. `/init` runs on selection (it consumes a step against the session, so
-don't fire one per offered row on screen entry), `onReady(true)` follows immediately, and your own
-"Pay" button does the rest.
-
-**`RedirectionHost`** (implemented by `PurseHeadlessCheckout.redirectionHost(item)`):
-
-| Member | Meaning |
-|---|---|
-| `redirectionReturnUrl: String?` | Same role as `GooglePayHost.redirectionReturnUrl` — the WebView's "known terminal page" hint, and the check that suppresses the widget's own confirmation page. |
-| `buildContext(): PartnerUiContext` | — |
-| `setCollected(data: Map<String, Any?>)` | — |
-| `suspend submitPayment(): ValidationResult` | — |
-
-**`RedirectionCoordinator(activity, listener)`** — construct in `onCreate` (it registers an
-`ActivityResult` launcher). One instance drives one item at a time; `prepare` rebinds it.
-
-| Member | Signature | Notes |
-|---|---|---|
-| `prepare` | `fun prepare(host: RedirectionHost)` | `POST /init`, stash `step_id` + the browser block, then `onReady(true)`. Call when the shopper selects the method. |
-| `submit` | `fun submit()` | `/validate`, then open the PSP's hosted page. No-op while a prior tap's flow is in progress. |
-
-**`RedirectionCoordinator.Listener`** callbacks:
-
-| Callback | Fires |
-|---|---|
-| `onReady(ready: Boolean)` | `/init` returned — there's no form, so the shopper can submit right away. |
-| `onResult(summary: String, globalStatus: String? = null)` | Terminal. `globalStatus == null` after a redirect return means the outcome is unknown; a non-null one whose summary says `"(no redirect returned)"` means `/validate` carried no page to open — see the deep dive. |
-| `onRequiresAction()` | The PSP's hosted page is being opened — for this template, the payment step itself. |
-| `onPaymentId(paymentId: String)` | Same as Google Pay's — informational, when `/validate` carries one. |
-| `onCanceled()` | The shopper dismissed the page without completing. |
-| `onError(message: String?)` | `/init`, `/validate`, or redirect launch failed. |
-
-Same caveat as the other three: a returned `Approved` redirect outcome is not proof of payment
-success.
+`rememberRedirectionCoordinator(listener)`. There is nothing to render. `prepare(host)` runs `/init`
+on selection (it consumes a step against the session, so don't fire one per offered row on screen
+entry) and `onReady(true)` follows immediately; `submit()` runs `/validate` and opens the PSP's page.
+A `/validate` carrying **no** redirect is reported with a summary saying `"(no redirect returned)"` —
+for this template it means the PSP never handed over its page.
 
 ### Registering a new plugin, or opting a built-in one out (`PluginRegistry`)
 
@@ -712,7 +624,8 @@ declare a matching `singleTask` intent-filter:
 </activity>
 ```
 
-Pass the matching URL (e.g. `"$packageName.klarna://return"`) as `klarnaHost`'s `klarnaReturnUrl`.
+Pass the matching URL (e.g. `"$packageName.klarna://return"`) as `rememberPaymentElement`'s
+`klarnaReturnUrl` (its default is exactly that), or to `KlarnaCoordinator.prepare(host, returnUrl)`.
 No manifest change is required for Google Pay or PayPal — both of their return Activities ship
 inside `:partner-ui`.
 
@@ -728,29 +641,45 @@ Runs the plugin-driven `/validate` pipeline over the current split. Must be call
 `isPaymentFulfilled` is `true`. Sets `sessionState` to `SUBMITTING`, then `SUBMITTED`/`ERROR` —
 or back to `READY` when a merchant `onBeforeValidate` hook aborted it before anything was sent.
 
+**One submit per session.** Before anything leaves the device the session's expiry is re-checked
+against the server clock, then an atomic latch moves `READY`/`ERROR` to `SUBMITTING`: a second call
+while one is in flight (a double tap, from any thread), or after the API has answered about the
+payment — approved *or declined* — is refused with `SubmitBlocked` and never reaches the PSP. Only a
+`/validate` the API refused outright (a 5xx, a transport failure) leaves the session submittable.
+While in flight, every item reads `DisabledState.Submitting`; the lock lifts when the call returns.
+
 **Throws:**
 - `PurseCheckoutException.PaymentNotFulfilled` — the split doesn't cover the amount, or no primary
-  is set.
+  is set (a zero-amount session needs a primary too).
 - `PurseCheckoutException.ItemNotFulfilled` — an item in the split has a form that isn't complete and
   valid (see [§6](#form-completeness-gates-the-payment)).
+- `PurseCheckoutException.SessionExpired` — the session expired (`EXPIRED_SESSION`); `sessionState`
+  moves to `EXPIRED`. Recover with `setSession`.
+- `PurseCheckoutException.SubmitBlocked` — a submit is in flight or the session is spent
+  (`SUBMIT_BLOCKED`; `state` says which). Also posted as `HEADLESS_CHECKOUT_SUBMIT_BLOCKED`.
+- `PurseCheckoutException.CheckoutTornDown` — after `teardown()`.
 - `PurseCheckoutException.HookFailed` — your `onBeforeValidate` hook threw (code
   `ON_BEFORE_VALIDATE_HOOK_FAILED`, your exception as `cause`); nothing was sent.
 - `PurseCheckoutException.NoPluginRegistered` — no `:partner-ui` plugin registered for the chosen
   primary's `(partner, method)`.
-- `PurseCheckoutException.ValidateFailed` — a client-side or API validation step failed.
-- `PaymentApiException` — network/transport failure.
+- `PurseCheckoutException.ValidateFailed` — `/validate` failed. **Check `outcomeUnknown`**: `true`
+  means the request left the device and no answer came back, so the payment may exist server-side —
+  reconcile with `awaitPaymentOutcome()` instead of telling the shopper it failed.
 
-Most callers reach `submitPayment` indirectly, through `GooglePayHost.submitPayment` /
-`KlarnaHost.submitPayment`, which coordinators call for you.
+Most callers reach `submitPayment` indirectly, through `PluginHost.submitPayment`, which coordinators
+call for you; the coordinator's `onError` carries the same message.
 
-### Re-checking status after a redirect
+### Re-checking status after a redirect or an unknown outcome
 
 ```kotlin
-fun sessionTransactions(): JSONArray
+suspend fun sessionTransactions(): JSONArray
+suspend fun paymentStatus(): PaymentSessionStatus
+suspend fun awaitPaymentOutcome(timeoutMs: Long = 60_000, pollIntervalMs: Long = 3_000): PaymentSessionStatus
 ```
 
 `GET /{entityId}/sessions/{sessionId}` — the source of truth to check after a redirect/3-D Secure
-return, rather than trusting a locally-held result. Blocking; call off the main thread.
+return, or after a `ValidateFailed` whose `outcomeUnknown` is `true`, rather than trusting a
+locally-held result. Runs on `Dispatchers.IO`.
 
 ---
 
@@ -791,18 +720,25 @@ interactive plugin.
 | `PurseCheckoutException.PaymentNotFulfilled` | `submitPayment` | Split doesn't cover the amount / no primary set. |
 | `PurseCheckoutException.ItemNotFulfilled` | `submitPayment` | An item in the split has an incomplete or invalid form (web's `ELEMENT_NOT_FULFILLED`). |
 | `PurseCheckoutException.NoPluginRegistered` | `submitPayment` | No `:partner-ui` plugin for the chosen `(partner, method)`. |
-| `PurseCheckoutException.ValidateFailed` | `submitPayment` | Client-side or API validation step failed. |
+| `PurseCheckoutException.ValidateFailed` | `submitPayment` | `/validate` failed. `outcomeUnknown == true` means the request left and nothing answered: reconcile with `awaitPaymentOutcome()`. |
+| `PurseCheckoutException.SessionExpired` | `submitPayment`, `setSession` | The session (or the new one) is expired (`EXPIRED_SESSION`). |
+| `PurseCheckoutException.SubmitBlocked` | `submitPayment`, `setSession` | A submit is in flight, or the session's one validation is spent (`SUBMIT_BLOCKED`). |
+| `PurseCheckoutException.CheckoutTornDown` | everything after `teardown()` | The checkout was released (`CHECKOUT_TORN_DOWN`). |
+| `PurseCheckoutException.MethodDisabled` | `setPrimary`, `setPrimaryToken`, a self-submitting coordinator's approval | The item's `disabled` state is set — `disabled` says why (`METHOD_DISABLED`). |
+| `PurseCheckoutException.InvalidTake` | `applySecondary` with an explicit amount | `INVALID_TAKE_AMOUNT`, `MAX_AMOUNT_REACHED` or `USAGE_LIMIT_ERROR`. |
 | `PurseCheckoutException.HookFailed` | `submitPayment` (`onBeforeValidate`), coordinators (`onRedirection`) | A merchant hook threw — `hook` names it, `cause` is the merchant's exception. `ON_BEFORE_VALIDATE_HOOK_FAILED` aborts the submit with nothing sent; `POST_VALIDATE_FAILED` (`onRedirection`) opens no redirect. Neither moves the split. |
 | `PurseCheckoutException.NoSecondaryConfig` | `getSecondaryToken` | No `SecondaryConfig` registered for this secondary method. |
 | `PurseCheckoutException.InvalidSecondaryCard` | `getSecondaryToken` | Client-side PAN/CVV validation failed. |
 | `PurseCheckoutException.SecondaryTokenizationFailed` | `getSecondaryToken` | `/init` unsuccessful, or the card carries no balance. |
 | `PurseCheckoutException.MethodNotSimulable` | `simulateLoan` / `simulateLoans` | The method has no `simulable` label (`METHOD_IS_NOT_SIMULABLE`). |
 | `PurseCheckoutException.LoanSimulationFailed` | `simulateLoan` / `simulateLoans` | The simulation API answered without a schedule — no `plugin_result`, or a refusal like `EMPTY_SIMULATION` (`INVALID_LOAN_SIMULATION`; the API's code is on the cause). |
-| `PurseSessionException.SessionMalformed` | `PurseHeadlessCheckout.init` | `widget.data` couldn't be decoded, or is missing required fields. |
-| `PaymentApiException` | Any Payment API call | Network/transport failure, non-2xx/3xx status, or an unusable response body. |
+| `PurseSessionException.SessionMalformed` | `PurseHeadlessCheckout.init`, `setSession` | `widget.data` couldn't be decoded, or is missing required fields (`SESSION_MALFORMED`). |
+| `PaymentApiException` | Any Payment API call | Network/transport failure, non-2xx/3xx status, or an unusable response body (`API_ERROR`; the backend's own reason is `errorCode`, `outcomeUnknown` when no answer came back). |
 
-All of the above are unchecked (`Exception` subclasses) — catch at whatever layer makes sense for
-your app's error UI.
+All of the above extend `eu.purse.core.error.PurseException`: unchecked, with a stable `code`
+(`PurseErrorCode`, web's names), a `message` and a `documentationLink`. Catch the root for generic
+handling and branch on `code`. Every code the SDK raises is exercised by
+`PurseErrorCodeCoverageTest`.
 
 ---
 
@@ -810,7 +746,7 @@ your app's error UI.
 
 | Type | Values / shape | Notes |
 |---|---|---|
-| `SessionState` | `IDLE, READY, SUBMITTING, SUBMITTED, ERROR, EXPIRED, TERMINATED` | Web's `PurseHeadlessCheckoutSessionState`. |
+| `SessionState` | `READY, SUBMITTING, SUBMITTED, ERROR, EXPIRED, TERMINATED` | Web's `PurseHeadlessCheckoutSessionState` minus `idle` (a checkout cannot exist without a session). |
 | `PurseEnvironment` | `DEVELOPMENT, TEST, SANDBOX, PRODUCTION` | Each carries its own `paymentApiRoot`. |
 | `PurseSessionParams` | `apiKey, apiUrl, environment, entityId, paymentSession` | The decoded `widget.data`. |
 | `MethodConfiguration` | `stable, template, labels, position, vault, settings` | Raw `configurations` block; `isSecondary` derives from `labels`. |

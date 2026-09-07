@@ -1,3 +1,6 @@
+// Web: packages/sdk/src/types.ts (`VaultVendors`)
+// Same: purse / pci_proxy / none.
+// Differs: nothing.
 package eu.purse.core.vault
 
 /**

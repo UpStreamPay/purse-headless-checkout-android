@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/libs/ingenico-onlinepayments
+// Same: Worldline product-320 lookup refining networks and gateway.
+// Differs: nothing.
 package eu.purse.partnerui.plugins.generics.googlepay.partners.ingenico
 
 import android.util.Log

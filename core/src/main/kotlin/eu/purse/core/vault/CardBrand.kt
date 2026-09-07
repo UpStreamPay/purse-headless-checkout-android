@@ -1,3 +1,6 @@
+// Web: packages/model card brands (`vault.supported_brands`)
+// Same: same wire values.
+// Differs: distinct from SecureFields' own `Brand` enum.
 package eu.purse.core.vault
 
 /**

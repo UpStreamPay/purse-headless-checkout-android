@@ -1,3 +1,6 @@
+// Web: packages/sdk/src/server-datetime-checker.ts
+// Same: server-offset-corrected expiry check.
+// Differs: injectable clock and fetch for tests.
 package eu.purse.core.datetime
 
 import java.time.Instant

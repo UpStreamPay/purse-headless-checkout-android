@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/plugins/generics/googlepay/partners/ingenico.ts
+// Same: gateway config from `plugin_result.logs`.
+// Differs: nothing.
 package eu.purse.partnerui.plugins.generics.googlepay.partners.ingenico
 
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayConfig

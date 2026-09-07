@@ -41,8 +41,8 @@ include(":core")
 // native `KlarnaPaymentView`), living under `plugins.generics.googlepay` / `plugins.partners.klarna`
 // inside this same module, exactly like web's `partner-ui` package bundles
 // `plugins/generics/googlepay` / `plugins/partners/klarna-installments`. Each registers itself into
-// `PluginRegistry` at runtime (`GooglePayModule.register()` / `KlarnaModule.register()`). Sits on
-// `:core` only — it talks to `:headless-checkout` through the `GooglePayHost`/`KlarnaHost` seams so
+// `PluginRegistry` at class load (its `init` block). Sits on
+// `:core` only — it talks to `:headless-checkout` through the `PluginHost` seam so
 // the dependency never points back the other way (`:headless-checkout` depends on `:partner-ui`, not
 // vice versa).
 include(":partner-ui")

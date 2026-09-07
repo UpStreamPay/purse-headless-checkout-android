@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout/src/session/payment/mops/item-factory (primary / secondary items)
+// Same: id `{partner}-{method}`, configuration, disabled state.
+// Differs: a sealed hierarchy; saved gift cards are `SavedSecondaryToken`, not `type: 'token'` mops.
 package eu.purse.checkout.payment.item
 
 import eu.purse.checkout.payment.secondary.SecondaryTakePolicy
@@ -139,6 +142,7 @@ data class SavedSecondaryToken(
         expirationDate = expirationDate.orEmpty(),
         takePolicy = takePolicy,
         limit = maxAmount,
+        usageLimit = configuration.settings.usagePerSessionLimit,
         saveTokenMode = SaveTokenMode.NEVER,
         isSaved = true,
     )

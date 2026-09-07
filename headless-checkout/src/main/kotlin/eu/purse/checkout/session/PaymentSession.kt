@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout/src/session/payment/payment.ts (session in force)
+// Same: id, amount, currency, expiry, vault configuration, means of payment.
+// Differs: built once by `PaymentSessionBuilder`.
 package eu.purse.checkout.session
 
 import eu.purse.checkout.payment.item.PaymentItem

@@ -1,12 +1,15 @@
+// Web: packages/headless-checkout/src/headless-checkout-validation.ts (`executePayment`, `preValidateItems`)
+// Same: preValidation → one POST /validate → postValidation; hooks around it.
+// Differs: a repeated split source is a hard error.
 package eu.purse.checkout.validation
 
 import android.util.Log
 import eu.purse.checkout.PurseCheckoutException
 import eu.purse.checkout.PurseCheckoutHooks
-import eu.purse.checkout.PurseHeadlessCheckout
 import eu.purse.checkout.monitoring.CheckoutEventBus
 import eu.purse.checkout.monitoring.CheckoutEventCode
 import eu.purse.checkout.monitoring.EventLevel
+import eu.purse.checkout.monitoring.monitoringPayload
 import eu.purse.checkout.payment.item.PaymentToken
 import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.checkout.payment.registration.RegistrationState
@@ -71,11 +74,14 @@ class PaymentValidator(private val api: PaymentApiClient) {
                     payloads += if (registration != null) enhanceWithRegistration(payload, registration) else payload
                 }
 
-                is PrimaryMethod -> {
+                // A primary method, or a saved token paying through the same plugin — the context then
+                // carries the token instead of fresh form data (web renders the element with a `token`).
+                is PrimaryMethod, is PaymentToken -> {
                     val plugin = PluginRegistry.getPlugin(source.partner, source.method, session)
                         ?: throw PurseCheckoutException.NoPluginRegistered(
                             "no :partner-ui plugin registered for ${source.id} — implement one to complete payment",
                         )
+                    val registration = registrationByMethod[source.id].takeIf { source is PrimaryMethod }
                     val context = PartnerUiContext(
                         partner = source.partner,
                         method = source.method,
@@ -83,35 +89,13 @@ class PaymentValidator(private val api: PaymentApiClient) {
                         amount = split.amount,
                         api = api,
                         collected = collectedByMethod[source.id] ?: emptyMap(),
-                        register = registrationByMethod[source.id]?.registered == true,
+                        register = registration?.registered == true,
+                        token = (source as? PaymentToken)?.toPayToken(),
                     )
                     if (!plugin.validateUi(context)) {
                         throw PurseCheckoutException.ValidateFailed("client-side validation failed for ${source.id}")
                     }
-                    payloads += enhanceWithRegistration(plugin.preValidation(context), registrationByMethod[source.id])
-                    prepared += Prepared(plugin, context)
-                }
-
-                // A saved card: same plugin pipeline, but the context carries the token instead of
-                // fresh form data — web renders the element with a `token` attribute.
-                is PaymentToken -> {
-                    val plugin = PluginRegistry.getPlugin(source.partner, source.method, session)
-                        ?: throw PurseCheckoutException.NoPluginRegistered(
-                            "no :partner-ui plugin registered for ${source.partner.wireValue}-${source.method.wireValue}",
-                        )
-                    val context = PartnerUiContext(
-                        partner = source.partner,
-                        method = source.method,
-                        session = session,
-                        amount = split.amount,
-                        api = api,
-                        collected = collectedByMethod[source.id] ?: emptyMap(),
-                        token = source.toPayToken(),
-                    )
-                    if (!plugin.validateUi(context)) {
-                        throw PurseCheckoutException.ValidateFailed("client-side validation failed for ${source.id}")
-                    }
-                    payloads += plugin.preValidation(context)
+                    payloads += enhanceWithRegistration(plugin.preValidation(context), registration)
                     prepared += Prepared(plugin, context)
                 }
 
@@ -131,7 +115,7 @@ class PaymentValidator(private val api: PaymentApiClient) {
                 CheckoutEventBus.getInstance().post(
                     CheckoutEventCode.HEADLESS_CHECKOUT_ON_BEFORE_VALIDATE_HOOK_FAILED,
                     EventLevel.ERROR,
-                    PurseHeadlessCheckout.monitoringPayload("hook" to "onBeforeValidate", "message" to e.message),
+                    monitoringPayload("hook" to "onBeforeValidate", "message" to e.message),
                 )
                 throw PurseCheckoutException.HookFailed(
                     "onBeforeValidate", e, PurseErrorCode.ON_BEFORE_VALIDATE_HOOK_FAILED,
@@ -167,7 +151,7 @@ class PaymentValidator(private val api: PaymentApiClient) {
             CheckoutEventBus.getInstance().post(
                 CheckoutEventCode.HEADLESS_CHECKOUT_CLIENT_HOOK_ERROR,
                 EventLevel.ERROR,
-                PurseHeadlessCheckout.monitoringPayload("hook" to "onAfterValidate", "message" to e.message),
+                monitoringPayload("hook" to "onAfterValidate", "message" to e.message),
             )
         }
 

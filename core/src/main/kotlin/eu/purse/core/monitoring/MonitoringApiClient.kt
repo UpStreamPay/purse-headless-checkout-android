@@ -1,3 +1,6 @@
+// Web: packages/sdk `ApiLogger` (`/widget/headless_checkout`)
+// Same: same route and message envelope.
+// Differs: `platform: android` on every message.
 package eu.purse.core.monitoring
 
 import org.json.JSONArray

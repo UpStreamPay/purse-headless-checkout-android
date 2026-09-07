@@ -13,12 +13,12 @@ Pay-now only. Registration / vaulting and BNPL ("Pay Later") are out of scope �
 | | |
 |---|---|
 | Partner / method | `paypal` / `wallet` (`Method.Wallet`) |
-| Family | **partner** — one PSP, one method, so `PaypalModule` registers only `(Paypal, Wallet)`; no fallback |
+| Family | **partner** — one PSP, one method, so `PluginRegistry` registers only `(Paypal, Wallet)`; no fallback |
 | Native SDK | `com.paypal.android:paypal-web-payments` + `payment-buttons` (Maven Central) |
 | UI surface | PayPal's own branded `PayPalButton` (xpay), then PayPal's approval — the PayPal app when installed, else a Custom Tab |
 | Native step vs `/validate` | **approval runs BEFORE `/validate`**, but after this plugin's own `/init` |
 | Gates `isPaymentFulfilled`? | No — there is no form; readiness is just "the session offers PayPal" |
-| Lifecycle caveat | `PaypalCoordinator` **must be constructed in the Activity's `onCreate`** (it registers two `ActivityResult` launchers) |
+| Obtain with | `rememberPaypalCoordinator(listener)` — Compose-managed launchers; or simply `rememberPaymentElement` |
 | Manifest work | **None** — the return Activity and its deep link ship in `:partner-ui` |
 
 PayPal is the only shipped method whose payment step takes the shopper **out of the app and back**.
@@ -58,7 +58,7 @@ sequenceDiagram
     participant Ck as PurseHeadlessCheckout
     participant Rd as RedirectionCheckoutActivity
 
-    App->>Co: prepare(checkout.paypalHost(item))
+    App->>Co: prepare(checkout.host(item))
     Co-->>App: Listener.onReady(true) — no network yet
 
     App->>Co: submit() (branded button tapped)
@@ -184,23 +184,16 @@ self-contained one and comes back as an Activity result.
 Host integration:
 
 ```kotlin
-class MainActivity : ComponentActivity() {
-    private lateinit var paypal: PaypalCoordinator
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        paypal = PaypalCoordinator(this, listener)          // MUST be here
-    }
+@Composable
+fun PaypalRow(checkout: PurseHeadlessCheckout, item: PrimaryMethod, listener: PaymentElementListener) {
+    val coordinator = rememberPaypalCoordinator(listener)
+    LaunchedEffect(coordinator, item.id) { coordinator.prepare(checkout.host(item)) }   // cheap, no network
+    PaypalButton(coordinator, Modifier.fillMaxWidth())   // tap → submit(): /init → approval → capture
 }
-
-// once the session is initialized — cheap, no network
-checkout.primaryMethods.firstOrNull { it.method == Method.Wallet }
-    ?.let { paypal.prepare(checkout.paypalHost(it)) }
-
-// on the branded button's tap, after Listener.onReady(true)
-checkout.setPrimary(paypalItem)
-paypal.submit()
 ```
+
+The approval commits the method as primary itself (`host.setAsPrimary()`).
+`rememberPaymentElement(checkout, item, listener)` is the same thing behind the element shape.
 
 ## Outcomes
 
@@ -246,7 +239,7 @@ setPrimaryToken(token) ──▶ submit ──▶ /init (pay-now body) ──▶
   `order_id`, since no order is created — then patches the item with `PayToken.patchPaymentData`
   (web's `patchItemPayloadWithToken`; a PayPal token carries no `card` block). Calling
   `checkout.submitPayment()` directly therefore sends a complete item, coordinator or not.
-- `PaypalCoordinator.submit()` prepared with `paypalHost(token)` skips the approval and goes
+- `PaypalCoordinator.submit()` prepared with `host(token)` skips the approval and goes
   straight to the capture, keeping the chained-3DS handling of the pay-now flow.
 - `rememberPaymentElement(checkout, token)` gives the element shape: `hasUi = false`,
   `ready = true` from `prepare`, `submit()` as above.
@@ -268,8 +261,8 @@ Creating such a token — registration / vaulting — is **not** built, see belo
 |---|---|
 | `PaypalPlugin.kt` | `buildRequest` (`/init`), `preValidation` (`step_id` only — or, with a saved token, its own `/init` + `payment_data.token`), the `COLLECTED_*` keys |
 | `PaypalMapper.kt` | `/init` body, `order_id` + `step_id` parsing, `ensureInitSucceeded` (token init), the session's `client_id` |
-| `PaypalCoordinator.kt` | `/init` on tap, approval launch, capture, chained redirect; straight to capture for a saved token |
+| `PaypalCoordinator.kt` | `/init` on tap, approval launch, straight to capture for a saved token, drops the echoed approval URL (the shared flow lives in `PaymentCoordinator`) |
 | `PaypalCheckoutActivity.kt` / `PaypalCheckoutContract.kt` | The self-contained browser switch and its `ActivityResultContract` |
-| `PaypalHost.kt` / `PaypalConfig.kt` / `PaypalRequest.kt` | Seam + value types |
+| `PaypalButton.kt` | PayPal's branded button as a composable |
 
 Web reference: `usp-widget/packages/partner-ui/src/plugins/partners/paypal/wallet/`.

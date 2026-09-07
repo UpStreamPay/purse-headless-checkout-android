@@ -1,3 +1,6 @@
+// Web: packages/partner-ui `manageRedirection` + widget confirmation-page handling
+// Same: field priority over the /validate answer; `payment_id` off the confirmation URL.
+// Differs: `should_submit_widget` is never auto-followed; the return URL becomes a WebView completion hint.
 package eu.purse.partnerui.redirect
 
 import org.json.JSONObject
@@ -34,7 +37,7 @@ object RedirectionResolver {
      * @param partnerWireValue / [methodWireValue] identify this method's own entry in `results`
      * (mirrors web's `getPartnerMethodFromList`).
      * @param sessionReturnUrl the session's own configured return URL
-     * (`GooglePayHost.redirectionReturnUrl`) — a resolved target starting with it is suppressed (see
+     * (`PluginHost.redirectionReturnUrl`) — a resolved target starting with it is suppressed (see
      * class doc), not returned for the caller to follow.
      */
     fun resolve(

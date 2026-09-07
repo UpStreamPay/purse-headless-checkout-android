@@ -1,0 +1,93 @@
+# Web ↔ Android map
+
+One-page cross-reference between `usp-widget` (web, the reference implementation) and this SDK.
+Paths on the web side are under `usp-widget/packages/`. Update this file in the same commit that
+adds or removes a divergence.
+
+## Modules
+
+| Web package | Android module |
+|---|---|
+| `sdk` + `model` + `common` | `:core` |
+| `partner-ui` | `:partner-ui` |
+| `headless-checkout` | `:headless-checkout` |
+| `dropin` (Svelte UI on top of headless) | none; `rememberPaymentElement` is the closest thing |
+| playground / `alfred` | `:app` (demo) |
+
+## File-level map
+
+| Web | Android | Same? |
+|---|---|---|
+| `headless-checkout/src/headless-checkout.ts` | `checkout/PurseHeadlessCheckout.kt` (+ `wallet/WalletTokens.kt`, `simulation/LoanSimulator.kt`, `monitoring/CheckoutMonitoring.kt`) | yes |
+| `headless-checkout-validation.ts` (`executePayment`, `preValidateItems`) | `checkout/validation/PaymentValidator.kt` | yes |
+| `session/payment/payment.ts` (stores) | `StateFlow`s on `PurseHeadlessCheckout` | Svelte stores → `StateFlow` |
+| `session/payment/mops/item-factory/{primaries,secondaries,factories}.ts` | `checkout/session/PaymentSessionBuilder.kt`, `payment/item/PaymentItem.kt` | yes |
+| `mops/disabled.ts` | `payment/item/DisabledState.kt`, `MethodAvailability.kt` | yes |
+| `mops/secondaries/configs/*.ts` (one file per issuer) | `payment/secondary/SecondaryConfig.kt` (one file) | same keys; `ancv-connect` missing; Android adds `SecondaryConfigs.register` |
+| `mops/secondaries/{init,token,validate}-mappers.ts` | `SecondaryConfig.kt`, `SecondaryTokenizer.kt` | yes |
+| `splitter/payment-splitter.ts` | `payment/split/PursePaymentSplitter.kt` | yes, integer cents |
+| `splitter/middlewares/*` (autofill) | not ported | |
+| `payment-element/payment-element.ts` | `checkout/element/PaymentElement.kt` + `partnerui/PaymentCoordinator.kt` and one coordinator per plugin | see divergences |
+| none | `partnerui/PluginHost.kt` | the seam through which a coordinator reaches the checkout |
+| `monitoring/*`, `monitoringConfigs.ts` | `checkout/monitoring/CheckoutEventBus.kt`, `CheckoutEventCode.kt`, `core/monitoring/*` | same 40 codes, envelope + `platform: android` |
+| `utils/error/*` | `checkout/PurseCheckoutException.kt`, `core/error/PurseErrorCode.kt` | same codes |
+| `sdk/src/API/payment-api.ts` | `core/api/PaymentApiClient.kt` | yes |
+| wallet API | `core/api/WalletApiClient.kt` | yes |
+| `server-datetime-checker.ts` | `core/datetime/ServerDatetimeChecker.kt`, `DatetimeApiClient.kt` | yes |
+| `sdk` `Partner` / `Method` unions | `core/payment/Partner.kt`, `Method.kt` (sealed + `Other`) | yes |
+| `LegacyPaymentSession` type + `widget.data` decode | `core/session/LegacyPaymentSession.kt`, `LegacyPaymentSessionParser.kt`, `SessionCodec.kt` | yes |
+| `partner-ui/src/commons/Plugin/types.ts` (`Plugin<Context>`) | `partnerui/PartnerUiPlugin.kt` | `Promise` → `suspend` |
+| `commons/PartnerUI/types.ts` (`PartnerUIContext`) | `partnerui/PartnerUiContext.kt` | immutable on Android |
+| `plugins/index.ts` (`getPlugin`) + `partner_plugins.ts` | `partnerui/PluginRegistry.kt` | static table → registry with the same order |
+| `commons/PartnerUI/initGuard.ts` | `core/api/InitGuard.kt` | yes |
+| `partner-ui/src/events.ts` (`UnifiedEvent`) | `partnerui/PluginEvent.kt` | trimmed |
+| `plugins/utils/noCVV.ts`, `patchItemPayloadWithToken` | `PayToken.requiresCvv`, `PayToken.patchPaymentData` | yes |
+| `commons/PartnerUI/theming/*`, `hostedForm` translations | `partnerui/PurseTheme.kt`, `CardFormTexts` | same scopes and fallback chain |
+| `plugins/generics/googlepay/*` + `partners/{adyen,ingenico,default}` + `libs/ingenico-onlinepayments` | `plugins/generics/googlepay/*`, `partners/*`, `WorldlineProductClient.kt` | protocol yes; sheet via Play Services |
+| `plugins/generics/redirection/*` + `manageRedirection` | `plugins/generics/redirection/*`, `partnerui/redirect/RedirectionResolver.kt` + WebView Activity | yes; return handled in-app |
+| `plugins/partners/klarna-installments` | `plugins/partners/klarna/*` | JS SDK → `KlarnaPaymentView` |
+| `plugins/partners/paypal/wallet` | `plugins/partners/paypal/wallet/*` | JS popup → PayPal Android SDK |
+| `plugins/vaults/purse/creditcard` + `generics/hostedfields` | `plugins/vaults/purse/creditcard/*` | iframes → SecureFields Android |
+
+## Vocabulary
+
+| Web | Android |
+|---|---|
+| `PurseHeadlessCheckout.init(widgetData)` | `PurseHeadlessCheckout.init(widgetData, lockedEnvironment, hooks, options)` |
+| `mops` store | `paymentMethods` (primaries + secondaries), `paymentTokens`, `savedSecondaryTokens` |
+| `type: 'token'` secondary in `mops` | `SavedSecondaryToken` on its own flow |
+| `method.setAsPrimarySource()` | `setPrimary(method)` / `setPrimaryToken(token)` |
+| `element.isFulfilled()` refused by `setAsPrimarySource` | `isPaymentFulfilled` flow + `setFulfilled(item, …)` gate |
+| `getPaymentElement()`, `element.appendTo()`, `hasUI()` | `rememberPaymentElement()`, `PaymentElementUi()`, `PaymentElement.hasUi` |
+| `element.on('ready' …)` | `PaymentElementListener.onReady` and `pluginEvents` flow |
+| `redirectionHandler` | `PurseCheckoutHooks.onRedirection` (through `RedirectionDelegate`) |
+| `context.dmz.initialStepId` | `PartnerUiContext.collected[COLLECTED_STEP_ID]` |
+| `temporaryToken.register()` | `registerSecondary(token, …)` |
+| `withEvents(plugin)` proxy | `PartnerUiContext.dispatchEvent` + `PurseHeadlessCheckout.onPluginEvent` |
+| `teardown()` | `teardown()` |
+
+## Divergences and why
+
+| Topic | Web | Android | Why |
+|---|---|---|---|
+| Plugin activation | static lookup table | `PluginRegistry` with all built-ins registered in `init` | same effect; registry kept for `Partner.Other` and host-registered plugins |
+| Google Pay resolution | template `googlepay` | pair `(ingenico, googlepay)` + method fallback | historical; harmless for today's sessions |
+| Interactive step | plugin renders into the DOM and owns its client | a `PaymentCoordinator` subclass owns the native SDK; the base owns `/validate`, redirects and the return; the plugin stays pure protocol | Activity lifecycle and result contracts have no web analogue |
+| Plugin ↔ checkout access | plugin holds the checkout context | one `PluginHost` interface, implemented by `PurseHeadlessCheckout.host(item)` | keeps `:partner-ui` from depending on `:headless-checkout` |
+| Fulfilment | `setAsPrimarySource` refuses an unfulfilled element | reactive `isPaymentFulfilled`, selectable before the form is filled | fits `StateFlow` UIs |
+| Card `/init` timing | at `onSessionSet` | inside `preValidation` | nothing about rendering depends on it on Android |
+| PayPal `/init` timing | at render | on button tap | avoids orphan PayPal orders |
+| PayPal `redirection.url` in `/validate` | never followed | explicitly dropped when it is a PayPal approval URL | it is the web popup URL echoed back; following it re-opens PayPal |
+| Klarna return | page URL | host app must declare a `singleTask` deep link | `KlarnaPaymentView` resumes the same Activity |
+| Payment confirmation after redirect | merchant success page | `paymentStatus()` / `awaitPaymentOutcome()` polling | the app returns to the launching screen |
+| `setSession` survivors | resets the split | keeps an unchanged primary selected | AC of US-24 |
+| Second submit | latch posts `HEADLESS_CHECKOUT_SUBMIT_BLOCKED` and returns silently | same latch, atomic, **throws** `SubmitBlocked` (`SUBMIT_BLOCKED`) and re-checks expiry first | a merchant needs a code to react to, not a silent no-op (SDK-12218) |
+| `SUBMITTING` disabled state | declared, never set | overlaid on every selectable item while `submitPayment` runs | US-22 |
+| `teardown()` | unsubscribes the event bus; instance stays usable | releases everything, `isTornDown`, later calls throw `CheckoutTornDown` | US-25 |
+| Redirect WebView | page navigation | `https`-only navigation, file/content access off, return intent checked against the app's own scheme | US-08 / US-09 |
+| Process death during a redirect | n/a | recreation reports a *return* (check the session), never a cancel | US-27 |
+| Saved gift cards | listed in `mops` | `savedSecondaryTokens` flow, balances re-`/init`ed sequentially | `InitGuard` would coalesce parallel `/init`s of one issuer |
+| Loan simulation total | `(n − 1) × recurring + initial + final`, and the drop-in draws `n + 1` lines | `initial + (n − 2) × recurring + final`, `n` lines | `instalment_number` is the total count; web counts one instalment twice (bug to report on web) |
+| Monitoring envelope | `wrapper`, `env`, … | same plus `platform: "android"` | matches the native vault SDKs |
+| UI toolkit | DOM | Compose only: `rememberPaymentElement`, `remember*Coordinator`, `PurseCardForm` | SecureFields Android is Compose-first; a View app hosts a `ComposeView` |
+| Secondaries extension | static configs | `SecondaryConfigs.register`, `pollForToken`, `classifyInitError` hooks | lets a host add an issuer without an SDK release |

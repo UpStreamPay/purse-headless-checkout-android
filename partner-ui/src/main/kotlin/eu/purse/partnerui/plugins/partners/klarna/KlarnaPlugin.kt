@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/plugins/partners/klarna-installments/index.ts
+// Same: /init; /validate carries only the step_id; `authorize()` in postValidation after success.
+// Differs: the authorize callback travels through `collected`.
 package eu.purse.partnerui.plugins.partners.klarna
 
 import eu.purse.core.payload.ItemPayload
@@ -86,3 +89,13 @@ class KlarnaPlugin(override val partner: Partner) : PartnerUiPlugin {
         const val COLLECTED_AUTHORIZE = "klarnaAuthorize"
     }
 }
+
+/** `/init` `plugin_result.logs` for Klarna, trimmed to what `KlarnaPaymentView.initialize` needs (web's `getKlarnaConfigFromInitData`). */
+data class KlarnaConfig(val clientToken: String)
+
+/** What the native widget needs from `/init`: the client token, and the `step_id` `/validate` carries back. */
+data class KlarnaRequest(
+    val partnerWireValue: String,
+    val clientToken: String,
+    val stepId: Int?,
+)

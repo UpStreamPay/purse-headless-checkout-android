@@ -57,7 +57,6 @@ class RedirectionPluginTest {
         val plugin = RedirectionPlugin(partner, method)
         assertEquals("fintecture", plugin.partner.wireValue)
         assertEquals("instantpayment", plugin.method.wireValue)
-        assertNull(plugin.vault)
     }
 
     @Test

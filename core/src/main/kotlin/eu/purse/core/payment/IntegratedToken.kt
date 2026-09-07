@@ -1,3 +1,6 @@
+// Web: packages/model `integrated_tokens[]`
+// Same: same fields, incl. `pin_code` for saved gift cards.
+// Differs: nothing.
 package eu.purse.core.payment
 
 /**

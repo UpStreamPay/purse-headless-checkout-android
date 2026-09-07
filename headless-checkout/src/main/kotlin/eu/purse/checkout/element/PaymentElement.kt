@@ -1,12 +1,17 @@
+// Web: packages/headless-checkout/src/payment-element/payment-element.ts (`getPaymentElement`, `hasUI`, `appendTo`)
+// Same: one element per rendered method or saved token; `hasUi` false for redirection and no-CVV tokens.
+// Differs: Compose (`rememberPaymentElement` + `PaymentElementUi`) instead of a DOM container; a
+//          coordinator per plugin owns the native step; the element is keyed on `itemGenerations`;
+//          a technically disabled item gets an element with no UI where web's `appendTo` throws.
 package eu.purse.checkout.element
 
 import android.widget.FrameLayout
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.State
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
@@ -25,59 +30,43 @@ import eu.purse.partnerui.plugins.partners.klarna.KlarnaPlugin
 import eu.purse.partnerui.plugins.partners.paypal.wallet.PaypalButton
 import eu.purse.partnerui.plugins.partners.paypal.wallet.PaypalPlugin
 import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardPlugin
+import eu.purse.partnerui.plugins.vaults.purse.creditcard.PurseCardForm
 import eu.purse.partnerui.plugins.vaults.purse.creditcard.rememberCardCoordinator
 import eu.purse.partnerui.rememberGooglePayCoordinator
 import eu.purse.partnerui.rememberKlarnaCoordinator
 import eu.purse.partnerui.rememberPaypalCoordinator
 import eu.purse.partnerui.rememberRedirectionCoordinator
-import eu.purse.partnerui.plugins.vaults.purse.creditcard.PurseCardForm
 
 /**
- * One rendered payment method — the Kotlin analog of web's `getPaymentElement`: whatever a method
- * needs on screen (a card form, a wallet button, Klarna's widget, a CVV field for a saved card,
- * nothing at all for a redirection method or a saved card that pays without a CVV), behind one
- * shape. Obtain it with [rememberPaymentElement], place it with [PaymentElementUi], and submit
- * form-driven methods with [submit].
+ * One rendered payment method or saved token, behind one shape: whatever it needs on screen (a card
+ * form, a wallet button, Klarna's widget, a CVV field, or nothing), its readiness, and a [submit].
+ * Obtain it with [rememberPaymentElement], place it with [PaymentElementUi].
  */
 class PaymentElement internal constructor(
     /** The [PrimaryMethod] this element renders, or the saved [PaymentToken] it pays with. */
     val item: PaymentItem,
-    /**
-     * Whether this element has anything to render — web's `hasUI()`. `false` for
-     * redirection-template methods, whose hosted page *is* the payment step, for a saved card
-     * behind the no-CVV gates (`PaymentToken.paysWithoutCvv`), and for a saved PayPal token, which
-     * has neither a form nor a button (the buyer approved when they vaulted it).
-     */
+    /** Whether there is anything to render — web's `hasUI()`. */
     val hasUi: Boolean,
-    /**
-     * Google Pay / PayPal render their own branded button and drive the whole flow from its tap —
-     * hide your own Pay affordance for these, and never call [submit] (it's a no-op).
-     */
+    /** Google Pay / PayPal render their own button and drive the flow from its tap; [submit] is a no-op. */
     val selfSubmitting: Boolean,
     private val readyState: State<Boolean>,
     private val onSubmit: () -> Unit,
     internal val ui: @Composable (Modifier) -> Unit,
 ) {
-    /**
-     * The method's readiness (a card form's validity, `/init` success, …) as Compose state — read
-     * it in a composable to gate your Pay button. Mirrors the listener's `onReady`.
-     */
+    /** Readiness as Compose state (a card form's validity, `/init` success, …) — gate your Pay button on it. */
     val ready: Boolean get() = readyState.value
 
-    /**
-     * Drive this method's own submission (tokenize / widget-authorize / follow the PSP page) and
-     * `/validate`. No-op for [selfSubmitting] elements — their button does it.
-     */
+    /** Drive this method's own submission and `/validate`. No-op for [selfSubmitting] elements. */
     fun submit() = onSubmit()
 }
 
-/** Renders [element]'s UI — a no-op for a method with [PaymentElement.hasUi] `false`. */
+/** Renders [element]'s UI — a no-op when [PaymentElement.hasUi] is `false`. */
 @Composable
 fun PaymentElementUi(element: PaymentElement, modifier: Modifier = Modifier) = element.ui(modifier)
 
 /**
- * Build the [PaymentElement] for [method] — resolving the same plugin `/validate` will use and
- * wiring its rendered surface, launchers and lifecycle (`prepare`) automatically:
+ * The [PaymentElement] for [item] — a [PrimaryMethod] or a saved [PaymentToken] — resolving the same
+ * plugin `/validate` will use and wiring its coordinator, launchers and `prepare`:
  *
  * ```kotlin
  * val element = rememberPaymentElement(checkout, method, listener)
@@ -87,26 +76,33 @@ fun PaymentElementUi(element: PaymentElement, modifier: Modifier = Modifier) = e
  * }
  * ```
  *
- * Create the element **when the shopper selects the method** (not for every row of the list):
- * creation runs the method's `prepare` — for Klarna and redirection methods that's a `POST /init`,
- * which costs a network round-trip and a session step.
+ * Create the element **when the shopper selects the item**, not for every row: creation runs
+ * `prepare`, which for Klarna and redirection methods is a `POST /init`. Select the item yourself
+ * (`setPrimary` / `setPrimaryToken`); the element does not. An item whose `disabled` state is
+ * technically disabled (`TOKEN_INIT_FAILED`, `PARTNER_UI_FATAL_ERROR`) gets an element with no UI
+ * whose [PaymentElement.submit] reports the reason on `onError` — web's `appendTo` throws there.
  *
- * @param listener outcome callbacks — one contract for every method (see [PaymentElementListener]).
+ * What a saved token renders follows its plugin: a card token needing its CVV gets a CVV-only form
+ * (and gates fulfilment like a fresh card); a card token behind the no-CVV gates, a saved PayPal
+ * account or a redirection-template token render nothing and [PaymentElement.submit] goes straight
+ * to `/init` + `/validate`.
+ *
+ * The element is keyed on the item's `itemGenerations` generation: `setSession` bumps it for a
+ * method whose configuration changed, so that element rebuilds while an unchanged one keeps its
+ * coordinator and whatever the shopper typed.
+ *
  * @param klarnaReturnUrl Klarna's app-return URL; defaults to `"{packageName}.klarna://return"`,
- * which must match the intent-filter your manifest declares for Klarna.
+ * which must match the intent-filter your manifest declares.
  */
 @Composable
 fun rememberPaymentElement(
     checkout: PurseHeadlessCheckout,
-    method: PrimaryMethod,
+    item: PaymentItem,
     listener: PaymentElementListener = NOOP_LISTENER,
     klarnaReturnUrl: String? = null,
 ): PaymentElement {
-    // Keyed on the item's generation too: `setSession` bumps it for a method whose configuration
-    // changed (or that disappeared), so its element rebuilds — while an unchanged method keeps its
-    // element, its coordinator and whatever the shopper already typed.
     val generations by checkout.itemGenerations.collectAsState()
-    val elementKey = remember(method.id, generations[method.id]) { method.id to (generations[method.id] ?: 0) }
+    val elementKey = remember(item.id, generations[item.id]) { item.id to (generations[item.id] ?: 0) }
     val readyState = remember(elementKey) { mutableStateOf(false) }
     val wrapped = remember(elementKey, listener) {
         object : PaymentElementListener by listener {
@@ -116,177 +112,85 @@ fun rememberPaymentElement(
             }
         }
     }
-    val plugin = remember(elementKey) {
-        PluginRegistry.getPlugin(method.partner, method.method, checkout.session.source)
-    }
+    val plugin = remember(elementKey) { PluginRegistry.getPlugin(item.partner, item.method, checkout.session.source) }
+    val isToken = item is PaymentToken
+    val disabled = item.disabled
 
-    return when (plugin) {
-        is CardPlugin -> rememberCardElement(checkout, method, elementKey, readyState, wrapped)
+    return when {
+        // A hard technical failure mounts nothing — web's `appendTo` throws for these states.
+        disabled != null && disabled.isTechnicallyDisabled -> remember(elementKey, disabled) {
+            PaymentElement(item, hasUi = false, selfSubmitting = false, readyState, onSubmit = {
+                wrapped.onError("${item.id} is disabled: ${disabled.message}")
+            }) { }
+        }
 
-        is GooglePayPlugin -> {
+        plugin is CardPlugin -> rememberCardElement(checkout, item, elementKey, readyState, wrapped)
+
+        plugin is GooglePayPlugin && !isToken -> {
             val coordinator = rememberGooglePayCoordinator(wrapped)
-            LaunchedEffect(coordinator, method.id) { coordinator.prepare(checkout.googlePayHost(method)) }
+            LaunchedEffect(coordinator, elementKey) { coordinator.prepare(checkout.host(item)) }
             remember(coordinator) {
-                PaymentElement(
-                    method, hasUi = true, selfSubmitting = true, readyState,
-                    onSubmit = { },
-                    ui = { modifier -> GooglePayButton(coordinator, modifier) },
-                )
+                PaymentElement(item, hasUi = true, selfSubmitting = true, readyState, onSubmit = { }) { modifier ->
+                    GooglePayButton(coordinator, modifier)
+                }
             }
         }
 
-        is PaypalPlugin -> {
+        plugin is PaypalPlugin -> {
             val coordinator = rememberPaypalCoordinator(wrapped)
-            LaunchedEffect(coordinator, method.id) { coordinator.prepare(checkout.paypalHost(method)) }
+            LaunchedEffect(coordinator, elementKey) { coordinator.prepare(checkout.host(item)) }
             remember(coordinator) {
-                PaymentElement(
-                    method, hasUi = true, selfSubmitting = true, readyState,
-                    onSubmit = { },
-                    ui = { modifier -> PaypalButton(coordinator, modifier) },
-                )
+                if (isToken) {
+                    // No button, no approval: the buyer approved when they vaulted it; submit captures.
+                    PaymentElement(item, hasUi = false, selfSubmitting = false, readyState, onSubmit = { coordinator.submit() }) { }
+                } else {
+                    PaymentElement(item, hasUi = true, selfSubmitting = true, readyState, onSubmit = { }) { modifier ->
+                        PaypalButton(coordinator, modifier)
+                    }
+                }
             }
         }
 
-        is KlarnaPlugin -> {
+        plugin is KlarnaPlugin && !isToken -> {
             val coordinator = rememberKlarnaCoordinator(wrapped)
-            val packageName = LocalContext.current.packageName
-            val returnUrl = klarnaReturnUrl ?: "$packageName.klarna://return"
+            val returnUrl = klarnaReturnUrl ?: "${LocalContext.current.packageName}.klarna://return"
             val containerAttached: MutableState<Boolean> = remember(elementKey) { mutableStateOf(false) }
-            // Klarna inflates its widget into a real ViewGroup — prepare only once the
-            // AndroidView-provided container exists (i.e. once the element's UI is placed).
+            // Klarna inflates into a real ViewGroup — prepare once the AndroidView container exists.
             LaunchedEffect(coordinator, containerAttached.value) {
-                if (containerAttached.value) coordinator.prepare(checkout.klarnaHost(method, returnUrl))
+                if (containerAttached.value) coordinator.prepare(checkout.host(item), returnUrl)
             }
             remember(coordinator) {
-                PaymentElement(
-                    method, hasUi = true, selfSubmitting = false, readyState,
-                    onSubmit = { coordinator.submit() },
-                    ui = { modifier ->
-                        AndroidView(
-                            modifier = modifier,
-                            factory = { context ->
-                                FrameLayout(context).also {
-                                    coordinator.container = it
-                                    containerAttached.value = true
-                                }
-                            },
-                        )
-                    },
-                )
+                PaymentElement(item, hasUi = true, selfSubmitting = false, readyState, onSubmit = { coordinator.submit() }) { modifier ->
+                    AndroidView(
+                        modifier = modifier,
+                        factory = { context ->
+                            FrameLayout(context).also {
+                                coordinator.container = it
+                                containerAttached.value = true
+                            }
+                        },
+                    )
+                }
             }
         }
 
-        is RedirectionPlugin -> {
+        plugin is RedirectionPlugin -> {
             val coordinator = rememberRedirectionCoordinator(wrapped)
-            LaunchedEffect(coordinator, method.id) { coordinator.prepare(checkout.redirectionHost(method)) }
+            LaunchedEffect(coordinator, elementKey) { coordinator.prepare(checkout.host(item)) }
             remember(coordinator) {
-                PaymentElement(
-                    method, hasUi = false, selfSubmitting = false, readyState,
-                    onSubmit = { coordinator.submit() },
-                    ui = { },
-                )
+                PaymentElement(item, hasUi = false, selfSubmitting = false, readyState, onSubmit = { coordinator.submit() }) { }
             }
         }
 
         else -> remember(elementKey) {
-            PaymentElement(
-                method, hasUi = false, selfSubmitting = false, readyState,
-                onSubmit = { wrapped.onError("no plugin registered for ${method.id}") },
-                ui = { },
-            )
+            PaymentElement(item, hasUi = false, selfSubmitting = false, readyState, onSubmit = {
+                wrapped.onError("no plugin registered for ${item.id}")
+            }) { }
         }
     }
 }
 
-/**
- * Build the [PaymentElement] that pays with a saved [token] — web's `getPaymentElement` on a
- * `PurseHeadlessCheckoutPrimaryToken`. What it renders follows the token's plugin and CVV
- * requirement:
- *
- * - a card-on-file with `token.requiresCvv` → a **CVV-only** card form ([PaymentElement.hasUi]
- *   `true`); the payment is not fulfilled until it validates, exactly like a fresh card form;
- * - a card-on-file behind the no-CVV gates → **nothing** ([PaymentElement.hasUi] `false`), and
- *   [PaymentElement.submit] goes straight to `/init`+`/validate`;
- * - a saved **PayPal** (or a token under the redirection template) → **nothing** either: no CVV
- *   exists for it (`token.requiresCvv` is always `false`), no approval to launch, and
- *   [PaymentElement.submit] runs `/init`+`/validate` — then follows a chained 3-D Secure hop like
- *   the pay-now flow would. Web's paypal plugin with a `token` renders an empty template.
- *
- * Select the token with [PurseHeadlessCheckout.setPrimaryToken] as you would call `setPrimary`
- * for a method; the element does not select it for you.
- *
- * ```kotlin
- * val element = rememberPaymentElement(checkout, token, listener)
- * if (element.hasUi) PaymentElementUi(element, Modifier.fillMaxWidth().height(56.dp))
- * Button(onClick = { element.submit() }, enabled = element.ready) { Text("Pay") }
- * ```
- */
-@Composable
-fun rememberPaymentElement(
-    checkout: PurseHeadlessCheckout,
-    token: PaymentToken,
-    listener: PaymentElementListener = NOOP_LISTENER,
-): PaymentElement {
-    val generations by checkout.itemGenerations.collectAsState()
-    val elementKey = remember(token.id, generations[token.id]) { token.id to (generations[token.id] ?: 0) }
-    val readyState = remember(elementKey) { mutableStateOf(false) }
-    val wrapped = remember(elementKey, listener) {
-        object : PaymentElementListener by listener {
-            override fun onReady(ready: Boolean) {
-                readyState.value = ready
-                listener.onReady(ready)
-            }
-        }
-    }
-    val plugin = remember(elementKey) {
-        PluginRegistry.getPlugin(token.partner, token.method, checkout.session.source)
-    }
-    return when (plugin) {
-        is CardPlugin -> rememberCardElement(checkout, token, elementKey, readyState, wrapped)
-
-        // A saved PayPal: no button, no approval — `submit()` captures at once, the plugin's own
-        // `preValidation` running the `/init` (see PaypalPlugin). `prepare` reports ready straight away.
-        is PaypalPlugin -> {
-            val coordinator = rememberPaypalCoordinator(wrapped)
-            LaunchedEffect(coordinator, token.id) { coordinator.prepare(checkout.paypalHost(token)) }
-            remember(coordinator) {
-                PaymentElement(
-                    token, hasUi = false, selfSubmitting = false, readyState,
-                    onSubmit = { coordinator.submit() },
-                    ui = { },
-                )
-            }
-        }
-
-        // A token under the redirection template: same shape as its method — `/init` at prepare,
-        // the token patched into `/validate` by RedirectionPlugin.preValidation.
-        is RedirectionPlugin -> {
-            val coordinator = rememberRedirectionCoordinator(wrapped)
-            LaunchedEffect(coordinator, token.id) { coordinator.prepare(checkout.redirectionHost(token)) }
-            remember(coordinator) {
-                PaymentElement(
-                    token, hasUi = false, selfSubmitting = false, readyState,
-                    onSubmit = { coordinator.submit() },
-                    ui = { },
-                )
-            }
-        }
-
-        else -> remember(elementKey) {
-            PaymentElement(
-                token, hasUi = false, selfSubmitting = false, readyState,
-                onSubmit = { wrapped.onError("no plugin registered for saved token ${token.id}") },
-                ui = { },
-            )
-        }
-    }
-}
-
-/**
- * The card element behind both overloads — a fresh card ([PrimaryMethod]) or a saved one
- * ([PaymentToken]); `CardCoordinator.Mode` (decided by the host's token) picks the full form, the
- * CVV-only form, or no form.
- */
+/** A fresh card or a saved one; `CardCoordinator.Mode` (decided by the host's token) picks the form. */
 @Composable
 private fun rememberCardElement(
     checkout: PurseHeadlessCheckout,
@@ -297,14 +201,12 @@ private fun rememberCardElement(
 ): PaymentElement {
     // The host is what rememberCardCoordinator keys its SecureFields instance on: a new generation
     // means a new host, hence a fresh form; the same generation keeps the form and its input.
-    val host = remember(elementKey) { checkout.cardHost(item) }
+    val host = remember(elementKey) { checkout.host(item) }
     val coordinator = rememberCardCoordinator(host, listener)
     return remember(coordinator) {
-        PaymentElement(
-            item, hasUi = coordinator.mode.rendersForm, selfSubmitting = false, readyState,
-            onSubmit = { coordinator.submit() },
-            ui = { modifier -> if (coordinator.mode.rendersForm) PurseCardForm(coordinator, modifier) },
-        )
+        PaymentElement(item, hasUi = coordinator.mode.rendersForm, selfSubmitting = false, readyState, onSubmit = { coordinator.submit() }) { modifier ->
+            if (coordinator.mode.rendersForm) PurseCardForm(coordinator, modifier)
+        }
     }
 }
 

@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/plugins/generics/redirection + `getBrowserData`
+// Same: /init body, `partner_data.browser` field for field.
+// Differs: the browser block describes the redirect WebView.
 package eu.purse.partnerui.plugins.generics.redirection
 
 import android.content.Context

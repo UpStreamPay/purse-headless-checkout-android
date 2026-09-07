@@ -1,10 +1,12 @@
+// Web: packages/partner-ui/src/plugins/vaults/purse/creditcard + generics/hostedfields
+// Same: token from the vault into /validate; saved token + CVV-only token side by side.
+// Differs: /init runs inside `preValidation`, not at `onSessionSet`.
 package eu.purse.partnerui.plugins.vaults.purse.creditcard
 
 import eu.purse.core.payload.ItemPayload
 import eu.purse.core.payload.ValidateItemPayload
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
-import eu.purse.core.vault.VaultVendor
 import eu.purse.partnerui.PartnerUiContext
 import eu.purse.partnerui.PartnerUiPlugin
 
@@ -20,7 +22,6 @@ import eu.purse.partnerui.PartnerUiPlugin
 class CardPlugin(override val partner: Partner) : PartnerUiPlugin {
 
     override val method: Method = Method.CreditCard
-    override val vault: VaultVendor = VaultVendor.PURSE
 
     /**
      * The headless half of web's `validateUi`: there, the plugin submits its form and reports the
@@ -37,7 +38,7 @@ class CardPlugin(override val partner: Partner) : PartnerUiPlugin {
     override suspend fun preValidation(context: PartnerUiContext): ValidateItemPayload {
         val stepId = CardMapper.parseInit(
             context.api.init(CardMapper.buildInitPayload(context.amount, partner.wireValue)),
-        ).stepId
+        )
 
         // Saved token (card-on-file): the opaque token value plus the card metadata travels straight
         // into payment_data (web's patchItemPayloadWithToken). When the token still needs its CVV,

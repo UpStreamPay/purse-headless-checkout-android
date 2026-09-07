@@ -1,3 +1,6 @@
+// Web: packages/common queue behind the event bus
+// Same: batch and flush.
+// Differs: nothing.
 package eu.purse.core.monitoring
 
 import java.util.concurrent.Executors

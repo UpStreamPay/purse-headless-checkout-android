@@ -1,41 +1,33 @@
-# Purse Android Headless Checkout — Documentation
+# Documentation
 
-A **headless** Android SDK for Purse payments: it owns the concept of a purse payment (session,
-payment methods, splits, and the plugin-driven validate pipeline) and lets a merchant build their
-own checkout UI on top. It mirrors the layered design of the web `usp-widget`
-(`sdk`/`model`/`common` → `headless-checkout`, with `partner-ui` plugins), adapted to Android.
+A headless Android SDK for Purse payments: it owns the payment engine (session, methods, split,
+`/validate`) and lets you build the checkout UI. Same concepts as the web `usp-widget` headless
+SDK, in Kotlin and Compose.
 
-> **Status: back-to-basics rebuild in progress.** The core purse-payment engine is in place —
-> session (V2) decode, the payment model, the splitter, the reactive `StateFlow` surface, and the
-> "create payment" pipeline — and builds green with unit tests. Five plugins ship in `:partner-ui`
-> and register themselves: **Google Pay**, **Klarna** (installments), **PayPal** (wallet, pay-now),
-> the **Purse-vaulted card** (SecureFields), and the **generic redirection template** (any method the
-> session marks `template = redirection`), plus the shared redirect Activity they all use.
-
-## Module layout
-
-```
-:app              eu.purse.checkout.demo   demo host, Compose: session → pay → result
-   │
-:headless-checkout eu.purse.checkout       PurseHeadlessCheckout: session, model, splitter, validate
-   ├── :core        eu.purse.core          Payment API client, enums, LegacyPaymentSession, decode
-   └── :partner-ui  eu.purse.partnerui     PartnerUiPlugin contract + the shipped plugins (see docs/plugins)
-```
-
-## Start here
-
-| If you want to… | Read |
-|---|---|
-| Understand the architecture, modules, and purse-payment flow | **[Headless checkout architecture](architecture/headless-checkout.md)** |
-| Integrate the SDK — the full consumer API (functions, events, callbacks) | **[Consumer API reference](integration/consumer-api.md)** |
-| Work on one PSP — its `/init`, sequence diagram, quirks, failure modes | **[Plugins, per PSP](plugins/README.md)** ([Google Pay](plugins/google-pay.md) · [Klarna](plugins/klarna.md) · [PayPal](plugins/paypal.md) · [Card / Purse vault](plugins/card-purse-vault.md) · [Redirection](plugins/redirection.md)) |
-| Know where this diverges from the web headless SDK | **[Pain points recap](decisions/pain-points-recap.md)** |
-| Run the demo app against a real session | **[Testing with alfred](internal/testing-with-alfred.md)** |
-
-## Requirements
+## Integrate
 
 | | |
 |---|---|
-| Minimum SDK | API 26 (Android 8.0) |
-| Reference implementation | `../usp-widget` (`@upstreampay/headless-checkout`, `@upstreampay/partner-ui`, `@upstreampay/sdk`) |
-| Related tickets | [SDK-12039](https://upstreampay.atlassian.net/browse/SDK-12039) |
+| **[Getting started](integration/getting-started.md)** | Install, create the checkout, render a method, pay, confirm. Read this first. |
+| [Recipes](integration/recipes.md) | One task per section: each payment method, gift cards, saved cards, hooks, theme, errors, session refresh, BNPL. |
+| [API reference](integration/consumer-api.md) | Every function, flow, type and error. |
+| [Payment methods by platform](payment-methods-matrix.md) | What this SDK supports versus web. |
+
+## Work on the SDK
+
+| | |
+|---|---|
+| [Architecture](architecture/headless-checkout.md) | Modules, the purse-payment flow, plugin lifecycle. |
+| [Plugins](plugins/README.md) | Per PSP: `/init` contract, sequence, quirks, failure modes — [Google Pay](plugins/google-pay.md) · [Klarna](plugins/klarna.md) · [PayPal](plugins/paypal.md) · [Card](plugins/card-purse-vault.md) · [Redirection](plugins/redirection.md). |
+| [Web ↔ Android map](web-android-map.md) | The web file behind each Android file, and every deliberate divergence. |
+| [Simplification review](decisions/simplification-review.md) · [Pain points](decisions/pain-points-recap.md) | Decisions and their reasons. |
+| [Testing with alfred](internal/testing-with-alfred.md) | Run the demo against real sessions. |
+
+```
+:app               demo (Compose)
+:headless-checkout PurseHeadlessCheckout, payment elements          ← depend on this
+  ├── :partner-ui  plugins + coordinators (card, Google Pay, PayPal, Klarna, redirection)
+  └── :core        Payment API client, session decode, shared types
+```
+
+Requirements: minSdk 26, Jetpack Compose. Related tickets: [SDK-12039](https://upstreampay.atlassian.net/browse/SDK-12039), [SDK-12216](https://upstreampay.atlassian.net/browse/SDK-12216).

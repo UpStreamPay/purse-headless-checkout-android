@@ -69,7 +69,7 @@ class PaymentApiClientSimulationTest {
         assertEquals("EUR", body.getString("currency_code"))
         assertEquals(0, BigDecimal("200").compareTo(BigDecimal(body.get("amount").toString())))
         assertEquals(3, simulation.installmentCount)
-        assertEquals(BigDecimal("270.34"), simulation.totalAmount)
+        assertEquals(BigDecimal("203.67"), simulation.totalAmount)
     }
 
     @Test

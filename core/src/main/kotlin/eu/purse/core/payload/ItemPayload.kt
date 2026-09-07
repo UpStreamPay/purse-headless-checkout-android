@@ -1,3 +1,6 @@
+// Web: packages/model `ItemPayload` / `ValidateItemPayload`
+// Same: same wire shape (`partner_data`, `payment_data`, `payment_preferences`, `step_id`).
+// Differs: nothing.
 package eu.purse.core.payload
 
 import eu.purse.core.payment.Method

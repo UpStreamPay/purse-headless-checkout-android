@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout/src/session/payment/mops/secondaries/configs/*.ts + token-mappers.ts
+// Same: same `{partner}-{method}` keys, CVV/PAN rules, take policy, token parsing.
+// Differs: one file; host-registrable (`SecondaryConfigs.register`); `ancv-connect` not shipped.
 package eu.purse.checkout.payment.secondary
 
 import eu.purse.checkout.PurseCheckoutException
@@ -128,6 +131,7 @@ object MaxxingConfig : SecondaryConfig {
             expirationDate = "",
             takePolicy = takePolicy,
             limit = method.maxAmount,
+            usageLimit = method.configuration.settings.usagePerSessionLimit,
         )
     }
 }
@@ -274,6 +278,7 @@ internal fun parseCardToken(
         expirationDate = card?.optString("expiry_date").orEmpty(),
         takePolicy = takePolicy,
         limit = method.maxAmount,
+        usageLimit = method.configuration.settings.usagePerSessionLimit,
     )
 }
 

@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout payment-element events (ready, fulfilled, redirect, cancelled, …)
+// Same: one outcome contract for every method.
+// Differs: callbacks instead of an event emitter; `onResult(null)` after a redirect return.
 package eu.purse.partnerui
 
 /**

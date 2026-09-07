@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout/src/monitoring (event bus + `postFromCode`)
+// Same: batched posting, flush.
+// Differs: singleton per process.
 package eu.purse.checkout.monitoring
 
 import eu.purse.core.monitoring.SimpleQueue

@@ -1,3 +1,7 @@
+// Web: packages/headless-checkout/src/headless-checkout.ts + session/payment/payment.ts
+// Same: session, method list, split, submit, tokens, setSession, monitoring events.
+// Differs: Svelte stores → StateFlow; `host(item)` seam for coordinators; `awaitPaymentOutcome` for the app's return from a redirect;
+//          the submit latch throws SubmitBlocked and sets SUBMITTING on every item; teardown() refuses later calls.
 package eu.purse.checkout
 
 import android.util.Log
@@ -36,15 +40,15 @@ import eu.purse.partnerui.PartnerUiContext
 import eu.purse.partnerui.PartnerUiPlugin
 import eu.purse.partnerui.PluginOptions
 import eu.purse.partnerui.PluginEvent
+import eu.purse.partnerui.PluginHost
 import eu.purse.partnerui.PluginRegistry
-import eu.purse.partnerui.plugins.generics.googlepay.GooglePayHost
-import eu.purse.partnerui.plugins.generics.redirection.RedirectionHost
-import eu.purse.partnerui.plugins.partners.klarna.KlarnaHost
-import eu.purse.partnerui.plugins.partners.paypal.wallet.PaypalHost
-import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardHost
 import eu.purse.partnerui.redirect.RedirectAction
 import eu.purse.checkout.confirmation.PaymentSessionStatus
 import eu.purse.checkout.monitoring.CheckoutEventBus
+import eu.purse.checkout.monitoring.CheckoutMonitoring
+import eu.purse.checkout.monitoring.monitoringPayload
+import eu.purse.checkout.simulation.LoanSimulator
+import eu.purse.checkout.wallet.WalletTokens
 import eu.purse.checkout.monitoring.CheckoutEventCode
 import eu.purse.checkout.monitoring.EventLevel
 import eu.purse.core.api.PaymentApiException
@@ -52,8 +56,6 @@ import eu.purse.core.api.WalletApiClient
 import eu.purse.core.datetime.DatetimeApiClient
 import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.datetime.ServerDatetimeChecker
-import eu.purse.core.monitoring.ApiCallMonitor
-import eu.purse.core.monitoring.MonitoringApiClient
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -160,6 +162,21 @@ class PurseHeadlessCheckout private constructor(
     )
     val sessionState: StateFlow<SessionState> = _sessionState.asStateFlow()
 
+    /**
+     * Web's `#validationConsumed`: the API answered `/validate` about the payment (any
+     * `global_status`), so the session's single validation is spent — a declined payment included.
+     * Only a `/validate` the API *refused* leaves the session submittable again.
+     */
+    @Volatile private var validationConsumed = false
+
+    /** `true` between `submitPayment` start and return — overlays [DisabledState.Submitting] on every item. */
+    @Volatile private var submitting = false
+
+    private val _isTornDown = MutableStateFlow(false)
+
+    /** `true` once [teardown] ran; every further operation throws [PurseCheckoutException.CheckoutTornDown]. */
+    val isTornDown: StateFlow<Boolean> = _isTornDown.asStateFlow()
+
     /** The current [PaymentSession]; emits again whenever [setSession] swaps it. */
     private val _paymentSession = MutableStateFlow(initialSession)
     val paymentSession: StateFlow<PaymentSession> = _paymentSession.asStateFlow()
@@ -201,20 +218,10 @@ class PurseHeadlessCheckout private constructor(
     private val _savedSecondaryTokens = MutableStateFlow(visibleSavedSecondaryTokens())
     val savedSecondaryTokens: StateFlow<List<SavedSecondaryToken>> = _savedSecondaryTokens.asStateFlow()
 
-    /** Wallet API access, when the widget data carried a `wallet_session`. */
-    private val walletClient: WalletApiClient? = params.walletSession?.let { wallet ->
-        WalletApiClient(
-            apiKey = params.apiKey,
-            walletApiRoot = params.environment.walletApiRoot,
-            ownerReference = wallet.ownerReference,
-            walletSessionId = wallet.sessionId,
-            merchantId = wallet.merchant,
-        )
-    }
+    /** Wallet API access and the wallet's own token list, when the widget data carried a `wallet_session`. */
+    private val wallet = WalletTokens(params)
 
-    /** The wallet's own token list — gates edit/delete/favorite (web's `ensureEditionCapability`). */
-    @Volatile
-    private var walletTokens: List<WalletApiClient.WalletToken> = emptyList()
+    private val loans = LoanSimulator(::apiClient, bus)
 
     /** Per-method save-token decisions — web's `registration` stores. */
     private val registrationByMethod = mutableMapOf<String, RegistrationState>()
@@ -262,7 +269,7 @@ class PurseHeadlessCheckout private constructor(
             CheckoutEventCode.HEADLESS_CHECKOUT_CREATE,
             // Web sends navigator.userAgent here; the platform itself travels on the message
             // envelope (`platform: android`), so this stays a genuine user agent.
-            payload = monitoringPayload("sessionType" to "v2", "user_agent" to androidUserAgent()),
+            payload = monitoringPayload("sessionType" to "v2", "user_agent" to CheckoutMonitoring.androidUserAgent()),
         )
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_SET_SESSION,
@@ -280,12 +287,10 @@ class PurseHeadlessCheckout private constructor(
         // Wallet session — fetch the shopper's token list once (web's `setWalletSession`); it only
         // gates management operations and syncs names/favorites, so a failure is reported but never
         // breaks the checkout.
-        if (walletClient != null) {
+        if (wallet.client != null) {
             scope.launch(Dispatchers.IO) {
                 try {
-                    val tokens = walletClient.getTokens()
-                    walletTokens = tokens
-                    syncWalletTokens(tokens)
+                    syncWalletTokens(wallet.fetch())
                     bus.post(
                         CheckoutEventCode.HEADLESS_CHECKOUT_SET_WALLET_SESSION,
                         payload = monitoringPayload("walletSessionId" to params.walletSession?.sessionId),
@@ -325,12 +330,7 @@ class PurseHeadlessCheckout private constructor(
                 datetimeChecker.sync()
                 while (isActive) {
                     if (datetimeChecker.isExpiredForServer(session.expirationDate)) {
-                        _sessionState.value = SessionState.EXPIRED
-                        bus.post(
-                            CheckoutEventCode.HEADLESS_CHECKOUT_EXPIRED_SESSION,
-                            EventLevel.WARNING,
-                            monitoringPayload("paymentSessionId" to session.id),
-                        )
+                        expire()
                         break
                     }
                     delay(watchdogIntervalMs)
@@ -343,6 +343,32 @@ class PurseHeadlessCheckout private constructor(
                 monitoringPayload("paymentSessionId" to session.id),
             )
         }
+    }
+
+    /** Flip to `EXPIRED` and report it — from the watchdog, or from a submit that re-checked the clock. */
+    private fun expire() {
+        _sessionState.value = SessionState.EXPIRED
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_EXPIRED_SESSION,
+            EventLevel.WARNING,
+            monitoringPayload("paymentSessionId" to session.id),
+        )
+    }
+
+    /** @throws PurseCheckoutException.CheckoutTornDown after [teardown]. */
+    private fun requireOpen() {
+        if (_isTornDown.value) throw PurseCheckoutException.CheckoutTornDown()
+    }
+
+    /**
+     * Refuse to put a disabled item in the split — web's `setAsPrimarySource` (`METHOD_DISABLED`).
+     * Checked against the live list, so a stale instance from an earlier emission is judged on the
+     * current state; the submit lock counts too.
+     */
+    private fun requireSelectable(item: PaymentItem) {
+        val live = meansOfPayment.firstOrNull { it.id == item.id } ?: item
+        val disabled = live.disabled ?: if (submitting) DisabledState.Submitting else null
+        if (disabled != null) throw PurseCheckoutException.MethodDisabled(item.id, disabled)
     }
 
     /**
@@ -383,13 +409,13 @@ class PurseHeadlessCheckout private constructor(
      * Same session id → ignored (a warning is logged), as on web.
      *
      * @throws PurseCheckoutException.SessionExpired when the new session is already expired.
-     * @throws IllegalStateException while a payment is being submitted.
+     * @throws PurseCheckoutException.SubmitBlocked while a payment is being submitted.
+     * @throws PurseCheckoutException.CheckoutTornDown after [teardown].
      * @throws eu.purse.core.session.PurseSessionException.SessionMalformed if [widgetData] can't be decoded.
      */
     suspend fun setSession(widgetData: String) {
-        check(_sessionState.value != SessionState.SUBMITTING) {
-            "cannot replace the session while a payment is being submitted"
-        }
+        requireOpen()
+        if (_sessionState.value == SessionState.SUBMITTING) throw PurseCheckoutException.SubmitBlocked(SessionState.SUBMITTING)
         val (newParams, newSession, newRoot) = resolve(widgetData, lockedEnvironment)
         if (newSession.id == session.id) {
             Log.w("PurseHeadlessCheckout", "setSession: attempting to set the same payment session again, ignoring.")
@@ -420,7 +446,7 @@ class PurseHeadlessCheckout private constructor(
             .toSet()
         val survivingTokenIds = previousItems
             .filterIsInstance<PaymentToken>()
-            .filter { "${it.partner.wireValue}-${it.method.wireValue}" in survivingMethodIds }
+            .filter { it.methodId in survivingMethodIds }
             .filter { token -> newSession.meansOfPayment.any { it is PaymentToken && it.id == token.id } }
             .map { it.id }
             .toSet()
@@ -457,6 +483,7 @@ class PurseHeadlessCheckout private constructor(
                 ?.let { splitter.setPrimary(it) }
         }
         _paymentSession.value = newSession
+        validationConsumed = false
         _sessionState.value =
             if (newSession.expirationDate.isBefore(Instant.now())) SessionState.EXPIRED else SessionState.READY
 
@@ -474,7 +501,7 @@ class PurseHeadlessCheckout private constructor(
 
         refresh()
         _savedSecondaryTokens.value = visibleSavedSecondaryTokens()
-        syncWalletTokens(walletTokens)
+        syncWalletTokens(wallet.tokens)
         startExpiryWatchdog()
         runEligibilityChecks()
         resolveSavedSecondaryBalances()
@@ -500,9 +527,15 @@ class PurseHeadlessCheckout private constructor(
     /** Applied secondary tokens, in the order they were added. */
     val appliedSecondaries: List<SecondaryToken> get() = splitter.appliedSecondaries
 
-    /** Choose (or clear, with `null`) the primary method that covers the remaining amount. */
+    /**
+     * Choose (or clear, with `null`) the primary method that covers the remaining amount.
+     *
+     * @throws PurseCheckoutException.MethodDisabled when [method] is disabled (its `disabled` state,
+     * or a submit in flight) — web's `METHOD_DISABLED`.
+     */
     fun setPrimary(method: PrimaryMethod?) {
         if (method != null) {
+            requireSelectable(method)
             bus.post(
                 CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_SET_PRIMARY,
                 payload = monitoringPayload("partner" to method.partner.wireValue, "method" to method.method.wireValue),
@@ -526,12 +559,15 @@ class PurseHeadlessCheckout private constructor(
      * stands: selecting it arms the same per-item fulfillment gate a fresh card form arms at mount,
      * so [isPaymentFulfilled] stays `false` — and [submitPayment] throws
      * [PurseCheckoutException.ItemNotFulfilled] — until the CVV-only form rendered for it (the card
-     * element, or `rememberCardCoordinator(cardHost(token), …)`) reports valid through
+     * element, or `rememberCardCoordinator(host(token), …)`) reports valid through
      * [setFulfilled]. A token behind the no-CVV gates is payable immediately, as before — and so is
      * a token with no card form behind it at all (a saved PayPal: [PaymentToken.isVaultedCard]
      * `false`), for which no CVV exists.
+     *
+     * @throws PurseCheckoutException.MethodDisabled when [token] is disabled — web's `METHOD_DISABLED`.
      */
     fun setPrimaryToken(token: PaymentToken) {
+        requireSelectable(token)
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_PRIMARY_TOKEN_SET_AS_PRIMARY,
             payload = monitoringPayload("partner" to token.partner.wireValue, "method" to token.method.wireValue),
@@ -617,13 +653,13 @@ class PurseHeadlessCheckout private constructor(
 
     /**
      * Rename a saved card (`PATCH …/tokens/{id}/name`) — web's `token.edit({name})`. Needs a
-     * wallet session and the token present in the wallet. Blocking network; call off main.
+     * wallet session and the token present in the wallet.
      */
     suspend fun editToken(token: PaymentToken, name: String) {
-        val client = requireWallet()
-        requireInWallet(token)
+        val client = wallet.requireClient()
+        wallet.requireToken(token.id)
         validateTokenLabel(name, excludingTokenId = token.id)
-        client.editTokenName(token.id, name)
+        withContext(Dispatchers.IO) { client.editTokenName(token.id, name) }
         updateTokenItem(token.id) { it.copy(name = name) }
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_TOKEN_EDIT,
@@ -640,12 +676,12 @@ class PurseHeadlessCheckout private constructor(
      * the split and removes it from [paymentTokens].
      */
     suspend fun deleteToken(token: PaymentToken) {
-        val client = requireWallet()
-        requireInWallet(token)
-        client.deleteToken(token.id)
+        val client = wallet.requireClient()
+        wallet.requireToken(token.id)
+        withContext(Dispatchers.IO) { client.deleteToken(token.id) }
         if (splitter.primaryMethod?.id == token.id) splitter.setPrimary(null)
         meansOfPayment = meansOfPayment.filterNot { it.id == token.id }
-        walletTokens = walletTokens.filterNot { it.id == token.id }
+        wallet.forget(token.id)
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_TOKEN_DELETE,
             payload = monitoringPayload(
@@ -662,8 +698,8 @@ class PurseHeadlessCheckout private constructor(
      * reverted if the wallet call fails.
      */
     suspend fun setTokenFavorite(token: PaymentToken) {
-        val client = requireWallet()
-        requireInWallet(token)
+        val client = wallet.requireClient()
+        wallet.requireToken(token.id)
         val newFavorite = !token.favorite
         updateTokenItem(token.id) { it.copy(favorite = newFavorite) }
         bus.post(
@@ -676,9 +712,10 @@ class PurseHeadlessCheckout private constructor(
             ),
         )
         try {
-            client.setAsFavorite(token.id, newFavorite)
-            val tokens = client.getTokens()
-            walletTokens = tokens
+            val tokens = withContext(Dispatchers.IO) {
+                client.setAsFavorite(token.id, newFavorite)
+                wallet.fetch()
+            }
             syncWalletTokens(tokens)
         } catch (e: Exception) {
             updateTokenItem(token.id) { it.copy(favorite = !newFavorite) }
@@ -688,50 +725,24 @@ class PurseHeadlessCheckout private constructor(
 
     /** Delete every wallet token — web's `deleteAllTokens()`. */
     suspend fun deleteAllTokens() {
-        val client = requireWallet()
-        client.deleteAllTokens()
+        val client = wallet.requireClient()
+        withContext(Dispatchers.IO) { client.deleteAllTokens() }
         val tokenIds = visibleTokens().map { it.id }.toSet()
         if (splitter.primaryMethod?.id in tokenIds) splitter.setPrimary(null)
         // Saved gift cards are wallet tokens too — gone with the rest, and out of the split.
         meansOfPayment.filterIsInstance<SavedSecondaryToken>().forEach { splitter.clearSplit(it.asSecondaryToken()) }
         meansOfPayment = meansOfPayment.filterNot { it is PaymentToken || it is SavedSecondaryToken }
-        walletTokens = emptyList()
+        wallet.clear()
         bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_DELETE_ALL_TOKENS)
         refresh()
     }
 
-    private fun requireWallet(): WalletApiClient =
-        walletClient ?: throw PurseCheckoutException.WalletOperationFailed(
-            "no wallet_session was attached to this checkout",
-            PurseErrorCode.MISSING_WALLET_SESSION,
-        )
-
-    private fun requireInWallet(token: PaymentToken) {
-        if (walletTokens.none { it.id == token.id }) {
-            throw PurseCheckoutException.WalletOperationFailed(
-                "token ${token.id} is not present in the wallet",
-                PurseErrorCode.MISSING_TOKEN,
-            )
-        }
-    }
-
-    /** Web's token-name rules: `^[a-zA-Z0-9\s]{1,25}$` + unique across saved tokens. */
+    /** Web's token-name rules, checked against the session's tokens and the wallet's. */
     private fun validateTokenLabel(name: String, excludingTokenId: String?) {
-        if (!TOKEN_LABEL_REGEX.matches(name)) {
-            throw PurseCheckoutException.WalletOperationFailed(
-                "invalid token name '$name' — 1-25 alphanumeric/space characters",
-                PurseErrorCode.INVALID_TOKEN_NAME,
-            )
-        }
-        val existsInSession = visibleTokens().any { it.id != excludingTokenId && it.name == name } ||
-            visibleSavedSecondaryTokens().any { it.id != excludingTokenId && it.name == name }
-        val existsInWallet = walletTokens.any { it.id != excludingTokenId && it.name == name }
-        if (existsInSession || existsInWallet) {
-            throw PurseCheckoutException.WalletOperationFailed(
-                "a saved card is already named '$name'",
-                PurseErrorCode.TOKEN_NAME_EXISTS,
-            )
-        }
+        val taken = (visibleTokens().map { it.id to it.name } + visibleSavedSecondaryTokens().map { it.id to it.name })
+            .filter { (id, _) -> id != excludingTokenId }
+            .map { (_, tokenName) -> tokenName }
+        wallet.validateLabel(name, taken, excludingTokenId)
     }
 
     /** Overlay the wallet's names/favorites onto the session's token items (web's subscription). */
@@ -768,11 +779,14 @@ class PurseHeadlessCheckout private constructor(
     }
 
     /**
-     * Release everything this checkout owns — stops the expiry watchdog and any background work.
-     * The instance is unusable afterwards; web's `teardown()`. Call it when the checkout screen is
-     * dismissed for good (not on configuration changes).
+     * Release everything this checkout owns — stops the expiry watchdog and any background work,
+     * and gives every live plugin its `destroyClient`. Web's `teardown()`. Call it when the checkout
+     * screen is dismissed for good (not on configuration changes). Afterwards [isTornDown] is `true`
+     * and every operation that reaches the network, hands out a host or replaces the session throws
+     * [PurseCheckoutException.CheckoutTornDown]; calling it again is a no-op.
      */
     fun teardown() {
+        if (!_isTornDown.compareAndSet(expect = false, update = true)) return
         // Give every tracked plugin its destroyClient (web parity), then cancel everything.
         val plugins = activePlugins.values.toList()
         activePlugins.clear()
@@ -797,7 +811,8 @@ class PurseHeadlessCheckout private constructor(
     suspend fun getSecondaryToken(method: SecondaryMethod, pan: String, cvv: String? = null): SecondaryToken =
         try {
             bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_GET_SECONDARY_TOKEN)
-            SecondaryTokenizer(apiClient()).tokenize(method, pan, cvv, splitter.remaining)
+            val api = apiClient()
+            withContext(Dispatchers.IO) { SecondaryTokenizer(api).tokenize(method, pan, cvv, splitter.remaining) }
         } catch (e: Exception) {
             // A terminal API answer (already submitted / expired / gone) ends the whole session,
             // not just this tokenization — web's `onSessionTerminated` path (`secondaries.ts:176`).
@@ -876,10 +891,10 @@ class PurseHeadlessCheckout private constructor(
      * [editToken]: wallet session required, token present in the wallet, label valid and unique.
      */
     suspend fun editToken(token: SavedSecondaryToken, name: String) {
-        val client = requireWallet()
-        requireWalletToken(token.id)
+        val client = wallet.requireClient()
+        wallet.requireToken(token.id)
         validateTokenLabel(name, excludingTokenId = token.id)
-        client.editTokenName(token.id, name)
+        withContext(Dispatchers.IO) { client.editTokenName(token.id, name) }
         updateSavedSecondary(token.id) { it.copy(name = name) }
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_TOKEN_EDIT,
@@ -896,12 +911,12 @@ class PurseHeadlessCheckout private constructor(
      * clears it from the split and removes it from [savedSecondaryTokens].
      */
     suspend fun deleteToken(token: SavedSecondaryToken) {
-        val client = requireWallet()
-        requireWalletToken(token.id)
-        client.deleteToken(token.id)
+        val client = wallet.requireClient()
+        wallet.requireToken(token.id)
+        withContext(Dispatchers.IO) { client.deleteToken(token.id) }
         splitter.clearSplit(token.asSecondaryToken())
         meansOfPayment = meansOfPayment.filterNot { it.id == token.id }
-        walletTokens = walletTokens.filterNot { it.id == token.id }
+        wallet.forget(token.id)
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_TOKEN_DELETE,
             payload = monitoringPayload(
@@ -986,18 +1001,10 @@ class PurseHeadlessCheckout private constructor(
         _savedSecondaryTokens.value = visibleSavedSecondaryTokens()
     }
 
-    private fun requireWalletToken(tokenId: String) {
-        if (walletTokens.none { it.id == tokenId }) {
-            throw PurseCheckoutException.WalletOperationFailed(
-                "token $tokenId is not present in the wallet",
-                PurseErrorCode.MISSING_TOKEN,
-            )
-        }
-    }
-
     /** The saved gift cards, minus filtered states — what [savedSecondaryTokens] renders. */
     private fun visibleSavedSecondaryTokens(): List<SavedSecondaryToken> =
         meansOfPayment.filterIsInstance<SavedSecondaryToken>().filterNot { it.disabled?.isFiltered == true }
+            .map { it.lockedWhileSubmitting() as SavedSecondaryToken }
 
     // --- interactive plugins (e.g. Google Pay) ---------------------------------------------------
 
@@ -1063,13 +1070,6 @@ class PurseHeadlessCheckout private constructor(
         when (event) {
             // Web clears a recoverable disabled state when the partner comes back up.
             PluginEvent.Ready -> clearRecoverableDisabled(item)
-            is PluginEvent.Fulfilled -> setFulfilled(item, event.isFulfilled)
-            // Web's `validationRequested` — an xpay-style sheet approved: the approval both
-            // selects the method and pays with it (`setPrimary(mop)` then submit).
-            is PluginEvent.RequestValidate -> {
-                makePrimary(item)
-                scope.launch { runCatching { submitPayment(event.skipOnBeforeValidate) } }
-            }
             // Stays in the list but technically disabled (web dims it), not filtered away —
             // an /init failure is partner trouble the shopper should still see the method for.
             is PluginEvent.InitFailed ->
@@ -1131,6 +1131,7 @@ class PurseHeadlessCheckout private constructor(
      */
     private fun makePrimary(item: PaymentItem) {
         val source = item as? PrimarySource ?: return
+        requireSelectable(item)
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_SET_PRIMARY,
             payload = monitoringPayload("partner" to item.partner.wireValue, "method" to item.method.wireValue),
@@ -1152,17 +1153,17 @@ class PurseHeadlessCheckout private constructor(
 
     /**
      * Re-query the session's transactions (`GET /{entityId}/sessions/{sessionId}`) — the source of
-     * truth to check after a redirect/3-D Secure return rather than trusting a locally-held result.
-     * Blocking; call off the main thread. For a typed answer use [paymentStatus] /
-     * [awaitPaymentOutcome].
+     * truth to check after a redirect/3-D Secure return, or after a `submitPayment` whose
+     * `ValidateFailed.outcomeUnknown` is `true`, rather than trusting a locally-held result. Runs on
+     * `Dispatchers.IO`. For a typed answer use [paymentStatus] / [awaitPaymentOutcome].
      */
-    fun sessionTransactions(): JSONArray = apiClient().getSession()
+    suspend fun sessionTransactions(): JSONArray {
+        val api = apiClient()
+        return withContext(Dispatchers.IO) { api.getSession() }
+    }
 
-    /**
-     * One typed status check against the session's own transactions. Blocking network; call off
-     * the main thread (or use [awaitPaymentOutcome]).
-     */
-    fun paymentStatus(): PaymentSessionStatus = PaymentSessionStatus.from(sessionTransactions())
+    /** One typed status check against the session's own transactions (see [awaitPaymentOutcome] to poll). */
+    suspend fun paymentStatus(): PaymentSessionStatus = PaymentSessionStatus.from(sessionTransactions())
 
     /**
      * Poll [paymentStatus] until the payment settles — the mobile-specific confirmation step web
@@ -1184,109 +1185,23 @@ class PurseHeadlessCheckout private constructor(
     }
 
     /**
-     * The [GooglePayHost] for [item] — everything `:partner-ui`'s `GooglePayCoordinator` needs from
-     * this checkout, without that module depending on `:headless-checkout` directly.
+     * The [PluginHost] a coordinator drives [item] through — everything `:partner-ui` needs from
+     * this checkout without depending on `:headless-checkout`. [item] is a [PrimaryMethod] or one
+     * of its saved [PaymentToken]s (the token reaches the plugin as `PartnerUiContext.token`).
+     * Asking for a host also gives the plugin web's `onSessionSet`.
+     *
+     * @throws IllegalArgumentException for a secondary method or a saved gift card.
      */
-    fun googlePayHost(item: PaymentItem): GooglePayHost {
+    fun host(item: PaymentItem): PluginHost {
+        requireOpen()
+        require(item is PrimaryMethod || item is PaymentToken) { "${item.id} cannot be driven by a plugin coordinator" }
         trackPlugin(item)
-        return object : GooglePayHost {
+        return object : PluginHost {
             override val environment get() = params.environment
             override val redirectionReturnUrl get() = session.source.redirection
             override fun buildContext() = pluginContext(item)
             override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
             override fun setAsPrimary() = makePrimary(item)
-            override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
-            override suspend fun delegateRedirection(action: RedirectAction) =
-                this@PurseHeadlessCheckout.delegateRedirection(action)
-        }
-    }
-
-    /**
-     * The [KlarnaHost] for [item] — everything `:partner-ui`'s `KlarnaCoordinator` needs from this
-     * checkout, without that module depending on `:headless-checkout` directly. [returnUrl] falls back
-     * to the session's own configured return URL (like Google Pay's redirect return) since Klarna's
-     * `KlarnaPaymentView` needs one regardless of whether the session declared its own.
-     */
-    fun klarnaHost(item: PaymentItem, klarnaReturnUrl: String): KlarnaHost {
-        trackPlugin(item)
-        return object : KlarnaHost {
-            override val returnUrl get() = klarnaReturnUrl
-            override fun buildContext() = pluginContext(item)
-            override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
-            override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
-            override suspend fun delegateRedirection(action: RedirectAction) =
-                this@PurseHeadlessCheckout.delegateRedirection(action)
-        }
-    }
-
-    /**
-     * The [PaypalHost] for [item] — everything `:partner-ui`'s `PaypalCoordinator` needs from this
-     * checkout, without that module depending on `:headless-checkout` directly. [item] is PayPal's
-     * [PrimaryMethod] (the pay-now flow: `/init`, approval, capture) or one of its saved
-     * [PaymentToken]s (no approval — the coordinator's `submit` captures straight away, the token
-     * reaching the plugin as `PartnerUiContext.token`).
-     *
-     * Note [PaypalHost.redirectionReturnUrl] is *not* PayPal's approval return — the PayPal SDK
-     * supplies that itself, client-side. It only covers a chained 3-D Secure step after `/validate`,
-     * exactly as it does for Google Pay.
-     */
-    fun paypalHost(item: PaymentItem): PaypalHost {
-        trackPlugin(item)
-        return object : PaypalHost {
-            override val environment get() = params.environment
-            override val redirectionReturnUrl get() = session.source.redirection
-            override fun buildContext() = pluginContext(item)
-            override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
-            override fun setAsPrimary() = makePrimary(item)
-            override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
-            override suspend fun delegateRedirection(action: RedirectAction) =
-                this@PurseHeadlessCheckout.delegateRedirection(action)
-        }
-    }
-
-    /**
-     * The [RedirectionHost] for [item] — everything `:partner-ui`'s `RedirectionCoordinator` needs
-     * from this checkout, without that module depending on `:headless-checkout` directly.
-     *
-     * Unlike the three hosts above, this one is not tied to a single partner or method: it serves any
-     * item whose configuration resolves to the generic `redirection` template (see
-     * `PluginRegistry.getPlugin`). Ask for one per item — the coordinator rebinds on each `prepare`.
-     */
-    fun redirectionHost(item: PaymentItem): RedirectionHost {
-        trackPlugin(item)
-        return object : RedirectionHost {
-            override val redirectionReturnUrl get() = session.source.redirection
-            override fun buildContext() = pluginContext(item)
-            override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
-            override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
-            override suspend fun delegateRedirection(action: RedirectAction) =
-                this@PurseHeadlessCheckout.delegateRedirection(action)
-        }
-    }
-
-    /**
-     * The [CardHost] for [item] — everything `:partner-ui`'s `CardCoordinator` needs from this
-     * checkout, without that module depending on `:headless-checkout` directly. [item] is either
-     * the card [PrimaryMethod] (a fresh card: the full form) or one of its saved [PaymentToken]s
-     * (a CVV-only form when [PaymentToken.requiresCvv], no form otherwise — the token reaches the
-     * plugin as `PartnerUiContext.token`).
-     *
-     * @throws IllegalArgumentException for a secondary method or any other item that cannot pay
-     * as a card.
-     */
-    fun cardHost(item: PaymentItem): CardHost {
-        require(item is PrimaryMethod || item is PaymentToken) { "${item.id} cannot host a card form" }
-        trackPlugin(item)
-        return object : CardHost {
-            override val environment get() = params.environment
-            override val vaultTenantId get() = session.vaultsConfiguration?.purse?.tenantId
-            override val supportedBrands get() = when (item) {
-                is PrimaryMethod -> item.supportedBrands
-                else -> item.configuration.vault?.supportedBrands ?: emptyList()
-            }
-            override val redirectionReturnUrl get() = session.source.redirection
-            override fun buildContext() = pluginContext(item)
-            override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
             override fun setFulfilled(fulfilled: Boolean) = setFulfilled(item, fulfilled)
             override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
             override suspend fun delegateRedirection(action: RedirectAction) =
@@ -1317,15 +1232,26 @@ class PurseHeadlessCheckout private constructor(
 
     /**
      * Create the payment — run the plugin-driven `/validate` pipeline over the current split. Must
-     * be called once [isPaymentFulfilled] is `true`. Blocking network work happens off the caller's
-     * dispatcher via `suspend`; move it to `Dispatchers.IO` at the call site.
+     * be called once [isPaymentFulfilled] is `true`. The network work runs on `Dispatchers.IO`.
+     *
+     * Exactly one submit per session goes out: the session's expiry is re-checked against the
+     * server clock first, then an atomic latch turns `READY`/`ERROR` into `SUBMITTING` — a second
+     * call while one is in flight, or after the API has answered about the payment (approved or
+     * declined), is refused with [PurseCheckoutException.SubmitBlocked] and never reaches the PSP.
+     * While in flight every item reads [DisabledState.Submitting]; the lock lifts on return.
      *
      * @throws PurseCheckoutException.PaymentNotFulfilled if the split doesn't cover the amount.
      * @throws PurseCheckoutException.ItemNotFulfilled if an item in the split has an incomplete or
      * invalid form (see [setFulfilled]).
+     * @throws PurseCheckoutException.SessionExpired if the session expired (state moves to `EXPIRED`).
+     * @throws PurseCheckoutException.SubmitBlocked if a submit is in flight or the session is spent.
+     * @throws PurseCheckoutException.CheckoutTornDown after [teardown].
+     * @throws PurseCheckoutException.ValidateFailed if `/validate` failed — when its `outcomeUnknown`
+     * is `true` the request left the device and the payment may exist: check [paymentStatus].
      * @throws PurseCheckoutException.NoPluginRegistered while no `:partner-ui` plugins exist yet.
      */
     suspend fun submitPayment(skipOnBeforeValidate: Boolean = false): ValidationResult {
+        requireOpen()
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_SUBMIT_PAYMENT,
             payload = monitoringPayload(
@@ -1335,7 +1261,9 @@ class PurseHeadlessCheckout private constructor(
         )
         if (!splitter.fulfilled) throw PurseCheckoutException.PaymentNotFulfilled()
         unfulfilledItemId()?.let { throw PurseCheckoutException.ItemNotFulfilled(it) }
-        _sessionState.value = SessionState.SUBMITTING
+        acquireSubmitLock()
+        submitting = true
+        publishItems()
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_STARTED,
             payload = monitoringPayload("session_id" to session.id, "nb_items" to splitter.splits.size),
@@ -1351,14 +1279,20 @@ class PurseHeadlessCheckout private constructor(
                     .mapNotNull { it.source as? SecondaryToken }
                     .filter { it.canBeRegistered }
                     .associate { it.id to registrationOf(it) }
-            val result = PaymentValidator(apiClient()).execute(
-                splitter.splits,
-                session.source,
-                collectedByMethod,
-                hooks = hooks,
-                skipOnBeforeValidate = skipOnBeforeValidate,
-                registrationByMethod = registrations,
-            )
+            val validator = PaymentValidator(apiClient())
+            val result = withContext(Dispatchers.IO) {
+                validator.execute(
+                    splitter.splits,
+                    session.source,
+                    collectedByMethod,
+                    hooks = hooks,
+                    skipOnBeforeValidate = skipOnBeforeValidate,
+                    registrationByMethod = registrations,
+                )
+            }
+            // A `global_status` means the API answered about the payment rather than refusing the
+            // call: the session's single validation is spent either way (web's `#validationConsumed`).
+            validationConsumed = true
             _sessionState.value = if (result.isSuccess) SessionState.SUBMITTED else SessionState.ERROR
             bus.post(
                 if (result.isSuccess) CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_SUCCESS
@@ -1381,6 +1315,32 @@ class PurseHeadlessCheckout private constructor(
                 monitoringPayload("message" to e.message),
             )
             throw e
+        } finally {
+            submitting = false
+            publishItems()
+        }
+    }
+
+    /**
+     * Web's re-entrancy latch, throwing: re-evaluate expiry now (not only at init and on the
+     * watchdog's tick), then move `READY`/`ERROR` to `SUBMITTING` atomically so two racing calls
+     * cannot both pass. `ERROR` stays submittable only while the API never answered about the
+     * payment ([validationConsumed] false) — a declined payment is a spent session too.
+     */
+    private fun acquireSubmitLock() {
+        if (_sessionState.value == SessionState.READY && datetimeChecker.isExpiredForServer(session.expirationDate)) expire()
+        val from = _sessionState.value
+        if (from == SessionState.EXPIRED) throw PurseCheckoutException.SessionExpired(session.id)
+        val blocked = from == SessionState.SUBMITTING || from == SessionState.SUBMITTED ||
+            from == SessionState.TERMINATED || validationConsumed ||
+            !_sessionState.compareAndSet(from, SessionState.SUBMITTING)
+        if (blocked) {
+            bus.post(
+                CheckoutEventCode.HEADLESS_CHECKOUT_SUBMIT_BLOCKED,
+                EventLevel.WARNING,
+                monitoringPayload("state" to _sessionState.value.name),
+            )
+            throw PurseCheckoutException.SubmitBlocked(_sessionState.value)
         }
     }
 
@@ -1438,10 +1398,28 @@ class PurseHeadlessCheckout private constructor(
     /** [meansOfPayment] minus filtered states and saved instruments — what [paymentMethods] renders. */
     private fun visibleMethods(): List<PaymentItem> =
         meansOfPayment.filterNot { it.disabled?.isFiltered == true || it is PaymentToken || it is SavedSecondaryToken }
+            .map { it.lockedWhileSubmitting() }
 
     /** The saved tokens, minus filtered states — what [paymentTokens] renders. */
     private fun visibleTokens(): List<PaymentToken> =
         meansOfPayment.filterIsInstance<PaymentToken>().filterNot { it.disabled?.isFiltered == true }
+            .map { it.lockedWhileSubmitting() as PaymentToken }
+
+    /**
+     * The public view of an item while a submit is in flight: every otherwise-enabled item reads
+     * [DisabledState.Submitting] (web's `SUBMITTING` code) until `submitPayment` returns. An overlay
+     * on the published lists only — the internal list keeps its real states, so nothing has to be
+     * undone afterwards.
+     */
+    private fun PaymentItem.lockedWhileSubmitting(): PaymentItem =
+        if (submitting && disabled == null) withDisabled(DisabledState.Submitting) else this
+
+    /** Re-publish the three item lists — after the submit lock flips. */
+    private fun publishItems() {
+        _paymentMethods.value = visibleMethods()
+        _paymentTokens.value = visibleTokens()
+        _savedSecondaryTokens.value = visibleSavedSecondaryTokens()
+    }
 
     // --- BNPL loan simulation (SDK-12216 / US-51) ---------------------------------------------------
 
@@ -1460,67 +1438,19 @@ class PurseHeadlessCheckout private constructor(
      * answered without usable schedule data.
      * @throws PaymentApiException on network / HTTP failure.
      */
-    suspend fun simulateLoan(method: PrimaryMethod, product: LoanProduct): LoanSimulation {
-        requireSimulable(method, product)
-        return withContext(Dispatchers.IO) {
-            try {
-                apiClient().getSimulation(method.partner, method.method, product)
-            } catch (e: PaymentApiException) {
-                throw e.asLoanSimulationFailureOrSelf()
-            }
-        }
-    }
+    suspend fun simulateLoan(method: PrimaryMethod, product: LoanProduct): LoanSimulation = loans.simulate(method, product)
 
     /**
      * Every schedule the partner offers for [product] (`…/simulation/…/multi`) — web's
-     * `getSimulationMulti`. Same preconditions and errors as [simulateLoan]; candidates the API
-     * returns without schedule data are skipped, so the list may be empty.
+     * `getSimulationMulti`. Same preconditions and errors as [simulateLoan]; the list may be empty.
      */
-    suspend fun simulateLoans(method: PrimaryMethod, product: LoanProduct): List<LoanSimulation> {
-        requireSimulable(method, product)
-        return withContext(Dispatchers.IO) {
-            try {
-                apiClient().getSimulationMulti(method.partner, method.method, product)
-            } catch (e: PaymentApiException) {
-                throw e.asLoanSimulationFailureOrSelf()
-            }
-        }
+    suspend fun simulateLoans(method: PrimaryMethod, product: LoanProduct): List<LoanSimulation> = loans.simulateAll(method, product)
+
+    /** Every network path goes through here, so one [requireOpen] covers them all. */
+    private fun apiClient(): PaymentApiClient {
+        requireOpen()
+        return PaymentApiClient(params.apiKey, paymentApiRoot, params.entityId, session.id)
     }
-
-    private fun requireSimulable(method: PrimaryMethod, product: LoanProduct) {
-        if (!method.simulable) throw PurseCheckoutException.MethodNotSimulable(method.id)
-        // Web's monitoring proxy posts HEADLESS_CHECKOUT_METHOD_LOAN_SIM with the product on every
-        // simulateLoan call (`monitoringConfigs.ts`).
-        bus.post(
-            CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_LOAN_SIM,
-            payload = monitoringPayload(
-                "partner" to method.partner.wireValue,
-                "method" to method.method.wireValue,
-                "amount" to product.amount.toPlainString(),
-                "currencyCode" to product.currencyCode,
-            ),
-        )
-    }
-
-    /**
-     * Web's `getSimulation` reads the JSON body whatever the HTTP status and throws
-     * `INVALID_LOAN_SIMULATION` whenever it holds no `plugin_result` — so a partner that answers
-     * `409 EMPTY_SIMULATION` (Riverty when the method isn't offered for this order) or any other
-     * API-level refusal surfaces under that one dedicated code, with the API's own `errorCode` kept
-     * on the cause. Only a transport failure (no status at all) stays a raw [PaymentApiException].
-     */
-    private fun PaymentApiException.asLoanSimulationFailureOrSelf(): Exception =
-        if (errorCode == PaymentApiClient.INVALID_LOAN_SIMULATION || status != null) {
-            PurseCheckoutException.LoanSimulationFailed(
-                message ?: "invalid loan simulation${errorCode?.let { " ($it)" } ?: ""}",
-                this,
-            )
-        } else {
-            this
-        }
-
-    private fun apiClient(): PaymentApiClient =
-        PaymentApiClient(params.apiKey, paymentApiRoot, params.entityId, session.id)
 
     companion object {
         /**
@@ -1560,7 +1490,7 @@ class PurseHeadlessCheckout private constructor(
             // Monitoring — only against a real checker (i.e. never from unit tests): route the
             // event bus's batches to the monitoring API with this session's context attached.
             if (datetimeChecker == null) {
-                installMonitoring(params, sessionId = params.paymentSession.id)
+                CheckoutMonitoring.install(params, sessionId = params.paymentSession.id, version = VERSION)
             }
             return PurseHeadlessCheckout(
                 params, session, apiRoot, hooks, options, checker, watchdogIntervalMs, lockedEnvironment,
@@ -1590,95 +1520,5 @@ class PurseHeadlessCheckout private constructor(
 
         /** SDK version stamped onto every monitoring message — web's `version` extra. */
         const val VERSION = "0.1.0"
-
-        /**
-         * The process's HTTP user agent (`Dalvik/2.1.0 (Linux; U; Android 14; Pixel 8 Build/…)`) —
-         * what the runtime sends itself, available without a Context. Falls back to `"android"`.
-         */
-        internal fun androidUserAgent(): String =
-            System.getProperty("http.agent")?.takeIf { it.isNotBlank() } ?: "android"
-
-        @Volatile
-        private var backgroundFlushInstalled = false
-
-        /**
-         * Point the singleton [CheckoutEventBus] at the monitoring API for this session — web's
-         * `init` building the `ApiLogger`, patching extras and handing `sendLogs` to the bus —
-         * plus the Android analog of `beforeunload`: flush when the app goes to background.
-         */
-        private fun installMonitoring(params: PurseSessionParams, sessionId: String) {
-            val logger = MonitoringApiClient(
-                apiKey = params.apiKey,
-                monitoringApiRoot = params.environment.monitoringApiRoot,
-                envWireValue = params.environment.wireValue,
-            )
-            logger.patchExtras(
-                entityId = params.entityId,
-                paymentSessionId = sessionId,
-                version = VERSION,
-                // `wrapper` keeps web's meaning — which product embeds the SDK (`direct` / `dropin`);
-                // a merchant integrating this SDK is `direct`. The platform is the envelope's own field.
-                wrapper = "direct",
-            )
-            val bus = CheckoutEventBus.getInstance()
-            bus.setLogProcessor { batch -> logger.sendLogs(batch.map { it.toJson() }) }
-
-            ApiCallMonitor.listener = object : ApiCallMonitor.Listener {
-                override fun onCallStart(method: String, path: String) {
-                    bus.post(
-                        CheckoutEventCode.HEADLESS_CHECKOUT_PARTNER_API_CALL_START,
-                        EventLevel.NETWORK,
-                        monitoringPayload("call" to method, "path" to path),
-                    )
-                }
-
-                override fun onCallEnd(method: String, path: String, durationMs: Long, success: Boolean) {
-                    bus.post(
-                        CheckoutEventCode.HEADLESS_CHECKOUT_PARTNER_API_CALL_END,
-                        EventLevel.PERFORMANCE,
-                        monitoringPayload(
-                            "call" to method,
-                            "path" to path,
-                            "durationMs" to durationMs,
-                            "success" to success,
-                        ),
-                    )
-                }
-            }
-
-            installBackgroundFlush(bus)
-        }
-
-        /**
-         * Flush the analytics queue when the whole app goes to background — the Android analog of
-         * web's `beforeunload` + `sendBeacon`. Guarded: `ProcessLifecycleOwner` needs a real
-         * Android process (androidx startup), so on the JVM test classpath this quietly no-ops.
-         */
-        private fun installBackgroundFlush(bus: CheckoutEventBus) {
-            if (backgroundFlushInstalled) return
-            runCatching {
-                val mainHandler = android.os.Handler(android.os.Looper.getMainLooper())
-                mainHandler.post {
-                    runCatching {
-                        androidx.lifecycle.ProcessLifecycleOwner.get().lifecycle.addObserver(
-                            androidx.lifecycle.LifecycleEventObserver { _, event ->
-                                if (event == androidx.lifecycle.Lifecycle.Event.ON_STOP) {
-                                    bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_PAGE_UNLOAD)
-                                    bus.flush()
-                                }
-                            },
-                        )
-                    }
-                }
-                backgroundFlushInstalled = true
-            }
-        }
-
-        /** A monitoring payload from non-null pairs. */
-        internal fun monitoringPayload(vararg pairs: Pair<String, Any?>): JSONObject =
-            JSONObject().apply { pairs.forEach { (key, value) -> if (value != null) put(key, value) } }
-
-        /** Web's token-name rule (`validateTokenName`). */
-        private val TOKEN_LABEL_REGEX = Regex("^[a-zA-Z0-9\\s]{1,25}$")
     }
 }

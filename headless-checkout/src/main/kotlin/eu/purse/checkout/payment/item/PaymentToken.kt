@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout item-factory primary tokens + plugins/utils/noCVV.ts
+// Same: saved card fields; `requiresCvv` is the inverse of the no-CVV gates.
+// Differs: `isVaultedCard` gates the CVV question (web's `hasUI()` does).
 package eu.purse.checkout.payment.item
 
 import eu.purse.checkout.payment.split.PrimarySource
@@ -47,6 +50,9 @@ data class PaymentToken(
 ) : PaymentItem(), PrimarySource {
 
     override val isSecondary: Boolean get() = false
+
+    /** The id of the [PrimaryMethod] this token belongs to (`"{partner}-{method}"`). */
+    val methodId: String get() = "${partner.wireValue}-${method.wireValue}"
     override fun withDisabled(disabled: DisabledState?) = copy(disabled = disabled)
 
     /**

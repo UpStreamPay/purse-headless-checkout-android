@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout `registration` stores
+// Same: registered + optional name.
+// Differs: nothing.
 package eu.purse.checkout.payment.registration
 
 /**

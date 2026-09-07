@@ -1,3 +1,6 @@
+// Web: `manageRedirection` POST-form case
+// Same: auto-submitting form with the PSP's fields.
+// Differs: rendered into the WebView as HTML.
 package eu.purse.partnerui.redirect
 
 import org.json.JSONException

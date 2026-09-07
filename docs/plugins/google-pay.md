@@ -14,7 +14,7 @@ with a per-partner config parser), driving Google's own `PaymentsClient` instead
 | UI surface | **xpay** — Google's branded button *is* the submit action; there's no row to select and no form to validate |
 | Native step vs `/validate` | sheet runs **before** `/validate`; its token becomes `partner_data.session` |
 | Gates `isPaymentFulfilled`? | No (nothing to validate — see [plugins README](README.md#form-completeness-gates-the-payment)) |
-| Lifecycle caveat | `GooglePayCoordinator` **must be constructed in the Activity's `onCreate`** — it registers two `ActivityResult` launchers |
+| Obtain with | `rememberGooglePayCoordinator(listener)` — Compose-managed launchers; or simply `rememberPaymentElement` |
 
 ## What `/init` must return
 
@@ -57,7 +57,7 @@ sequenceDiagram
     participant Ck as PurseHeadlessCheckout
     participant Rd as RedirectionCheckoutActivity
 
-    App->>Co: prepare(checkout.googlePayHost(item))
+    App->>Co: prepare(checkout.host(item))
     Co->>Pl: buildRequest(context)
     Pl->>Api: POST /init
     Api-->>Pl: plugin_result.logs
@@ -135,23 +135,17 @@ sequenceDiagram
 ## Host integration
 
 ```kotlin
-class MainActivity : ComponentActivity() {
-    private lateinit var googlePay: GooglePayCoordinator
-
-    override fun onCreate(savedInstanceState: Bundle?) {
-        super.onCreate(savedInstanceState)
-        googlePay = GooglePayCoordinator(this, listener)   // MUST be here, before STARTED
-    }
+@Composable
+fun GooglePayRow(checkout: PurseHeadlessCheckout, item: PrimaryMethod, listener: PaymentElementListener) {
+    val coordinator = rememberGooglePayCoordinator(listener)
+    LaunchedEffect(coordinator, item.id) { coordinator.prepare(checkout.host(item)) }   // /init + refine + isReadyToPay
+    GooglePayButton(coordinator, Modifier.fillMaxWidth())   // shows itself once ready; tap → launchSheet()
 }
-
-// once the session is initialized
-val item = checkout.primaryMethods.first { it.method == Method.GooglePay }
-googlePay.prepare(checkout.googlePayHost(item))            // /init + refine + isReadyToPay
-
-// in the button's onClick, after Listener.onReady(true)
-checkout.setPrimary(item)
-googlePay.launchSheet()
 ```
+
+The approved sheet commits the method as primary itself (`host.setAsPrimary()`), so there is no
+`setPrimary` call on your side. `rememberPaymentElement(checkout, item, listener)` is the same thing
+behind the element shape.
 
 ## Outcomes
 
@@ -186,9 +180,9 @@ Map it three ways (`Unconfirmed` / `Authorized` / `Failed`) as `PaymentOutcome.o
 | `GooglePayMapper.kt` | `/init` body, config dispatch, `isReadyToPay`/`PaymentDataRequest`/validate JSON |
 | `partners/{Adyen,Default}.kt`, `partners/ingenico/Ingenico.kt` | Per-partner `logs` parsers |
 | `partners/ingenico/WorldlineProductClient.kt` | product-320 refine (web's `libs/ingenico-onlinepayments`) |
-| `GooglePayCoordinator.kt` | Sheet, launchers, submit, redirect |
+| `GooglePayCoordinator.kt` | Sheet, approval → capture (the shared flow lives in `PaymentCoordinator`) |
 | `GooglePayClient.kt` | Thin `PaymentsClient` wrapper |
-| `GooglePayHost.kt` / `GooglePayConfig.kt` / `GooglePayRequest.kt` | Seam + value types |
+| `GooglePayButton.kt` | Google's `PayButton` as a composable |
 | `redirect/*` | Shared redirect machinery — see [plugins README](README.md#shared-redirects-and-3-d-secure) |
 
 Web reference: `usp-widget/packages/partner-ui/src/plugins/generics/googlepay/`.

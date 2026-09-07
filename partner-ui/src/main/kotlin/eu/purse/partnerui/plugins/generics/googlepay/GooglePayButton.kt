@@ -1,3 +1,6 @@
+// Web: packages/partner-ui/src/plugins/generics/googlepay (pay.js `createButton`)
+// Same: official button, shown once `isReadyToPay`.
+// Differs: Play Services `PayButton` in an `AndroidView`.
 package eu.purse.partnerui.plugins.generics.googlepay
 
 import androidx.compose.runtime.Composable

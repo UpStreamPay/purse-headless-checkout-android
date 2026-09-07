@@ -1,3 +1,6 @@
+// Web: packages/headless-checkout splitter source
+// Same: id, partner, method.
+// Differs: nothing.
 package eu.purse.checkout.payment.split
 
 import eu.purse.core.payment.Method
