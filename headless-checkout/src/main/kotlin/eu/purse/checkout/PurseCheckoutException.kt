@@ -4,22 +4,20 @@
 package eu.purse.checkout
 
 import eu.purse.core.error.PurseErrorCode
+import eu.purse.core.error.PurseException
 
 /**
  * Errors raised by the headless checkout orchestration — the analog of web's
- * `PurseHeadlessCheckoutError`. Every exception carries a machine-readable [code] (shared
- * vocabulary with web, see [PurseErrorCode]) and a [documentationLink]. Session-payload errors
- * live in `:core` (`eu.purse.core.session.PurseSessionException`); API/transport errors are
- * `eu.purse.core.api.PaymentApiException`.
+ * `PurseHeadlessCheckoutError`. Every exception carries a machine-readable `code` (shared
+ * vocabulary with web, see [PurseErrorCode]) and a `documentationLink`, through the SDK-wide
+ * [PurseException] root it shares with session-payload errors
+ * (`eu.purse.core.session.PurseSessionException`) and API/transport errors ([PaymentApiException]).
  */
 sealed class PurseCheckoutException(
     message: String,
-    val code: PurseErrorCode,
+    code: PurseErrorCode,
     cause: Throwable? = null,
-) : Exception(message, cause) {
-
-    /** The shared error-codes documentation anchor for [code]. */
-    val documentationLink: String get() = code.documentationLink
+) : PurseException(message, code, cause) {
 
     /** `submitPayment` called while the split doesn't yet cover the amount / has no primary. */
     class PaymentNotFulfilled(message: String = "payment is not fulfilled") :
