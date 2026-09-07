@@ -28,6 +28,7 @@ class PartnerArtifactsTest {
                 "add the `eu.purse:headless-checkout-klarna` dependency to offer this method",
             PartnerArtifacts.missingPluginMessage(Partner.Klarna, Method.Installments),
         )
-        assertEquals("no plugin registered for aci/creditcard", PartnerArtifacts.missingPluginMessage(Partner.Other("aci"), Method.CreditCard))
+        val card = PartnerArtifacts.missingPluginMessage(Partner.Other("aci"), Method.CreditCard)
+        assertEquals("no plugin registered for aci/creditcard", card)
     }
 }
