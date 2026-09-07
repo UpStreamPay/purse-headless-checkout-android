@@ -3,6 +3,7 @@
 // Differs: a sealed hierarchy instead of one class with a code.
 package eu.purse.checkout
 
+import eu.purse.checkout.state.SessionState
 import eu.purse.core.api.PaymentApiException
 import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.error.PurseException
@@ -23,6 +24,20 @@ sealed class PurseCheckoutException(
     /** `submitPayment` called while the split doesn't yet cover the amount / has no primary. */
     class PaymentNotFulfilled(message: String = "payment is not fulfilled") :
         PurseCheckoutException(message, PurseErrorCode.PAYMENT_NOT_FULFILLED_ON_SUBMIT)
+
+    /**
+     * `submitPayment` while a submission is in flight, or on a session whose one `/validate` is
+     * already spent (submitted, declined, or terminated by the API) — the throwing form of web's
+     * re-entrancy latch, which posts `HEADLESS_CHECKOUT_SUBMIT_BLOCKED` and returns.
+     */
+    class SubmitBlocked(val state: SessionState) :
+        PurseCheckoutException(
+            when (state) {
+                SessionState.SUBMITTING -> "a payment submission is already in flight"
+                else -> "the session's payment has already been submitted (state $state)"
+            },
+            PurseErrorCode.SUBMIT_BLOCKED,
+        )
 
     /**
      * A secondary draw the splitter refuses — web's `ensureTakePolicy` / `isMethodLimitReached`:

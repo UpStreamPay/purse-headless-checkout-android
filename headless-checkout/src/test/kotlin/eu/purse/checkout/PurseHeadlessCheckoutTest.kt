@@ -16,6 +16,9 @@ import eu.purse.core.payment.Partner
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.redirect.RedirectAction
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -1035,6 +1038,61 @@ class PurseHeadlessCheckoutTest {
     }
 
     @Test
+    fun `two concurrent submits post one validate and the loser is SUBMIT_BLOCKED`() {
+        FakePaymentApi().use { api ->
+            api.on("validate") { Thread.sleep(300); 200 to SUCCESS_ANSWER }
+            val checkout = coveredCheckout(api)
+
+            val outcomes = runBlocking {
+                listOf(
+                    async(Dispatchers.Default) { runCatching { checkout.submitPayment() } },
+                    async(Dispatchers.Default) { runCatching { checkout.submitPayment() } },
+                ).awaitAll()
+            }
+
+            assertEquals(1, outcomes.count { it.isSuccess })
+            val blocked = outcomes.single { it.isFailure }.exceptionOrNull() as PurseCheckoutException.SubmitBlocked
+            assertEquals(PurseErrorCode.SUBMIT_BLOCKED, blocked.code)
+            assertEquals("exactly one /validate left the device", 1, api.requests.count { it.path.endsWith("/validate") })
+            assertEquals(SessionState.SUBMITTED, checkout.sessionState.value)
+        }
+    }
+
+    @Test
+    fun `a spent session refuses a second submit even when the payment was declined`() {
+        FakePaymentApi().use { api ->
+            api.respond("validate", """{"global_status":"FAILED","results":[]}""")
+            val checkout = coveredCheckout(api)
+            runBlocking { checkout.submitPayment() }
+            assertEquals(SessionState.ERROR, checkout.sessionState.value)
+
+            val thrown = assertThrows(PurseCheckoutException.SubmitBlocked::class.java) {
+                runBlocking { checkout.submitPayment() }
+            }
+            assertEquals(PurseErrorCode.SUBMIT_BLOCKED, thrown.code)
+            assertEquals(1, api.requests.count { it.path.endsWith("/validate") })
+        }
+    }
+
+    @Test
+    fun `a validate the API refused leaves the session submittable`() {
+        FakePaymentApi().use { api ->
+            var calls = 0
+            api.on("validate") { if (calls++ == 0) 500 to """{"error":"OUTAGE"}""" else 200 to SUCCESS_ANSWER }
+            val checkout = coveredCheckout(api)
+
+            val first = assertThrows(PurseCheckoutException.ValidateFailed::class.java) {
+                runBlocking { checkout.submitPayment() }
+            }
+            assertFalse("the API answered, so the outcome is known", first.outcomeUnknown)
+            assertEquals(SessionState.ERROR, checkout.sessionState.value)
+
+            runBlocking { checkout.submitPayment() }
+            assertEquals(SessionState.SUBMITTED, checkout.sessionState.value)
+        }
+    }
+
+    @Test
     fun `a validate that never answered is reported as outcome unknown`() {
         val api = FakePaymentApi()
         val checkout = coveredCheckout(api)
@@ -1045,6 +1103,24 @@ class PurseHeadlessCheckoutTest {
         }
         assertTrue("the payment may exist server-side — the merchant must reconcile", thrown.outcomeUnknown)
         assertEquals(SessionState.ERROR, checkout.sessionState.value)
+    }
+
+    @Test
+    fun `submit re-evaluates expiry against the server clock and never reaches the PSP once expired`() {
+        FakePaymentApi().use { api ->
+            api.respond("validate", SUCCESS_ANSWER)
+            val year3000 = java.time.Instant.parse("3000-01-01T00:00:00Z").toEpochMilli()
+            // The watchdog's first tick is a minute away: only the submit itself can notice.
+            val checkout = coveredCheckout(api, checker = offlineChecker(clock = { year3000 }))
+            assertEquals(SessionState.READY, checkout.sessionState.value)
+
+            val thrown = assertThrows(PurseCheckoutException.SessionExpired::class.java) {
+                runBlocking { checkout.submitPayment() }
+            }
+            assertEquals(PurseErrorCode.EXPIRED_SESSION, thrown.code)
+            assertEquals(SessionState.EXPIRED, checkout.sessionState.value)
+            assertTrue(api.requests.none { it.path.endsWith("/validate") })
+        }
     }
 
     @Test

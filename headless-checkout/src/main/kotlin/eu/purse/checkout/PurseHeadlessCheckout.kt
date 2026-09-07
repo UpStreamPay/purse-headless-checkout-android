@@ -161,6 +161,13 @@ class PurseHeadlessCheckout private constructor(
     )
     val sessionState: StateFlow<SessionState> = _sessionState.asStateFlow()
 
+    /**
+     * Web's `#validationConsumed`: the API answered `/validate` about the payment (any
+     * `global_status`), so the session's single validation is spent — a declined payment included.
+     * Only a `/validate` the API *refused* leaves the session submittable again.
+     */
+    @Volatile private var validationConsumed = false
+
     /** The current [PaymentSession]; emits again whenever [setSession] swaps it. */
     private val _paymentSession = MutableStateFlow(initialSession)
     val paymentSession: StateFlow<PaymentSession> = _paymentSession.asStateFlow()
@@ -314,12 +321,7 @@ class PurseHeadlessCheckout private constructor(
                 datetimeChecker.sync()
                 while (isActive) {
                     if (datetimeChecker.isExpiredForServer(session.expirationDate)) {
-                        _sessionState.value = SessionState.EXPIRED
-                        bus.post(
-                            CheckoutEventCode.HEADLESS_CHECKOUT_EXPIRED_SESSION,
-                            EventLevel.WARNING,
-                            monitoringPayload("paymentSessionId" to session.id),
-                        )
+                        expire()
                         break
                     }
                     delay(watchdogIntervalMs)
@@ -332,6 +334,16 @@ class PurseHeadlessCheckout private constructor(
                 monitoringPayload("paymentSessionId" to session.id),
             )
         }
+    }
+
+    /** Flip to `EXPIRED` and report it — from the watchdog, or from a submit that re-checked the clock. */
+    private fun expire() {
+        _sessionState.value = SessionState.EXPIRED
+        bus.post(
+            CheckoutEventCode.HEADLESS_CHECKOUT_EXPIRED_SESSION,
+            EventLevel.WARNING,
+            monitoringPayload("paymentSessionId" to session.id),
+        )
     }
 
     /**
@@ -372,13 +384,11 @@ class PurseHeadlessCheckout private constructor(
      * Same session id → ignored (a warning is logged), as on web.
      *
      * @throws PurseCheckoutException.SessionExpired when the new session is already expired.
-     * @throws IllegalStateException while a payment is being submitted.
+     * @throws PurseCheckoutException.SubmitBlocked while a payment is being submitted.
      * @throws eu.purse.core.session.PurseSessionException.SessionMalformed if [widgetData] can't be decoded.
      */
     suspend fun setSession(widgetData: String) {
-        check(_sessionState.value != SessionState.SUBMITTING) {
-            "cannot replace the session while a payment is being submitted"
-        }
+        if (_sessionState.value == SessionState.SUBMITTING) throw PurseCheckoutException.SubmitBlocked(SessionState.SUBMITTING)
         val (newParams, newSession, newRoot) = resolve(widgetData, lockedEnvironment)
         if (newSession.id == session.id) {
             Log.w("PurseHeadlessCheckout", "setSession: attempting to set the same payment session again, ignoring.")
@@ -446,6 +456,7 @@ class PurseHeadlessCheckout private constructor(
                 ?.let { splitter.setPrimary(it) }
         }
         _paymentSession.value = newSession
+        validationConsumed = false
         _sessionState.value =
             if (newSession.expirationDate.isBefore(Instant.now())) SessionState.EXPIRED else SessionState.READY
 
@@ -1178,9 +1189,16 @@ class PurseHeadlessCheckout private constructor(
      * be called once [isPaymentFulfilled] is `true`. Blocking network work happens off the caller's
      * dispatcher via `suspend`; move it to `Dispatchers.IO` at the call site.
      *
+     * Exactly one submit per session goes out: the session's expiry is re-checked against the
+     * server clock first, then an atomic latch turns `READY`/`ERROR` into `SUBMITTING` — a second
+     * call while one is in flight, or after the API has answered about the payment (approved or
+     * declined), is refused with [PurseCheckoutException.SubmitBlocked] and never reaches the PSP.
+     *
      * @throws PurseCheckoutException.PaymentNotFulfilled if the split doesn't cover the amount.
      * @throws PurseCheckoutException.ItemNotFulfilled if an item in the split has an incomplete or
      * invalid form (see [setFulfilled]).
+     * @throws PurseCheckoutException.SessionExpired if the session expired (state moves to `EXPIRED`).
+     * @throws PurseCheckoutException.SubmitBlocked if a submit is in flight or the session is spent.
      * @throws PurseCheckoutException.ValidateFailed if `/validate` failed — when its `outcomeUnknown`
      * is `true` the request left the device and the payment may exist: check [paymentStatus].
      * @throws PurseCheckoutException.NoPluginRegistered while no `:partner-ui` plugins exist yet.
@@ -1195,7 +1213,7 @@ class PurseHeadlessCheckout private constructor(
         )
         if (!splitter.fulfilled) throw PurseCheckoutException.PaymentNotFulfilled()
         unfulfilledItemId()?.let { throw PurseCheckoutException.ItemNotFulfilled(it) }
-        _sessionState.value = SessionState.SUBMITTING
+        acquireSubmitLock()
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_STARTED,
             payload = monitoringPayload("session_id" to session.id, "nb_items" to splitter.splits.size),
@@ -1219,6 +1237,9 @@ class PurseHeadlessCheckout private constructor(
                 skipOnBeforeValidate = skipOnBeforeValidate,
                 registrationByMethod = registrations,
             )
+            // A `global_status` means the API answered about the payment rather than refusing the
+            // call: the session's single validation is spent either way (web's `#validationConsumed`).
+            validationConsumed = true
             _sessionState.value = if (result.isSuccess) SessionState.SUBMITTED else SessionState.ERROR
             bus.post(
                 if (result.isSuccess) CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_SUCCESS
@@ -1241,6 +1262,29 @@ class PurseHeadlessCheckout private constructor(
                 monitoringPayload("message" to e.message),
             )
             throw e
+        }
+    }
+
+    /**
+     * Web's re-entrancy latch, throwing: re-evaluate expiry now (not only at init and on the
+     * watchdog's tick), then move `READY`/`ERROR` to `SUBMITTING` atomically so two racing calls
+     * cannot both pass. `ERROR` stays submittable only while the API never answered about the
+     * payment ([validationConsumed] false) — a declined payment is a spent session too.
+     */
+    private fun acquireSubmitLock() {
+        if (_sessionState.value == SessionState.READY && datetimeChecker.isExpiredForServer(session.expirationDate)) expire()
+        val from = _sessionState.value
+        if (from == SessionState.EXPIRED) throw PurseCheckoutException.SessionExpired(session.id)
+        val blocked = from == SessionState.SUBMITTING || from == SessionState.SUBMITTED ||
+            from == SessionState.TERMINATED || validationConsumed ||
+            !_sessionState.compareAndSet(from, SessionState.SUBMITTING)
+        if (blocked) {
+            bus.post(
+                CheckoutEventCode.HEADLESS_CHECKOUT_SUBMIT_BLOCKED,
+                EventLevel.WARNING,
+                monitoringPayload("state" to _sessionState.value.name),
+            )
+            throw PurseCheckoutException.SubmitBlocked(_sessionState.value)
         }
     }
 
