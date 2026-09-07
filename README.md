@@ -7,7 +7,22 @@ split, `/validate` — and you own the UI. Card (Purse vault), Google Pay, PayPa
 redirection method, gift cards, saved cards and BNPL simulation ship in the box. It mirrors the web
 `usp-widget` headless SDK; the [web ↔ Android map](docs/web-android-map.md) says what differs.
 
-**Start here → [Getting started](docs/integration/getting-started.md)** · [Recipes](docs/integration/recipes.md) · [API reference](docs/integration/consumer-api.md) · [All docs](docs/README.md)
+**Start here → [Getting started](docs/integration/getting-started.md)** · [Partner setup](docs/integration/partner-setup.md) · [Recipes](docs/integration/recipes.md) · [API reference](docs/integration/consumer-api.md) · [All docs](docs/README.md)
+
+## Install
+
+```kotlin
+dependencies {
+    implementation("eu.purse:headless-checkout-android:<version>")      // engine, payment elements, card, redirection methods
+    implementation("eu.purse:headless-checkout-googlepay:<version>")    // only if you offer Google Pay
+    implementation("eu.purse:headless-checkout-klarna:<version>")       // only if you offer Klarna (+ Klarna's Maven repository)
+    implementation("eu.purse:headless-checkout-paypal:<version>")       // only if you offer PayPal
+}
+```
+
+Maven Central, `eu.purse` group, one version for all. Partners that bring their own SDK are separate
+artifacts, so a card-only merchant embeds none of them. Versions and the generated API reference:
+[releases](https://github.com/UpStreamPay/purse-headless-checkout-android/releases).
 
 ## Install
 
