@@ -23,8 +23,9 @@ Google Pay, PayPal and Klarna live in their own artifacts (`eu.purse:headless-ch
 13. [Locale, texts, theme](#13-locale-texts-theme)
 14. [BNPL instalment simulation](#14-bnpl-instalment-simulation)
 15. [Refresh the session](#15-refresh-the-session)
-16. [Teardown](#16-teardown)
-17. [Below the element: coordinators](#17-below-the-element-coordinators)
+16. [Survive process death](#16-survive-process-death)
+17. [Teardown](#17-teardown)
+18. [Below the element: coordinators](#18-below-the-element-coordinators)
 
 ---
 
@@ -362,7 +363,38 @@ A primary whose configuration is unchanged keeps its selection, its element and 
 typed. Everything else rebuilds; applied gift cards are dropped. Observe `paymentSession` for the
 swap and `itemGenerations` if you remember anything per method outside `rememberPaymentElement`.
 
-## 16. Teardown
+## 16. Survive process death
+
+Android may kill the app while the shopper is in a bank app, PayPal or a 3-D Secure page. Snapshot
+the checkout into your saved instance state and rebuild it from there; the checkout itself belongs
+in a `ViewModel` so a rotation never touches it.
+
+```kotlin
+class CheckoutViewModel(private val handle: SavedStateHandle) : ViewModel() {
+    val checkout: PurseHeadlessCheckout =
+        handle.get<CheckoutSavedState>(KEY)?.let { PurseHeadlessCheckout.restore(it, hooks, options) }
+            ?: PurseHeadlessCheckout.init(widgetData, lockedEnvironment = PurseEnvironment.PRODUCTION, hooks, options)
+
+    init {
+        handle.setSavedStateProvider(KEY) { bundleOf(KEY to checkout.saveState()) }   // Parcelable
+    }
+}
+```
+
+What comes back: the session, the primary selection, the applied gift cards and their slices, the
+save decisions, and what the native steps collected. What does not: a card form's input (never
+saved, by design) and `hooks` / `options` (they hold code — pass the same ones to `restore`).
+
+If a submit had already left the device, the restored `sessionState` is `SUBMITTED` and
+`submitPayment` refuses: confirm the outcome with `awaitPaymentOutcome()` (recipe 9) instead of
+letting the shopper pay twice. The return from the redirect Activity after the process was killed
+lands on the recreated payment element's listener as `PaymentOutcome.ReturnedFromRedirect`, which
+leads to the same check.
+
+`CheckoutSavedState` is also `toJson()` / `fromJson()` for a store of your own; a snapshot from a
+newer SDK version is refused with `IllegalArgumentException`.
+
+## 17. Teardown
 
 ```kotlin
 override fun onDestroy() {
@@ -375,7 +407,7 @@ override fun onDestroy() {
 `isTornDown` is `true` and any operation throws `CheckoutTornDown` (`CHECKOUT_TORN_DOWN`); a second
 `teardown()` is a no-op.
 
-## 17. Below the element: coordinators
+## 18. Below the element: coordinators
 
 `rememberPaymentElement` wraps one coordinator per method. Reach for them only to customise a button
 or drive a native step from your own control:

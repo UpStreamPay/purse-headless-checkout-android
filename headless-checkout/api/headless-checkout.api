@@ -123,7 +123,7 @@ public final class eu/purse/checkout/PurseHeadlessCheckout {
 	public static final field Companion Leu/purse/checkout/PurseHeadlessCheckout$Companion;
 	public static final field VERSION Ljava/lang/String;
 	public static final field WATCHDOG_INTERVAL_MS J
-	public synthetic fun <init> (Leu/purse/core/session/PurseSessionParams;Leu/purse/checkout/session/PaymentSession;Ljava/lang/String;Leu/purse/checkout/PurseCheckoutHooks;Leu/purse/partnerui/PluginOptions;Leu/purse/core/datetime/ServerDatetimeChecker;JLeu/purse/core/environment/PurseEnvironment;Ljava/util/Set;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Leu/purse/core/session/PurseSessionParams;Leu/purse/checkout/session/PaymentSession;Ljava/lang/String;Leu/purse/checkout/PurseCheckoutHooks;Leu/purse/partnerui/PluginOptions;Leu/purse/core/datetime/ServerDatetimeChecker;JLeu/purse/core/environment/PurseEnvironment;Ljava/util/Set;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun applySecondary (Leu/purse/checkout/payment/item/SavedSecondaryToken;Ljava/math/BigDecimal;)V
 	public final fun applySecondary (Leu/purse/checkout/payment/secondary/SecondaryToken;Ljava/math/BigDecimal;)V
 	public static synthetic fun applySecondary$default (Leu/purse/checkout/PurseHeadlessCheckout;Leu/purse/checkout/payment/item/SavedSecondaryToken;Ljava/math/BigDecimal;ILjava/lang/Object;)V
@@ -173,6 +173,7 @@ public final class eu/purse/checkout/PurseHeadlessCheckout {
 	public final fun registrationOf (Leu/purse/checkout/payment/secondary/SecondaryToken;)Leu/purse/checkout/payment/registration/RegistrationState;
 	public final fun removeSecondary (Leu/purse/checkout/payment/item/SavedSecondaryToken;)V
 	public final fun removeSecondary (Leu/purse/checkout/payment/secondary/SecondaryToken;)V
+	public final fun saveState ()Leu/purse/checkout/state/CheckoutSavedState;
 	public final fun schemeAssets (Leu/purse/checkout/payment/item/PrimaryMethod;)Ljava/util/List;
 	public final fun secondaryConfig (Leu/purse/checkout/payment/item/SecondaryMethod;)Leu/purse/checkout/payment/secondary/SecondaryConfig;
 	public final fun sessionTransactions (Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
@@ -192,6 +193,8 @@ public final class eu/purse/checkout/PurseHeadlessCheckout {
 public final class eu/purse/checkout/PurseHeadlessCheckout$Companion {
 	public final fun init (Ljava/lang/String;Leu/purse/core/environment/PurseEnvironment;Leu/purse/checkout/PurseCheckoutHooks;Leu/purse/partnerui/PluginOptions;Ljava/util/Set;)Leu/purse/checkout/PurseHeadlessCheckout;
 	public static synthetic fun init$default (Leu/purse/checkout/PurseHeadlessCheckout$Companion;Ljava/lang/String;Leu/purse/core/environment/PurseEnvironment;Leu/purse/checkout/PurseCheckoutHooks;Leu/purse/partnerui/PluginOptions;Ljava/util/Set;ILjava/lang/Object;)Leu/purse/checkout/PurseHeadlessCheckout;
+	public final fun restore (Leu/purse/checkout/state/CheckoutSavedState;Leu/purse/checkout/PurseCheckoutHooks;Leu/purse/partnerui/PluginOptions;)Leu/purse/checkout/PurseHeadlessCheckout;
+	public static synthetic fun restore$default (Leu/purse/checkout/PurseHeadlessCheckout$Companion;Leu/purse/checkout/state/CheckoutSavedState;Leu/purse/checkout/PurseCheckoutHooks;Leu/purse/partnerui/PluginOptions;ILjava/lang/Object;)Leu/purse/checkout/PurseHeadlessCheckout;
 }
 
 public abstract class eu/purse/checkout/confirmation/PaymentSessionStatus {
@@ -1028,6 +1031,24 @@ public final class eu/purse/checkout/session/PaymentSessionBuilder {
 	public static final field INSTANCE Leu/purse/checkout/session/PaymentSessionBuilder;
 	public final fun build (Leu/purse/core/session/LegacyPaymentSession;Ljava/util/Set;)Leu/purse/checkout/session/PaymentSession;
 	public static synthetic fun build$default (Leu/purse/checkout/session/PaymentSessionBuilder;Leu/purse/core/session/LegacyPaymentSession;Ljava/util/Set;ILjava/lang/Object;)Leu/purse/checkout/session/PaymentSession;
+}
+
+public final class eu/purse/checkout/state/CheckoutSavedState : android/os/Parcelable {
+	public static final field $stable I
+	public static final field CREATOR Landroid/os/Parcelable$Creator;
+	public static final field Companion Leu/purse/checkout/state/CheckoutSavedState$Companion;
+	public fun describeContents ()I
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getSavedAt ()J
+	public final fun getSubmitted ()Z
+	public fun hashCode ()I
+	public final fun toJson ()Ljava/lang/String;
+	public fun toString ()Ljava/lang/String;
+	public fun writeToParcel (Landroid/os/Parcel;I)V
+}
+
+public final class eu/purse/checkout/state/CheckoutSavedState$Companion {
+	public final fun fromJson (Ljava/lang/String;)Leu/purse/checkout/state/CheckoutSavedState;
 }
 
 public final class eu/purse/checkout/state/SessionState : java/lang/Enum {

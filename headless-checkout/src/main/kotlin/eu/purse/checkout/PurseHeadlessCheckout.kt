@@ -29,7 +29,11 @@ import eu.purse.checkout.payment.split.PursePaymentSplitter
 import eu.purse.checkout.session.PaymentSession
 import eu.purse.checkout.session.PaymentSessionBuilder
 import eu.purse.checkout.simulation.LoanSimulator
+import eu.purse.checkout.state.CheckoutSavedState
 import eu.purse.checkout.state.SessionState
+import eu.purse.checkout.state.secondaryTokenFromSavedJson
+import eu.purse.checkout.state.toCollectedMap
+import eu.purse.checkout.state.toSavedJson
 import eu.purse.checkout.validation.PaymentValidator
 import eu.purse.checkout.wallet.WalletTokens
 import eu.purse.core.api.PaymentApiClient
@@ -77,6 +81,7 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
+import org.json.JSONObject
 
 /**
  * The headless purse-payment SDK — the Kotlin analog of web's `PurseHeadlessCheckout`. It owns the
@@ -95,6 +100,7 @@ import org.json.JSONArray
  * from a coroutine scope. The Payment API is blocking, so [submitPayment] is `suspend`.
  */
 class PurseHeadlessCheckout private constructor(
+    initialWidgetData: String,
     initialParams: PurseSessionParams,
     initialSession: PaymentSession,
     initialPaymentApiRoot: String,
@@ -108,6 +114,9 @@ class PurseHeadlessCheckout private constructor(
     /** Methods this app build opts out of — never listed, whatever the session offers; re-applied by [setSession]. */
     val disabledMethods: Set<MethodKey>,
 ) {
+    /** The `widget.data` string the current session came from — what [saveState] carries. */
+    private var widgetData: String = initialWidgetData
+
     /** The decoded widget data behind [session]; replaced by [setSession]. */
     var params: PurseSessionParams = initialParams
         private set
@@ -428,6 +437,7 @@ class PurseHeadlessCheckout private constructor(
         requireOpen()
         if (_sessionState.value == SessionState.SUBMITTING) throw PurseCheckoutException.SubmitBlocked(SessionState.SUBMITTING)
         val (newParams, newSession, newRoot) = resolve(widgetData, lockedEnvironment, disabledMethods)
+        this.widgetData = widgetData
         if (newSession.id == session.id) {
             Log.w("PurseHeadlessCheckout", "setSession: attempting to set the same payment session again, ignoring.")
             return
@@ -802,6 +812,107 @@ class PurseHeadlessCheckout private constructor(
      * and every operation that reaches the network, hands out a host or replaces the session throws
      * [PurseCheckoutException.CheckoutTornDown]; calling it again is a no-op.
      */
+    /**
+     * Snapshot this checkout for [restore] after process death: the session's `widget.data`, the
+     * primary selection, the applied gift cards and their slices, the save decisions, what the native
+     * steps collected (JSON-representable values only) and whether a submit has left the device.
+     * Cheap and synchronous — call it from `onSaveInstanceState`, a `SavedStateHandle`, or a
+     * `rememberSaveable` saver. No card data is ever included.
+     *
+     * @throws PurseCheckoutException.CheckoutTornDown after [teardown].
+     */
+    fun saveState(): CheckoutSavedState {
+        if (_isTornDown.value) throw PurseCheckoutException.CheckoutTornDown()
+        val splits = splitter.splits
+        val json = JSONObject()
+            .put(CheckoutSavedState.KEY_VERSION, CheckoutSavedState.VERSION)
+            .put(CheckoutSavedState.WIDGET_DATA, widgetData)
+            .put(CheckoutSavedState.LOCKED_ENVIRONMENT, lockedEnvironment?.wireValue ?: JSONObject.NULL)
+            .put(
+                CheckoutSavedState.DISABLED_METHODS,
+                JSONArray().also { array ->
+                    disabledMethods.forEach {
+                        array.put(JSONObject().put("partner", it.partner.wireValue).put("method", it.method.wireValue))
+                    }
+                },
+            )
+            .put(CheckoutSavedState.PRIMARY_ID, splitter.primaryMethod?.id ?: JSONObject.NULL)
+            .put(
+                CheckoutSavedState.SECONDARIES,
+                JSONArray().also { array ->
+                    splits.filter { it.source is SecondaryToken }
+                        .forEach { array.put((it.source as SecondaryToken).toSavedJson(it.amount)) }
+                },
+            )
+            .put(CheckoutSavedState.REGISTRATION_BY_METHOD, registrationByMethod.toSavedJson())
+            .put(CheckoutSavedState.REGISTRATION_BY_SECONDARY_TOKEN, registrationBySecondaryToken.toSavedJson())
+            .put(
+                CheckoutSavedState.COLLECTED,
+                JSONObject().also { out -> collectedByMethod.forEach { (id, data) -> out.put(id, data.toSavedJson()) } },
+            )
+            .put(
+                CheckoutSavedState.SUBMITTED,
+                validationConsumed || _sessionState.value == SessionState.SUBMITTING || _sessionState.value == SessionState.SUBMITTED,
+            )
+            .put(CheckoutSavedState.SAVED_AT, System.currentTimeMillis())
+        return CheckoutSavedState(json)
+    }
+
+    private fun Map<String, RegistrationState>.toSavedJson(): JSONObject = JSONObject().also { out ->
+        forEach { (id, state) -> out.put(id, JSONObject().put("registered", state.registered).put("name", state.name ?: JSONObject.NULL)) }
+    }
+
+    private fun JSONObject.toRegistrations(): Map<String, RegistrationState> = keys().asSequence().associateWith { id ->
+        val entry = getJSONObject(id)
+        RegistrationState(entry.optBoolean("registered"), entry.optString("name").takeIf { !entry.isNull("name") })
+    }
+
+    /** Replay a [CheckoutSavedState] onto this freshly built checkout — see [restore]. */
+    private fun applySavedState(json: JSONObject) {
+        json.optJSONObject(CheckoutSavedState.REGISTRATION_BY_METHOD)?.let { registrationByMethod.putAll(it.toRegistrations()) }
+        json.optJSONObject(CheckoutSavedState.REGISTRATION_BY_SECONDARY_TOKEN)?.let {
+            registrationBySecondaryToken.putAll(it.toRegistrations())
+        }
+        json.optJSONObject(CheckoutSavedState.COLLECTED)?.let { collected ->
+            collected.keys().forEach { id -> collectedByMethod[id] = collected.getJSONObject(id).toCollectedMap() }
+        }
+        json.optJSONArray(CheckoutSavedState.SECONDARIES)?.let(::restoreSecondaries)
+        json.optString(CheckoutSavedState.PRIMARY_ID).takeIf { !json.isNull(CheckoutSavedState.PRIMARY_ID) }?.let(::restorePrimary)
+        if (json.optBoolean(CheckoutSavedState.SUBMITTED)) markSubmittedBeforeDeath()
+        refresh()
+    }
+
+    private fun restoreSecondaries(array: JSONArray) {
+        for (i in 0 until array.length()) {
+            val (token, amount) = secondaryTokenFromSavedJson(array.getJSONObject(i))
+            // A slice the new session cannot honour (a smaller order, a spent usage limit) is dropped.
+            runCatching { splitter.takeSplit(token, amount) }
+                .onFailure { Log.w("PurseHeadlessCheckout", "restore: dropping ${token.id}: ${it.message}") }
+        }
+    }
+
+    private fun restorePrimary(id: String) {
+        val item = meansOfPayment.firstOrNull { it.id == id } as? PrimarySource
+        if (item == null || (item as PaymentItem).disabled != null) {
+            Log.w("PurseHeadlessCheckout", "restore: primary $id is not selectable in the session, skipping")
+            return
+        }
+        // Armed at selection, as setPrimaryToken does: a CVV-gated token stays unfulfilled until its form says otherwise.
+        if (item is PaymentToken && item.requiresCvv) fulfilledByMethod.putIfAbsent(item.id, false)
+        splitter.setPrimary(item)
+    }
+
+    /**
+     * A `/validate` left the device before the process died: the session's one submit is spent
+     * whatever the answer was. Never send another; the merchant confirms the outcome.
+     */
+    private fun markSubmittedBeforeDeath() {
+        validationConsumed = true
+        if (_sessionState.value != SessionState.EXPIRED && _sessionState.value != SessionState.TERMINATED) {
+            _sessionState.value = SessionState.SUBMITTED
+        }
+    }
+
     fun teardown() {
         if (!_isTornDown.compareAndSet(expect = false, update = true)) return
         // Give every tracked plugin its destroyClient (web parity), then cancel everything.
@@ -1524,8 +1635,59 @@ class PurseHeadlessCheckout private constructor(
                 CheckoutMonitoring.install(params, sessionId = params.paymentSession.id, version = VERSION)
             }
             return PurseHeadlessCheckout(
-                params, session, apiRoot, hooks, options, checker, watchdogIntervalMs, lockedEnvironment, disabledMethods,
+                widgetData, params, session, apiRoot, hooks, options, checker, watchdogIntervalMs, lockedEnvironment, disabledMethods,
             )
+        }
+
+        /**
+         * Rebuild a checkout from a [CheckoutSavedState] — after Android killed the process while the
+         * shopper was in a bank app, PayPal or a 3-D Secure page. The session is decoded again from the
+         * saved `widget.data`; the primary selection, the applied gift cards and their slices, the save
+         * decisions and what the native steps collected come back; a form re-mounts empty (card data is
+         * never saved). When a submit had already left the device ([CheckoutSavedState.submitted]) the
+         * restored session is **spent**: [sessionState] is `SUBMITTED`, [submitPayment] refuses, and
+         * the merchant confirms the outcome with [awaitPaymentOutcome] — a second `/validate` for the
+         * same session is never sent.
+         *
+         * [hooks] and [options] are not saved (they hold code): pass the same ones as at [init].
+         * Anything the saved snapshot names that the session no longer offers is skipped silently.
+         */
+        fun restore(
+            state: CheckoutSavedState,
+            hooks: PurseCheckoutHooks? = null,
+            options: PluginOptions = PluginOptions(),
+        ): PurseHeadlessCheckout = restore(state, hooks, options, datetimeChecker = null)
+
+        internal fun restore(
+            state: CheckoutSavedState,
+            hooks: PurseCheckoutHooks? = null,
+            options: PluginOptions = PluginOptions(),
+            datetimeChecker: ServerDatetimeChecker?,
+            watchdogIntervalMs: Long = WATCHDOG_INTERVAL_MS,
+        ): PurseHeadlessCheckout {
+            val json = state.json
+            val lockedEnvironment = PurseEnvironment.fromWire(
+                json.optString(CheckoutSavedState.LOCKED_ENVIRONMENT).takeIf {
+                    it.isNotBlank()
+                }
+            )
+            val disabled = json.optJSONArray(CheckoutSavedState.DISABLED_METHODS)?.let { array ->
+                (0 until array.length()).map { i ->
+                    val pair = array.getJSONObject(i)
+                    MethodKey.of(pair.getString("partner"), pair.getString("method"))
+                }.toSet()
+            } ?: emptySet()
+            val checkout = init(
+                json.getString(CheckoutSavedState.WIDGET_DATA),
+                lockedEnvironment,
+                hooks,
+                options,
+                datetimeChecker,
+                watchdogIntervalMs,
+                disabled,
+            )
+            checkout.applySavedState(json)
+            return checkout
         }
 
         /** Decoded params, built session and Payment API root for [widgetData] — shared by [init] and [setSession]. */

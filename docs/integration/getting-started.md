@@ -100,7 +100,9 @@ val checkout = PurseHeadlessCheckout.init(
 
 `init` throws `PurseSessionException.SessionMalformed` when the blob cannot be decoded. Call
 `checkout.teardown()` when the checkout screen is dismissed for good. One session pays once; for a
-new cart, mint a new session and call `checkout.setSession(widgetData)`.
+new cart, mint a new session and call `checkout.setSession(widgetData)`. Hold the checkout in a
+`ViewModel`, and snapshot it with `saveState()` / `restore()` so a process death mid-redirect does
+not lose the payment ([recipe 16](recipes.md#16-survive-process-death)).
 
 ## 4. Show the methods
 

@@ -121,6 +121,35 @@ whatever the shopper typed, while a changed method gets a fresh element. See
 
 ---
 
+### `saveState` / `restore` — survive process death
+
+```kotlin
+fun saveState(): CheckoutSavedState
+companion object {
+    fun restore(state: CheckoutSavedState, hooks: PurseCheckoutHooks? = null, options: PluginOptions = PluginOptions()): PurseHeadlessCheckout
+}
+```
+
+`saveState` is a cheap, synchronous snapshot (`Parcelable`, also `toJson()` / `fromJson()`): the
+session's `widget.data`, the locked environment and `disabledMethods`, the primary selection, the
+applied gift cards with their slices, the save decisions (`register` / `registerSecondary`), what the
+native steps collected (JSON-representable values only — a Klarna authorize callback is not), and
+whether a submit has left the device. **No card data**, ever. Throws `CheckoutTornDown` after
+`teardown()`.
+
+`restore` decodes the session again and replays the snapshot. Anything the new session no longer
+offers, or a slice it cannot honour, is skipped with a warning. When `CheckoutSavedState.submitted`
+is `true` the restored session is spent — `sessionState` is `SUBMITTED`, `submitPayment` throws
+`SubmitBlocked` — and the merchant confirms the outcome with `awaitPaymentOutcome()`. `hooks` and
+`options` are not saved: pass the same ones as at `init`. A snapshot from a newer SDK is refused
+(`IllegalArgumentException` from `CheckoutSavedState.fromJson`).
+
+Hold the checkout in a `ViewModel` so a rotation never touches it; the card form's text does not
+survive an Activity recreation (SecureFields keeps it in memory only, and saving card data would be
+wrong) — recipe 16 shows the `SavedStateHandle` wiring.
+
+---
+
 ## 3. Reactive state — "events" (`StateFlow`)
 
 The reactive surface is exposed as `StateFlow` — the Kotlin analog of web's Svelte stores. Collect

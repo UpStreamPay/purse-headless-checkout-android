@@ -3,17 +3,21 @@ package eu.purse.checkout
 import eu.purse.checkout.monitoring.CheckoutEventBus
 import eu.purse.checkout.monitoring.CheckoutEventCode
 import eu.purse.checkout.payment.item.DisabledState
+import eu.purse.checkout.payment.item.PrimaryMethod
 import eu.purse.checkout.payment.registration.RegistrationState
 import eu.purse.checkout.payment.secondary.SecondaryToken
+import eu.purse.checkout.state.CheckoutSavedState
 import eu.purse.checkout.state.SessionState
 import eu.purse.core.api.InitGuard
 import eu.purse.core.api.PaymentApiException
 import eu.purse.core.datetime.ServerDatetimeChecker
+import eu.purse.core.environment.PurseEnvironment
 import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.payment.IntegrationMode
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.MethodKey
 import eu.purse.core.payment.Partner
+import eu.purse.core.payment.SaveTokenMode
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.redirect.RedirectAction
 import java.math.BigDecimal
@@ -688,6 +692,99 @@ class PurseHeadlessCheckoutTest {
 
         runBlocking { checkout.setSession(CheckoutTestSessions.widgetData(CheckoutTestSessions.sessionWithSavedGiftCard())) }
         assertTrue(checkout.primaryMethods.none { it.partner == Partner.Paypal })
+    }
+
+    // --- saved state (process death) -----------------------------------------------------------------
+
+    private fun giftToken(checkout: PurseHeadlessCheckout, balance: String = "2.00") = SecondaryToken(
+        id = "illicado-giftcard-0001",
+        partner = checkout.secondaryMethods.single().partner,
+        method = checkout.secondaryMethods.single().method,
+        pan = "9250004781234560001",
+        cvv = "123",
+        name = "gift",
+        balance = BigDecimal(balance),
+        saveTokenMode = SaveTokenMode.PREFER,
+    )
+
+    @Test
+    fun `saveState then restore brings back the primary, the applied gift card, the save decisions and the collected data`() {
+        val checkout = checkout()
+        val card = checkout.primaryMethods.single { it.method == Method.CreditCard }
+        checkout.setPrimary(card)
+        checkout.register(card, registered = true, name = "holiday card")
+        val gift = giftToken(checkout)
+        checkout.applySecondary(gift, BigDecimal("1.50"))
+        checkout.registerSecondary(gift, registered = true, name = "gift one")
+        checkout.host(card).setCollected(mapOf("token" to "vault-form-token", "network" to "VISA", "attempt" to 2, "skipped" to { }))
+
+        val restored = PurseHeadlessCheckout.restore(
+            CheckoutSavedState.fromJson(checkout.saveState().toJson()),
+            datetimeChecker = offlineChecker(),
+        )
+
+        assertEquals(card.id, restored.amountSplit.value.single { it.source is PrimaryMethod }.source.id)
+        assertEquals(0, BigDecimal("1.50").compareTo(restored.amountSplit.value.single { it.source.id == gift.id }.amount))
+        assertEquals(0, BigDecimal("3.30").compareTo(restored.amountSplit.value.single { it.source is PrimaryMethod }.amount))
+        assertEquals(RegistrationState(true, "holiday card"), restored.registrationOf(restored.primaryMethods.single { it.id == card.id }))
+        assertEquals(RegistrationState(true, "gift one"), restored.registrationOf(gift))
+        val collected = restored.host(restored.primaryMethods.single { it.id == card.id }).buildContext().collected
+        assertEquals("vault-form-token", collected["token"])
+        assertEquals(2, collected["attempt"])
+        assertFalse("a lambda is not JSON and is left out", collected.containsKey("skipped"))
+        assertEquals(SessionState.READY, restored.sessionState.value)
+        assertFalse(checkout.saveState().submitted)
+    }
+
+    @Test
+    fun `a restored snapshot taken after a submit leaves the session spent`() {
+        val checkout = checkout()
+        checkout.setPrimary(checkout.primaryMethods.single { it.method == Method.CreditCard })
+        val json = JSONObject(checkout.saveState().toJson()).put("submitted", true).toString()
+
+        val restored = PurseHeadlessCheckout.restore(CheckoutSavedState.fromJson(json), datetimeChecker = offlineChecker())
+
+        assertTrue(CheckoutSavedState.fromJson(json).submitted)
+        assertEquals(SessionState.SUBMITTED, restored.sessionState.value)
+        assertThrows(PurseCheckoutException.SubmitBlocked::class.java) { runBlocking { restored.submitPayment() } }
+    }
+
+    @Test
+    fun `restore skips what the session no longer offers and what the split cannot honour`() {
+        val checkout = checkout()
+        checkout.setPrimary(checkout.primaryMethods.single { it.partner == Partner.Paypal })
+        checkout.applySecondary(giftToken(checkout, balance = "10.00"), BigDecimal("1.00"))
+        val json = JSONObject(checkout.saveState().toJson())
+        json.put("primaryId", "acme-voucher")
+        json.getJSONArray("secondaries").getJSONObject(0).put("amount", "99.00") // above what is left to pay
+
+        val restored = PurseHeadlessCheckout.restore(CheckoutSavedState.fromJson(json.toString()), datetimeChecker = offlineChecker())
+
+        assertTrue(restored.amountSplit.value.isEmpty())
+        assertEquals(0, restored.session.amount.compareTo(restored.remainingAmountToPay.value))
+    }
+
+    @Test
+    fun `saveState carries the lock and the disabled methods, and refuses to run after teardown`() {
+        val checkout = PurseHeadlessCheckout.init(
+            CheckoutTestSessions.widgetData(),
+            lockedEnvironment = PurseEnvironment.SANDBOX,
+            datetimeChecker = offlineChecker(),
+            disabledMethods = setOf(MethodKey(Partner.Paypal, Method.Wallet)),
+        )
+        val restored = PurseHeadlessCheckout.restore(checkout.saveState(), datetimeChecker = offlineChecker())
+        assertEquals(setOf(MethodKey(Partner.Paypal, Method.Wallet)), restored.disabledMethods)
+        assertTrue(restored.primaryMethods.none { it.partner == Partner.Paypal })
+
+        checkout.teardown()
+        assertThrows(PurseCheckoutException.CheckoutTornDown::class.java) { checkout.saveState() }
+    }
+
+    @Test
+    fun `a snapshot from an unknown version or without a session is refused`() {
+        assertThrows(IllegalArgumentException::class.java) { CheckoutSavedState.fromJson("""{"version": 99, "widgetData": "x"}""") }
+        assertThrows(IllegalArgumentException::class.java) { CheckoutSavedState.fromJson("""{"version": 1}""") }
+        assertThrows(IllegalArgumentException::class.java) { CheckoutSavedState.fromJson("not json") }
     }
 
     // --- saved gift cards (secondary tokens) --------------------------------------------------------

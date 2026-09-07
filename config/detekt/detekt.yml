@@ -10,7 +10,9 @@ complexity:
     threshold: 80
   LongParameterList:
     functionThreshold: 8
-    constructorThreshold: 10
+    # PurseHeadlessCheckout's private constructor takes the resolved session parts plus the merchant's
+    # options; it has a single caller (`init`) and named arguments there.
+    constructorThreshold: 12
     ignoreDefaultParameters: true
   TooManyFunctions:
     thresholdInFiles: 30
