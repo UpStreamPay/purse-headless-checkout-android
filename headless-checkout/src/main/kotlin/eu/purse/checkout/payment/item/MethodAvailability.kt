@@ -75,7 +75,7 @@ object MethodAvailability {
             // A secondary is never disabled for exceeding max — a gift card can legitimately hold
             // more balance than the amount owed; it just can't draw down more than what's left.
             maxAmount != null && primaryReach > maxAmount && !configuration.isSecondary ->
-                DisabledState.MaxAmountExceeded(maxAmount)
+                DisabledState.MaxAmountExceeded(maxAmount, primaryReach)
             else -> null
         }
     }
