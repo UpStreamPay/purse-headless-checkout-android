@@ -640,13 +640,13 @@ class PurseHeadlessCheckout private constructor(
 
     /**
      * Rename a saved card (`PATCH …/tokens/{id}/name`) — web's `token.edit({name})`. Needs a
-     * wallet session and the token present in the wallet. Blocking network; call off main.
+     * wallet session and the token present in the wallet.
      */
     suspend fun editToken(token: PaymentToken, name: String) {
         val client = wallet.requireClient()
         wallet.requireToken(token.id)
         validateTokenLabel(name, excludingTokenId = token.id)
-        client.editTokenName(token.id, name)
+        withContext(Dispatchers.IO) { client.editTokenName(token.id, name) }
         updateTokenItem(token.id) { it.copy(name = name) }
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_TOKEN_EDIT,
@@ -665,7 +665,7 @@ class PurseHeadlessCheckout private constructor(
     suspend fun deleteToken(token: PaymentToken) {
         val client = wallet.requireClient()
         wallet.requireToken(token.id)
-        client.deleteToken(token.id)
+        withContext(Dispatchers.IO) { client.deleteToken(token.id) }
         if (splitter.primaryMethod?.id == token.id) splitter.setPrimary(null)
         meansOfPayment = meansOfPayment.filterNot { it.id == token.id }
         wallet.forget(token.id)
@@ -699,8 +699,11 @@ class PurseHeadlessCheckout private constructor(
             ),
         )
         try {
-            client.setAsFavorite(token.id, newFavorite)
-            syncWalletTokens(wallet.fetch())
+            val tokens = withContext(Dispatchers.IO) {
+                client.setAsFavorite(token.id, newFavorite)
+                wallet.fetch()
+            }
+            syncWalletTokens(tokens)
         } catch (e: Exception) {
             updateTokenItem(token.id) { it.copy(favorite = !newFavorite) }
             throw e
@@ -710,7 +713,7 @@ class PurseHeadlessCheckout private constructor(
     /** Delete every wallet token — web's `deleteAllTokens()`. */
     suspend fun deleteAllTokens() {
         val client = wallet.requireClient()
-        client.deleteAllTokens()
+        withContext(Dispatchers.IO) { client.deleteAllTokens() }
         val tokenIds = visibleTokens().map { it.id }.toSet()
         if (splitter.primaryMethod?.id in tokenIds) splitter.setPrimary(null)
         // Saved gift cards are wallet tokens too — gone with the rest, and out of the split.
@@ -792,7 +795,8 @@ class PurseHeadlessCheckout private constructor(
     suspend fun getSecondaryToken(method: SecondaryMethod, pan: String, cvv: String? = null): SecondaryToken =
         try {
             bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_GET_SECONDARY_TOKEN)
-            SecondaryTokenizer(apiClient()).tokenize(method, pan, cvv, splitter.remaining)
+            val api = apiClient()
+            withContext(Dispatchers.IO) { SecondaryTokenizer(api).tokenize(method, pan, cvv, splitter.remaining) }
         } catch (e: Exception) {
             // A terminal API answer (already submitted / expired / gone) ends the whole session,
             // not just this tokenization — web's `onSessionTerminated` path (`secondaries.ts:176`).
@@ -874,7 +878,7 @@ class PurseHeadlessCheckout private constructor(
         val client = wallet.requireClient()
         wallet.requireToken(token.id)
         validateTokenLabel(name, excludingTokenId = token.id)
-        client.editTokenName(token.id, name)
+        withContext(Dispatchers.IO) { client.editTokenName(token.id, name) }
         updateSavedSecondary(token.id) { it.copy(name = name) }
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_TOKEN_EDIT,
@@ -893,7 +897,7 @@ class PurseHeadlessCheckout private constructor(
     suspend fun deleteToken(token: SavedSecondaryToken) {
         val client = wallet.requireClient()
         wallet.requireToken(token.id)
-        client.deleteToken(token.id)
+        withContext(Dispatchers.IO) { client.deleteToken(token.id) }
         splitter.clearSplit(token.asSecondaryToken())
         meansOfPayment = meansOfPayment.filterNot { it.id == token.id }
         wallet.forget(token.id)
@@ -1133,17 +1137,17 @@ class PurseHeadlessCheckout private constructor(
 
     /**
      * Re-query the session's transactions (`GET /{entityId}/sessions/{sessionId}`) — the source of
-     * truth to check after a redirect/3-D Secure return rather than trusting a locally-held result.
-     * Blocking; call off the main thread. For a typed answer use [paymentStatus] /
-     * [awaitPaymentOutcome].
+     * truth to check after a redirect/3-D Secure return, or after a `submitPayment` whose
+     * `ValidateFailed.outcomeUnknown` is `true`, rather than trusting a locally-held result. Runs on
+     * `Dispatchers.IO`. For a typed answer use [paymentStatus] / [awaitPaymentOutcome].
      */
-    fun sessionTransactions(): JSONArray = apiClient().getSession()
+    suspend fun sessionTransactions(): JSONArray {
+        val api = apiClient()
+        return withContext(Dispatchers.IO) { api.getSession() }
+    }
 
-    /**
-     * One typed status check against the session's own transactions. Blocking network; call off
-     * the main thread (or use [awaitPaymentOutcome]).
-     */
-    fun paymentStatus(): PaymentSessionStatus = PaymentSessionStatus.from(sessionTransactions())
+    /** One typed status check against the session's own transactions (see [awaitPaymentOutcome] to poll). */
+    suspend fun paymentStatus(): PaymentSessionStatus = PaymentSessionStatus.from(sessionTransactions())
 
     /**
      * Poll [paymentStatus] until the payment settles — the mobile-specific confirmation step web
@@ -1211,8 +1215,7 @@ class PurseHeadlessCheckout private constructor(
 
     /**
      * Create the payment — run the plugin-driven `/validate` pipeline over the current split. Must
-     * be called once [isPaymentFulfilled] is `true`. Blocking network work happens off the caller's
-     * dispatcher via `suspend`; move it to `Dispatchers.IO` at the call site.
+     * be called once [isPaymentFulfilled] is `true`. The network work runs on `Dispatchers.IO`.
      *
      * Exactly one submit per session goes out: the session's expiry is re-checked against the
      * server clock first, then an atomic latch turns `READY`/`ERROR` into `SUBMITTING` — a second
@@ -1257,14 +1260,17 @@ class PurseHeadlessCheckout private constructor(
                     .mapNotNull { it.source as? SecondaryToken }
                     .filter { it.canBeRegistered }
                     .associate { it.id to registrationOf(it) }
-            val result = PaymentValidator(apiClient()).execute(
-                splitter.splits,
-                session.source,
-                collectedByMethod,
-                hooks = hooks,
-                skipOnBeforeValidate = skipOnBeforeValidate,
-                registrationByMethod = registrations,
-            )
+            val validator = PaymentValidator(apiClient())
+            val result = withContext(Dispatchers.IO) {
+                validator.execute(
+                    splitter.splits,
+                    session.source,
+                    collectedByMethod,
+                    hooks = hooks,
+                    skipOnBeforeValidate = skipOnBeforeValidate,
+                    registrationByMethod = registrations,
+                )
+            }
             // A `global_status` means the API answered about the payment rather than refusing the
             // call: the session's single validation is spent either way (web's `#validationConsumed`).
             validationConsumed = true
