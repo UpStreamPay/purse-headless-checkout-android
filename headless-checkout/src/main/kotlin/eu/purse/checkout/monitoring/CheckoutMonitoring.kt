@@ -18,14 +18,34 @@ internal object CheckoutMonitoring {
     @Volatile
     private var backgroundFlushInstalled = false
 
-    fun install(params: PurseSessionParams, sessionId: String, version: String) {
+    /** The shipper the last [install] wired — the one [sessionChanged] / [walletSessionSet] re-stamp. */
+    @Volatile
+    private var logger: MonitoringApiClient? = null
+
+    /**
+     * Wire the bus to the collector for the session in [params]. [monitoringApiRoot] is the
+     * environment's collector unless a test points it at a loopback server.
+     */
+    fun install(
+        params: PurseSessionParams,
+        sessionId: String,
+        version: String,
+        monitoringApiRoot: String = params.environment.monitoringApiRoot,
+    ) {
         val logger = MonitoringApiClient(
             apiKey = params.apiKey,
-            monitoringApiRoot = params.environment.monitoringApiRoot,
+            monitoringApiRoot = monitoringApiRoot,
             envWireValue = params.environment.wireValue,
         )
         // `wrapper` keeps web's meaning (which product embeds the SDK); a merchant integration is `direct`.
-        logger.patchExtras(entityId = params.entityId, paymentSessionId = sessionId, version = version, wrapper = "direct")
+        logger.patchExtras(
+            entityId = params.entityId,
+            paymentSessionId = sessionId,
+            walletSessionId = params.walletSession?.sessionId,
+            version = version,
+            wrapper = "direct",
+        )
+        this.logger = logger
         val bus = CheckoutEventBus.getInstance()
         bus.setLogProcessor { batch -> logger.sendLogs(batch.map { it.toJson() }) }
 
@@ -47,6 +67,18 @@ internal object CheckoutMonitoring {
             }
         }
         installBackgroundFlush(bus)
+    }
+
+    /**
+     * Re-stamp the envelope after `setSession` — web calls `patchExtrasData` again on every
+     * `_setSession`, so events after a refresh carry the session they belong to, not the first one.
+     */
+    fun sessionChanged(params: PurseSessionParams, sessionId: String) {
+        logger?.patchExtras(
+            entityId = params.entityId,
+            paymentSessionId = sessionId,
+            walletSessionId = params.walletSession?.sessionId,
+        )
     }
 
     /** Flush when the whole app goes to background. No-op on the JVM test classpath (no Android process). */

@@ -496,6 +496,7 @@ class PurseHeadlessCheckout private constructor(
         params = newParams
         session = newSession
         paymentApiRoot = newRoot
+        CheckoutMonitoring.sessionChanged(newParams, newSession.id)
         meansOfPayment = newSession.meansOfPayment
         splitter.reset(newSession.amount)
         // Beyond web (which resets the whole split): an unchanged, still-selectable primary stays
