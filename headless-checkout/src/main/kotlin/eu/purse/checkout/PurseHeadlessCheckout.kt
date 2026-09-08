@@ -160,6 +160,10 @@ class PurseHeadlessCheckout private constructor(
      * outright (`payment.ts:88-97`).
      */
     private var meansOfPayment: List<PaymentItem> = session.meansOfPayment
+        set(value) {
+            reportDisabledTransitions(field, value)
+            field = value
+        }
 
     /** Interactively-collected data per method id (e.g. a Google Pay token) — see [setCollected]. */
     private val collectedByMethod = mutableMapOf<String, Map<String, Any?>>()
@@ -301,6 +305,8 @@ class PurseHeadlessCheckout private constructor(
                 "nb_methods" to session.meansOfPayment.size,
             ),
         )
+        // The states the session was built with (a platform suspension, an unreachable minimum).
+        reportDisabledTransitions(emptyList(), meansOfPayment)
         bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_READY)
 
         startExpiryWatchdog()
@@ -398,16 +404,40 @@ class PurseHeadlessCheckout private constructor(
             if (plugin == null) {
                 // A method the session offers but no plugin serves. When a Purse artifact would serve
                 // it, say which one: the most likely cause is a missing Gradle dependency.
-                PartnerArtifacts.forMethod(item.partner, item.method)?.let {
+                PartnerArtifacts.forMethod(item.partner, item.method)?.let { artifact ->
                     val hint = PartnerArtifacts.missingPluginMessage(item.partner, item.method)
                     Log.w("PurseHeadlessCheckout", "session offers ${item.id} but $hint")
+                    // An integration gap Purse would otherwise never see: the merchant ships without
+                    // the artifact and the method silently never renders.
+                    bus.post(
+                        CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_DISABLED,
+                        EventLevel.WARNING,
+                        monitoringPayload(
+                            "partner" to item.partner.wireValue,
+                            "method" to item.method.wireValue,
+                            "code" to MISSING_PARTNER_ARTIFACT,
+                            "artifact" to artifact,
+                        ),
+                    )
                 }
                 return@forEach
             }
             scope.launch {
                 try {
                     plugin.ensureClientCompatibility(pluginContext(item))
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    // Web's `pluginIsIncompatibleWithClient` partner-UI event — a nominal deactivation,
+                    // logged as a WARNING since SDK-12071, never an error.
+                    bus.post(
+                        CheckoutEventCode.HEADLESS_CHECKOUT_PARTNER_UI_EVENT,
+                        EventLevel.WARNING,
+                        monitoringPayload(
+                            "code" to PLUGIN_INCOMPATIBLE_EVENT,
+                            "partner" to item.partner.wireValue,
+                            "method" to item.method.wireValue,
+                            "reason" to e.message?.take(MAX_REASON_LENGTH),
+                        ),
+                    )
                     deactivate(item, DisabledState.PluginIncompatible)
                 }
             }
@@ -1225,15 +1255,56 @@ class PurseHeadlessCheckout private constructor(
             // Informational — merchants observe these on [pluginEvents].
             PluginEvent.Redirect, PluginEvent.Cancelled -> Unit
         }
+        // Web's `resolveUIEventLevel`: a partner failure is an error, one the method recovers from a
+        // warning, everything else informational.
+        val level = when (event) {
+            is PluginEvent.InitFailed, is PluginEvent.ClientError -> EventLevel.ERROR
+            is PluginEvent.PartnerError -> if (event.recoverable) EventLevel.WARNING else EventLevel.ERROR
+            else -> EventLevel.INFO
+        }
+        val reason = when (event) {
+            is PluginEvent.InitFailed -> event.message
+            is PluginEvent.ClientError -> event.message
+            is PluginEvent.PartnerError -> event.message
+            else -> null
+        }
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_PARTNER_UI_EVENT,
-            payload = monitoringPayload(
+            level,
+            monitoringPayload(
                 "code" to event.code,
                 "partner" to item.partner.wireValue,
                 "method" to item.method.wireValue,
+                "reason" to reason?.take(MAX_REASON_LENGTH),
             ),
         )
         _pluginEvents.tryEmit(CheckoutPluginEvent(item.id, event))
+    }
+
+    /**
+     * One `HEADLESS_CHECKOUT_METHOD_DISABLED` per method whose disabled state changed between [before]
+     * and [after] — the suspension model as events (SDK-12220). A technical failure is a WARNING; a
+     * nominal deactivation (suspended by the platform, amount rule, incompatible plugin) is INFO and
+     * never pollutes the error dashboards. Only the code travels: a state's message can quote amounts.
+     */
+    private fun reportDisabledTransitions(before: List<PaymentItem>, after: List<PaymentItem>) {
+        val previous = before.associate { it.id to it.disabled?.code }
+        after.forEach { item ->
+            val state = item.disabled ?: return@forEach
+            if (previous[item.id] == state.code) return@forEach
+            val technical = state.isTechnicallyDisabled || state.code == DisabledState.Code.FATAL_ERROR_BEFORE_RENDER
+            bus.post(
+                CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_DISABLED,
+                if (technical) EventLevel.WARNING else EventLevel.INFO,
+                monitoringPayload(
+                    "partner" to item.partner.wireValue,
+                    "method" to item.method.wireValue,
+                    "code" to state.code.name,
+                    "filtered" to state.isFiltered,
+                    "recoverable" to state.isRecoverable,
+                ),
+            )
+        }
     }
 
     /**
@@ -1733,6 +1804,15 @@ class PurseHeadlessCheckout private constructor(
 
         /** Web's `ServerDatetimeChecker.WATCHDOG_DURATION`. */
         const val WATCHDOG_INTERVAL_MS = 5_000L
+
+        /** Web's partner-UI event code for a plugin refusing the client (`events.ts`). */
+        private const val PLUGIN_INCOMPATIBLE_EVENT = "pluginIsIncompatibleWithClient"
+
+        /** `METHOD_DISABLED` code for a method whose optional artifact the app does not ship — not a [DisabledState.Code]. */
+        private const val MISSING_PARTNER_ARTIFACT = "MISSING_PARTNER_ARTIFACT"
+
+        /** Partner and plugin wording is free text: capped like web caps its descriptions. */
+        private const val MAX_REASON_LENGTH = 200
 
         /**
          * SDK version stamped onto every monitoring message — web's `version` extra. The value the

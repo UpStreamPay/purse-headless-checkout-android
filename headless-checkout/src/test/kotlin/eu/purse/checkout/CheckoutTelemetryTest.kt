@@ -6,6 +6,12 @@ import eu.purse.checkout.monitoring.CheckoutMonitoringEvent
 import eu.purse.checkout.monitoring.EventLevel
 import eu.purse.core.api.PaymentApiException
 import eu.purse.core.datetime.ServerDatetimeChecker
+import eu.purse.core.payment.Method
+import eu.purse.core.payment.Partner
+import eu.purse.partnerui.PartnerUiContext
+import eu.purse.partnerui.PartnerUiPlugin
+import eu.purse.partnerui.PluginEvent
+import eu.purse.partnerui.PluginRegistry
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
@@ -120,5 +126,97 @@ class CheckoutTelemetryTest {
             assertFalse(payload.toString().contains("very private body"))
             assertTrue(payload.getString("stack").length <= 1_000)
         }
+    }
+
+    /** Wait for an asynchronous post (eligibility checks run on the engine scope). */
+    private fun await(code: CheckoutEventCode, timeoutMs: Long = 5_000): CheckoutMonitoringEvent {
+        val deadline = System.currentTimeMillis() + timeoutMs
+        while (System.currentTimeMillis() < deadline) {
+            events.firstOrNull { it.code == code }?.let { return it }
+            Thread.sleep(20)
+        }
+        error("no $code within ${timeoutMs}ms; saw ${events.map { it.code }}")
+    }
+
+    @Test
+    fun `a platform suspension is a METHOD_DISABLED event at INFO, not an error`() {
+        val suspended = CheckoutTestSessions.samplePaymentSessionJson
+            .replace("\"stable\": true, \"labels\": [\"paypal\"", "\"stable\": false, \"labels\": [\"paypal\"")
+        checkout(CheckoutTestSessions.widgetData(suspended))
+
+        val disabled = single(CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_DISABLED)
+        assertEquals(EventLevel.INFO, disabled.type)
+        val payload = disabled.payload!!
+        assertEquals("paypal", payload.getString("partner"))
+        assertEquals("wallet", payload.getString("method"))
+        assertEquals("METHOD_UNSTABLE", payload.getString("code"))
+        assertTrue(payload.getBoolean("filtered"))
+        assertFalse("only the code travels — a state's message can quote amounts", payload.has("message"))
+        // Posted before READY, so a dashboard sees the session's shape at ready time.
+        assertTrue(events.indexOf(disabled) < events.indexOf(single(CheckoutEventCode.HEADLESS_CHECKOUT_READY)))
+    }
+
+    @Test
+    fun `a plugin refusing the client logs web's pluginIsIncompatibleWithClient as a WARNING`() {
+        PluginRegistry.register(Partner.Aci, Method.Wallet) { data ->
+            object : PartnerUiPlugin {
+                override val partner = data.partner
+                override val method = data.method
+                override suspend fun ensureClientCompatibility(context: PartnerUiContext) {
+                    error("no wallet app on this device")
+                }
+                override suspend fun preValidation(context: PartnerUiContext) = error("never reached")
+            }
+        }
+        val session = JSONObject(CheckoutTestSessions.samplePaymentSessionJson)
+        session.getJSONObject("protocols").put(
+            "aci",
+            JSONObject(
+                """
+                { "wallet": { "configurations": {
+                    "stable": true, "labels": ["aci", "wallet", "primary"], "position": 9,
+                    "settings": { "registration_mode": "OFF_SESSION" } } } }
+                """,
+            ),
+        )
+        checkout(CheckoutTestSessions.widgetData(session.toString()))
+
+        val uiEvent = await(CheckoutEventCode.HEADLESS_CHECKOUT_PARTNER_UI_EVENT)
+        assertEquals("a nominal deactivation is never status:error (SDK-12071)", EventLevel.WARNING, uiEvent.type)
+        assertEquals("pluginIsIncompatibleWithClient", uiEvent.payload!!.getString("code"))
+        assertEquals("aci", uiEvent.payload!!.getString("partner"))
+        assertEquals("no wallet app on this device", uiEvent.payload!!.getString("reason"))
+
+        val disabled = await(CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_DISABLED)
+        assertEquals(EventLevel.INFO, disabled.type)
+        assertEquals("PLUGIN_INCOMPATIBLE", disabled.payload!!.getString("code"))
+        assertEquals("aci", disabled.payload!!.getString("partner"))
+    }
+
+    @Test
+    fun `partner-UI events carry web's levels and the method's resulting disabled state follows`() {
+        val checkout = checkout()
+        val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
+
+        checkout.pluginContext(paypal).dispatchEvent(PluginEvent.PartnerError("blip", recoverable = true))
+        val recoverable = single(CheckoutEventCode.HEADLESS_CHECKOUT_PARTNER_UI_EVENT)
+        assertEquals("a failure the method recovers from is a warning", EventLevel.WARNING, recoverable.type)
+        assertEquals("blip", recoverable.payload!!.getString("reason"))
+        val dimmed = single(CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_DISABLED)
+        assertEquals(EventLevel.INFO, dimmed.type)
+        assertEquals("PARTNER_UI_RECOVERABLE_ERROR", dimmed.payload!!.getString("code"))
+        assertTrue(dimmed.payload!!.getBoolean("recoverable"))
+        events.clear()
+
+        checkout.pluginContext(paypal).dispatchEvent(PluginEvent.ClientError("sdk died"))
+        assertEquals(EventLevel.ERROR, single(CheckoutEventCode.HEADLESS_CHECKOUT_PARTNER_UI_EVENT).type)
+        val fatal = single(CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_DISABLED)
+        assertEquals("a technical failure is a warning on the method", EventLevel.WARNING, fatal.type)
+        assertEquals("PARTNER_UI_FATAL_ERROR", fatal.payload!!.getString("code"))
+        events.clear()
+
+        // The same state again is not a transition: nothing new to report.
+        checkout.pluginContext(paypal).dispatchEvent(PluginEvent.ClientError("sdk died again"))
+        assertTrue(events.none { it.code == CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_DISABLED })
     }
 }
