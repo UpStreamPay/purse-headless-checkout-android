@@ -10,7 +10,9 @@ import eu.purse.checkout.monitoring.CheckoutEventBus
 import eu.purse.checkout.monitoring.CheckoutEventCode
 import eu.purse.checkout.monitoring.CheckoutMonitoring
 import eu.purse.checkout.monitoring.EventLevel
+import eu.purse.checkout.monitoring.errorPayload
 import eu.purse.checkout.monitoring.monitoringPayload
+import eu.purse.checkout.monitoring.summarizeValidationResults
 import eu.purse.checkout.payment.item.DisabledState
 import eu.purse.checkout.payment.item.MethodAvailability
 import eu.purse.checkout.payment.item.PaymentItem
@@ -315,11 +317,7 @@ class PurseHeadlessCheckout private constructor(
                         payload = monitoringPayload("walletSessionId" to params.walletSession?.sessionId),
                     )
                 } catch (e: Exception) {
-                    bus.post(
-                        CheckoutEventCode.HEADLESS_CHECKOUT_SET_WALLET_SESSION_FAILED,
-                        EventLevel.ERROR,
-                        monitoringPayload("message" to e.message),
-                    )
+                    bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_SET_WALLET_SESSION_FAILED, EventLevel.ERROR, errorPayload(e))
                 }
             }
         }
@@ -1125,7 +1123,7 @@ class PurseHeadlessCheckout private constructor(
             bus.post(
                 CheckoutEventCode.HEADLESS_CHECKOUT_PAYMENT_ERROR,
                 EventLevel.WARNING,
-                monitoringPayload("message" to "saved secondary token init failed: ${e.message}", "tokenId" to token.id),
+                errorPayload(e, "saved secondary token init failed", "tokenId" to token.id),
             )
         }
     }
@@ -1436,15 +1434,32 @@ class PurseHeadlessCheckout private constructor(
             // call: the session's single validation is spent either way (web's `#validationConsumed`).
             validationConsumed = true
             _sessionState.value = if (result.isSuccess) SessionState.SUBMITTED else SessionState.ERROR
-            bus.post(
-                if (result.isSuccess) {
-                    CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_SUCCESS
-                } else {
-                    CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_FAILED
-                },
-                if (result.isSuccess) EventLevel.SUCCESS else EventLevel.ERROR,
-                monitoringPayload("global_status" to result.globalStatus),
-            )
+            // Web levels: a refused payment is a WARNING on VALIDATION_FAILED and an ERROR on the
+            // PAYMENT_ERROR that follows it, both saying why attempt by attempt (SDK-12197).
+            val attempts = summarizeValidationResults(result.raw)
+            if (result.isSuccess) {
+                bus.post(
+                    CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_SUCCESS,
+                    EventLevel.SUCCESS,
+                    monitoringPayload("global_status" to result.globalStatus, "results" to attempts),
+                )
+            } else {
+                bus.post(
+                    CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_FAILED,
+                    EventLevel.WARNING,
+                    monitoringPayload("global_status" to result.globalStatus, "results" to attempts),
+                )
+                bus.post(
+                    CheckoutEventCode.HEADLESS_CHECKOUT_PAYMENT_ERROR,
+                    EventLevel.ERROR,
+                    monitoringPayload(
+                        "message" to "validate answered ${result.globalStatus}",
+                        "api_status" to result.globalStatus,
+                        "has_redirection" to (result.redirection?.url != null),
+                        "results" to summarizeValidationResults(result.raw, onlyFailures = true),
+                    ),
+                )
+            }
             result
         } catch (e: Throwable) {
             _sessionState.value = when {
@@ -1454,11 +1469,7 @@ class PurseHeadlessCheckout private constructor(
                 e is PurseCheckoutException.HookFailed -> SessionState.READY
                 else -> SessionState.ERROR
             }
-            bus.post(
-                CheckoutEventCode.HEADLESS_CHECKOUT_PAYMENT_ERROR,
-                EventLevel.ERROR,
-                monitoringPayload("message" to e.message),
-            )
+            bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_PAYMENT_ERROR, EventLevel.ERROR, errorPayload(e))
             throw e
         } finally {
             submitting = false
