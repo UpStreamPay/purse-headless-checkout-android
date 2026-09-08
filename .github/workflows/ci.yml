@@ -61,7 +61,7 @@ jobs:
 
       - name: Test reports
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@v7
         with:
           name: test-and-lint-reports
           path: |
@@ -92,7 +92,7 @@ jobs:
       - name: Publishable artifacts assemble (POM, sources, Dokka javadoc)
         run: ./gradlew publishToMavenLocal
 
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@v7
         with:
           name: demo-release-apk
           path: app/build/outputs/apk/release/app-release.apk
