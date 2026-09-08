@@ -4,13 +4,17 @@ One plugin integrates one `(partner, method)` pair. This directory holds one pag
 covering what makes *that* PSP different: what its `/init` returns, when its native step runs
 relative to `/validate`, its UI surface, its quirks, and its failure modes.
 
-| PSP page | Partner / method | Family | UI surface |
-|---|---|---|---|
-| **[Google Pay](google-pay.md)** | any partner / `googlepay` (Ingenico, Adyen, generic) | generic-style (one protocol per gateway; registered per partner + method fallback) | Google's own payment sheet (xpay button) |
-| **[Klarna](klarna.md)** | `klarna` / `installments` | partner (dedicated) | native `KlarnaPaymentView` in your `ViewGroup` |
-| **[PayPal](paypal.md)** | `paypal` / `wallet` | partner (dedicated) | PayPal's branded `PayPalButton` (xpay), then PayPal's own approval |
-| **[Card — Purse vault](card-purse-vault.md)** | any partner / `creditcard` with `vault.vendor = purse` | vault (keyed by vault vendor) | SecureFields Compose form |
-| **[Redirection](redirection.md)** | **whatever the session marks** `template = redirection` | generic **template** (keyed by `configurations.template`) | none — the PSP's own hosted page |
+| PSP page | Artifact | Partner / method | Family | UI surface |
+|---|---|---|---|---|
+| **[Google Pay](google-pay.md)** | `headless-checkout-googlepay` (optional) | any partner / `googlepay` (Ingenico, Adyen, generic) | generic-style (one protocol per gateway; registered per partner + method fallback) | Google's own payment sheet (xpay button) |
+| **[Klarna](klarna.md)** | `headless-checkout-klarna` (optional) | `klarna` / `installments` | partner (dedicated) | native `KlarnaPaymentView` in your `ViewGroup` |
+| **[PayPal](paypal.md)** | `headless-checkout-paypal` (optional) | `paypal` / `wallet` | partner (dedicated) | PayPal's branded `PayPalButton` (xpay), then PayPal's own approval |
+| **[Card — Purse vault](card-purse-vault.md)** | `headless-checkout-android` | any partner / `creditcard` with `vault.vendor = purse` | vault (keyed by vault vendor) | SecureFields Compose form |
+| **[Redirection](redirection.md)** | `headless-checkout-android` | **whatever the session marks** `template = redirection` | generic **template** (keyed by `configurations.template`) | none — the PSP's own hosted page |
+
+Card and redirection ship in `eu.purse:headless-checkout-android` itself; Google Pay, Klarna and
+PayPal are **optional artifacts** (`eu.purse:headless-checkout-googlepay` / `-klarna` / `-paypal`)
+that register their plugin when present — see [getting started](../integration/getting-started.md#2-install).
 
 For the module layout and the purse-payment engine around these, see
 [architecture/headless-checkout.md](../architecture/headless-checkout.md); for the consumer-facing
@@ -37,8 +41,8 @@ unit-testable and Play-Services/Klarna/SecureFields types never leak into `:head
 
 The two halves talk through three seams:
 
-1. **`PluginHost`** — one interface `:partner-ui` declares and `PurseHeadlessCheckout.host(item)`
-   implements. This is why `:partner-ui` never depends on `:headless-checkout` (which depends on it).
+1. **`PluginHost`** — one interface `eu.purse.partnerui` declares and `PurseHeadlessCheckout.host(item)`
+   implements. This is why `eu.purse.partnerui` never depends on `eu.purse.checkout` (which depends on it).
 2. **`setCollected(map)`** — whatever the native step produced (a sheet token, a `step_id`, a vault
    token, even a live callback) is stashed against the item and arrives in the plugin's
    `PartnerUiContext.collected` at `preValidation`/`postValidation` time.
@@ -71,8 +75,8 @@ generic at all (web has a test on exactly that, and so does `PluginRegistryTest`
 
 All five shipped plugins are **registered by default** (`PluginRegistry`'s own `init` block) — the
 session's `protocols` entry is the real gate on whether a method is offered, so no app-side setup
-call exists to drift out of sync with it. `PluginRegistry.disable(partner, method)` opts a built-in
-method out of one app build. `registerGeneric(template, builder)` registers a *template* rather than
+call exists to drift out of sync with it. `PurseHeadlessCheckout.init(disabledMethods = …)` opts a
+method out of one checkout. `registerGeneric(template, builder)` registers a *template* rather than
 a pair, for a generic that isn't bundled here.
 
 ### Form completeness gates the payment
@@ -136,7 +140,7 @@ or a `purse-redirection-data` URL.
 ### A returned redirect is not an outcome
 
 Every coordinator reports `RedirectionCheckoutResult.Approved` as
-`onResult(summary, globalStatus = null)` and **does not chase the real outcome**. This is a confirmed
+`PaymentOutcome.ReturnedFromRedirect` and **does not chase the real outcome**. This is a confirmed
 backend pain point, not laziness: a real 3-D Secure challenge's final redirect is constructed
 server-side by the bank/PSP and can land on a Purse API gateway URL that `401`s on the session's own
 client-facing `api_key`. Re-check status independently instead — `checkout.sessionTransactions()`, or
@@ -187,5 +191,5 @@ Redirection  /init ──▶ /validate ──▶ hosted page            (NO nati
 
 PayPal is the only one whose step leaves the app **and comes back to a live plugin** — Google Pay's
 sheet and the card form stay in-app, and redirection's hosted page never returns to one. Its return
-Activity ships in `:partner-ui` (scheme `${applicationId}.paypal`) and the PayPal SDK supplies the
+Activity ships in the PayPal artifact's manifest (scheme `${applicationId}.paypal`) and the PayPal SDK supplies the
 matching `redirect_uri` itself, so integrators declare nothing.

@@ -303,7 +303,9 @@ private fun GiftCardRow(controller: DemoController, method: SecondaryMethod) {
                         modifier = Modifier.fillMaxWidth(),
                     )
                 }
-                SmallButton(text = stringResource(R.string.btn_check_balance), onClick = { controller.checkBalance(method, state) }, loading = state.checking)
+                SmallButton(text = stringResource(R.string.btn_check_balance), onClick = {
+                    controller.checkBalance(method, state)
+                }, loading = state.checking)
                 state.balanceLabel?.let { Text(text = it, style = MaterialTheme.typography.titleSmall) }
                 if (state.token != null) {
                     OutlinedTextField(
@@ -315,7 +317,12 @@ private fun GiftCardRow(controller: DemoController, method: SecondaryMethod) {
                         modifier = Modifier.fillMaxWidth(),
                     )
                     if (state.token?.canBeRegistered == true) {
-                        Row(Modifier.fillMaxWidth().clickable { state.register = !state.register }, verticalAlignment = Alignment.CenterVertically) {
+                        Row(
+                            Modifier.fillMaxWidth().clickable {
+                                state.register = !state.register
+                            },
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Checkbox(checked = state.register, onCheckedChange = { state.register = it })
                             Text(text = stringResource(R.string.giftcard_save), style = MaterialTheme.typography.bodyMedium)
                         }

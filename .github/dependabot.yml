@@ -1,0 +1,17 @@
+version: 2
+updates:
+  # Gradle version catalog (gradle/libs.versions.toml) + the Gradle wrapper. Partner SDK bumps land
+  # as PRs, so CI's 16 KB alignment audit and the minified demo build vet them before merge.
+  - package-ecosystem: gradle
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      gradle-dependencies:
+        patterns:
+          - "*"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

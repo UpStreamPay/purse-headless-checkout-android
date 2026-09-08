@@ -46,10 +46,16 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            // The consumer path every merchant's release build takes: R8 shrinking + obfuscation
+            // against the SDK's consumer rules. CI builds this variant and the sandbox payment is
+            // rehearsed on it (SDK-12219 AC 5). Signed with the debug key so it installs anywhere;
+            // the demo is never distributed.
+            isMinifyEnabled = true
+            isShrinkResources = true
+            signingConfig = signingConfigs.getByName("debug")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
+                "proguard-rules.pro",
             )
         }
     }
@@ -65,8 +71,11 @@ android {
 
 dependencies {
     implementation(project(":headless-checkout"))
-    // GooglePayCoordinator/GooglePayModule (eu.purse.googlepay) — ships inside `:partner-ui`.
-    implementation(project(":partner-ui"))
+    // The demo offers every method, so it takes every optional partner artifact. A card-only
+    // merchant takes none of these three.
+    implementation(project(":partner-googlepay"))
+    implementation(project(":partner-klarna"))
+    implementation(project(":partner-paypal"))
     implementation(libs.androidx.appcompat)
     implementation(libs.androidx.core.ktx)
     // Material Components is still needed for the XML app theme (Theme.Material3.DayNight) the

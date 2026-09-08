@@ -4,6 +4,10 @@ One task per section. Start with [getting started](getting-started.md); look up 
 [API reference](consumer-api.md). Snippets assume Compose; in a View-based screen collect flows with
 `lifecycleScope.launch { checkout.x.collect { … } }` instead of `collectAsState()`.
 
+Google Pay, PayPal and Klarna live in their own artifacts (`eu.purse:headless-checkout-googlepay`,
+`-paypal`, `-klarna`); the recipes for them assume the matching dependency is declared — see
+[getting started §2](getting-started.md#2-install).
+
 1. [Session state](#1-session-state)
 2. [Method list](#2-method-list)
 3. [Card](#3-card)
@@ -19,8 +23,9 @@ One task per section. Start with [getting started](getting-started.md); look up 
 13. [Locale, texts, theme](#13-locale-texts-theme)
 14. [BNPL instalment simulation](#14-bnpl-instalment-simulation)
 15. [Refresh the session](#15-refresh-the-session)
-16. [Teardown](#16-teardown)
-17. [Below the element: coordinators](#17-below-the-element-coordinators)
+16. [Survive process death](#16-survive-process-death)
+17. [Teardown](#17-teardown)
+18. [Below the element: coordinators](#18-below-the-element-coordinators)
 
 ---
 
@@ -85,18 +90,22 @@ if (cardMethod.canBeRegistered) {                           // save_token_mode P
 
 ## 4. Google Pay and PayPal
 
+Requires `eu.purse:headless-checkout-googlepay` and/or `eu.purse:headless-checkout-paypal`.
+
 ```kotlin
 val element = rememberPaymentElement(checkout, method, listener)
 PaymentElementUi(element, Modifier.fillMaxWidth().height(56.dp))   // the branded button is the submit
 ```
 
 The approval selects the method as primary and runs `/validate`. A cancelled sheet leaves the split
-untouched and calls `onCanceled`. PayPal's `/init` runs on the tap, so an unused button never
+untouched and reports `PaymentOutcome.Canceled`. PayPal's `/init` runs on the tap, so an unused button never
 creates an orphan order. No manifest work for either.
 
 ## 5. Klarna
 
-Declare the deep link on the Activity hosting the widget (see getting started §2), then:
+Requires `eu.purse:headless-checkout-klarna` and Klarna's Maven repository
+(`maven("https://x.klarnacdn.net/mobile-sdk/")`). Declare the deep link on the Activity hosting the
+widget (see getting started §2), then:
 
 ```kotlin
 val element = rememberPaymentElement(checkout, klarnaMethod, listener)   // klarnaReturnUrl defaults to "{packageName}.klarna://return"
@@ -106,7 +115,7 @@ Button(onClick = { element.submit() }, enabled = element.ready) { Text("Pay with
 ```
 
 `submit()` runs `/validate` first, then Klarna's own `authorize()`. A declined authorization is
-reported as `onCanceled`.
+reported as `PaymentOutcome.Canceled`.
 
 ## 6. Redirection methods
 
@@ -200,17 +209,21 @@ checkout.deleteAllTokens()
 
 ## 9. Confirm after a redirect
 
-`onResult` with `globalStatus == null` means the shopper came back, nothing more.
+`PaymentOutcome.ReturnedFromRedirect` means the shopper came back, nothing more.
 
 ```kotlin
-override fun onResult(summary: String, globalStatus: String?) {
-    if (globalStatus != null) return render(globalStatus)                 // SUCCESS or a decline
-    scope.launch {
-        when (val status = checkout.awaitPaymentOutcome(timeoutMs = 60_000, pollIntervalMs = 3_000)) {
-            is PaymentSessionStatus.Confirmed -> showSuccess()
-            is PaymentSessionStatus.Failed -> showFailure()
-            is PaymentSessionStatus.Pending -> showStillProcessing(status.operations)
+override fun onOutcome(outcome: PaymentOutcome) {
+    when (outcome) {
+        is PaymentOutcome.Completed -> render(outcome.status)                // SUCCESS or a decline
+        PaymentOutcome.ReturnedFromRedirect -> scope.launch {
+            when (val status = checkout.awaitPaymentOutcome(timeoutMs = 60_000, pollIntervalMs = 3_000)) {
+                is PaymentSessionStatus.Confirmed -> showSuccess()
+                is PaymentSessionStatus.Failed -> showFailure()
+                is PaymentSessionStatus.Pending -> showStillProcessing(status.operations)
+            }
         }
+        PaymentOutcome.Canceled -> Unit
+        is PaymentOutcome.Failed -> showError(outcome.error)
     }
 }
 ```
@@ -221,7 +234,7 @@ response lists operations, not payments: one captured payment is an `AUTHORIZE` 
 The same check covers a submit that was interrupted: a `ValidateFailed` whose `outcomeUnknown` is
 `true` (the request left, nothing answered) means the payment may exist — poll before showing an
 error. A return from the redirect WebView after the app was killed lands here too, never on
-`onCanceled`.
+`Canceled`.
 
 ## 10. Hooks
 
@@ -283,6 +296,19 @@ try {
 
 Transient `/init` failures are retried by the SDK; do not add your own retry loop.
 
+**A method shows up but cannot pay.** If the session offers Google Pay, PayPal or Klarna and the
+matching artifact is not on your classpath, the method is still listed (the session decides that),
+but its payment element has no UI and `submit()` reports a `PaymentOutcome.Failed(NoPluginRegistered)`
+whose message reads:
+
+```
+no plugin registered for klarna/installments — add the `eu.purse:headless-checkout-klarna` dependency to offer this method
+```
+
+The same line is logged at `PurseHeadlessCheckout.init` (tag `PurseHeadlessCheckout`, level W), and
+`submitPayment` throws `PurseCheckoutException.NoPluginRegistered`. Add the dependency, or hide the
+method in this build with `init(disabledMethods = setOf(MethodKey(partner, method)))`.
+
 ## 13. Locale, texts, theme
 
 ```kotlin
@@ -337,7 +363,38 @@ A primary whose configuration is unchanged keeps its selection, its element and 
 typed. Everything else rebuilds; applied gift cards are dropped. Observe `paymentSession` for the
 swap and `itemGenerations` if you remember anything per method outside `rememberPaymentElement`.
 
-## 16. Teardown
+## 16. Survive process death
+
+Android may kill the app while the shopper is in a bank app, PayPal or a 3-D Secure page. Snapshot
+the checkout into your saved instance state and rebuild it from there; the checkout itself belongs
+in a `ViewModel` so a rotation never touches it.
+
+```kotlin
+class CheckoutViewModel(private val handle: SavedStateHandle) : ViewModel() {
+    val checkout: PurseHeadlessCheckout =
+        handle.get<CheckoutSavedState>(KEY)?.let { PurseHeadlessCheckout.restore(it, hooks, options) }
+            ?: PurseHeadlessCheckout.init(widgetData, lockedEnvironment = PurseEnvironment.PRODUCTION, hooks, options)
+
+    init {
+        handle.setSavedStateProvider(KEY) { bundleOf(KEY to checkout.saveState()) }   // Parcelable
+    }
+}
+```
+
+What comes back: the session, the primary selection, the applied gift cards and their slices, the
+save decisions, and what the native steps collected. What does not: a card form's input (never
+saved, by design) and `hooks` / `options` (they hold code — pass the same ones to `restore`).
+
+If a submit had already left the device, the restored `sessionState` is `SUBMITTED` and
+`submitPayment` refuses: confirm the outcome with `awaitPaymentOutcome()` (recipe 9) instead of
+letting the shopper pay twice. The return from the redirect Activity after the process was killed
+lands on the recreated payment element's listener as `PaymentOutcome.ReturnedFromRedirect`, which
+leads to the same check.
+
+`CheckoutSavedState` is also `toJson()` / `fromJson()` for a store of your own; a snapshot from a
+newer SDK version is refused with `IllegalArgumentException`.
+
+## 17. Teardown
 
 ```kotlin
 override fun onDestroy() {
@@ -350,12 +407,18 @@ override fun onDestroy() {
 `isTornDown` is `true` and any operation throws `CheckoutTornDown` (`CHECKOUT_TORN_DOWN`); a second
 `teardown()` is a no-op.
 
-## 17. Below the element: coordinators
+## 18. Below the element: coordinators
 
 `rememberPaymentElement` wraps one coordinator per method. Reach for them only to customise a button
 or drive a native step from your own control:
 
 ```kotlin
+import eu.purse.partnerui.plugins.vaults.purse.creditcard.rememberCardCoordinator      // in headless-checkout-android
+import eu.purse.partnerui.rememberRedirectionCoordinator                               // in headless-checkout-android
+import eu.purse.partnerui.plugins.generics.googlepay.rememberGooglePayCoordinator      // in headless-checkout-googlepay
+import eu.purse.partnerui.plugins.partners.paypal.wallet.rememberPaypalCoordinator     // in headless-checkout-paypal
+import eu.purse.partnerui.plugins.partners.klarna.rememberKlarnaCoordinator            // in headless-checkout-klarna
+
 val host = remember(method.id) { checkout.host(method) }             // remember it: the card form is keyed on it
 val card = rememberCardCoordinator(host, listener)                    // PurseCardForm(card) + card.submit()
 val googlePay = rememberGooglePayCoordinator(listener)                // prepare(host); GooglePayButton(googlePay, theme = …)
@@ -363,5 +426,7 @@ val paypal = rememberPaypalCoordinator(listener)                      // prepare
 val klarna = rememberKlarnaCoordinator(listener)                      // container = …; prepare(host, returnUrl); submit()
 val redirection = rememberRedirectionCoordinator(listener)            // prepare(host); submit()
 ```
+
+Each partner's `remember*Coordinator` ships with its artifact, in the plugin's own package.
 
 Per-method internals (`/init` shapes, sequence diagrams, failure modes): [docs/plugins](../plugins/README.md).

@@ -1,0 +1,17 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>CyclomaticComplexMethod:PurseTheme.kt$PurseTheme$fun resolve(): Resolved</ID>
+    <ID>InstanceOfCheckForException:PurseHeadlessCheckout.kt$PurseHeadlessCheckout$e is PurseCheckoutException.HookFailed</ID>
+    <ID>LongMethod:PaymentValidator.kt$PaymentValidator$suspend fun execute( splits: List&lt;PaymentSplit>, session: LegacyPaymentSession, collectedByMethod: Map&lt;String, Map&lt;String, Any?>> = emptyMap(), hooks: PurseCheckoutHooks? = null, skipOnBeforeValidate: Boolean = false, registrationByMethod: Map&lt;String, RegistrationState> = emptyMap(), ): ValidationResult</ID>
+    <ID>LoopWithTooManyJumpStatements:LegacyPaymentSessionParser.kt$LegacyPaymentSessionParser$for</ID>
+    <ID>LoopWithTooManyJumpStatements:PaymentSessionBuilder.kt$PaymentSessionBuilder$for</ID>
+    <ID>NestedBlockDepth:FormRedirectHtmlBuilder.kt$FormRedirectHtmlBuilder$fun parseFormFields(dataString: String): Map&lt;String, String></ID>
+    <ID>NestedBlockDepth:PaymentSessionBuilder.kt$PaymentSessionBuilder$private fun buildMeansOfPayment( session: LegacyPaymentSession, isInformationRequest: Boolean, primaryReach: BigDecimal, disabledMethods: Set&lt;MethodKey>, ): List&lt;PaymentItem></ID>
+    <ID>TooManyFunctions:PurseHeadlessCheckout.kt$PurseHeadlessCheckout</ID>
+    <ID>UseCheckOrError:PurseHeadlessCheckoutTest.kt$PurseHeadlessCheckoutTest$throw IllegalStateException("merchant said no")</ID>
+    <ID>UseCheckOrError:SimpleQueueTest.kt$SimpleQueueTest$throw IllegalStateException("boom")</ID>
+    <ID>VariableNaming:PurseHeadlessCheckoutTest.kt$PurseHeadlessCheckoutTest$private val SUCCESS_ANSWER = """{"global_status":"SUCCESS","results":[]}"""</ID>
+  </CurrentIssues>
+</SmellBaseline>

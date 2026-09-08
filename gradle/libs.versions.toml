@@ -49,4 +49,10 @@ android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
 kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
+# Delivery chain (SDK-12219): Maven Central publishing, API docs, and the CI quality gates.
+maven-publish = { id = "com.vanniktech.maven.publish", version = "0.37.0" }
+dokka = { id = "org.jetbrains.dokka", version = "2.2.0" }
+binary-compatibility-validator = { id = "org.jetbrains.kotlinx.binary-compatibility-validator", version = "0.18.2" }
+ktlint = { id = "org.jlleitschuh.gradle.ktlint", version = "14.2.0" }
+detekt = { id = "io.gitlab.arturbosch.detekt", version = "1.23.8" }
 

@@ -15,13 +15,13 @@ import eu.purse.core.payment.Partner
 import eu.purse.core.payment.RegistrationMode
 import eu.purse.core.payment.SaveTokenMode
 import eu.purse.core.session.LegacyPaymentSession
+import java.math.BigDecimal
+import java.time.Instant
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.math.BigDecimal
-import java.time.Instant
 
 /**
  * What the `/validate` **array** is allowed to contain. One item per split, and never the same split

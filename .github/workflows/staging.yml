@@ -1,0 +1,81 @@
+name: Publish to Central Portal Staging
+
+# A `v*` tag (pushed by auto-tag.yml) builds, signs and uploads the SDK and partner artifacts to the
+# Central Portal as a pending deployment, and attaches the API reference to a draft GitHub release.
+# Promotion to Maven Central is the manual release.yml workflow. See docs/contributing/release.md.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  check-secrets:
+    runs-on: ubuntu-latest
+    outputs:
+      ok: ${{ steps.check.outputs.ok }}
+    steps:
+      - uses: actions/checkout@v7
+      - id: check
+        uses: ./.github/actions/check-maven-secrets
+        with:
+          maven-central-username: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          maven-central-password: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          gpg-private-key:        ${{ secrets.GPG_PRIVATE_KEY }}
+          gpg-passphrase:         ${{ secrets.GPG_PASSPHRASE }}
+
+  publish:
+    needs: check-secrets
+    if: needs.check-secrets.outputs.ok == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # draft release + API reference asset
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@v5
+
+      - name: Set SDK version from tag
+        run: echo "SDK_VERSION=${GITHUB_REF#refs/tags/v}" >> "$GITHUB_ENV"
+
+      - name: Gates
+        run: ./gradlew apiCheck testDebugUnitTest :app:assembleRelease verify16kbAlignment
+
+      - name: Upload to Central Portal (pending manual release)
+        env:
+          ORG_GRADLE_PROJECT_mavenCentralUsername: ${{ secrets.MAVEN_CENTRAL_USERNAME }}
+          ORG_GRADLE_PROJECT_mavenCentralPassword: ${{ secrets.MAVEN_CENTRAL_PASSWORD }}
+          ORG_GRADLE_PROJECT_signingInMemoryKey:          ${{ secrets.GPG_PRIVATE_KEY }}
+          ORG_GRADLE_PROJECT_signingInMemoryKeyPassword:  ${{ secrets.GPG_PASSPHRASE }}
+        run: ./gradlew publishAllPublicationsToMavenCentralRepository
+
+      - name: API reference (Dokka)
+        run: |
+          ./gradlew dokkaGenerate
+          (cd build/dokka/html && zip -qr "$GITHUB_WORKSPACE/api-reference-${SDK_VERSION}.zip" .)
+
+      - name: Draft GitHub release with the API reference
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "v${SDK_VERSION}" "api-reference-${SDK_VERSION}.zip" \
+            --draft --generate-notes --title "v${SDK_VERSION}" \
+            --notes-file <(cat <<NOTES
+          Maven coordinates (after the release workflow promotes them to Maven Central):
+
+          \`\`\`kotlin
+          implementation("eu.purse:headless-checkout-android:${SDK_VERSION}")
+          // only for the methods you offer
+          implementation("eu.purse:headless-checkout-googlepay:${SDK_VERSION}")
+          implementation("eu.purse:headless-checkout-klarna:${SDK_VERSION}")
+          implementation("eu.purse:headless-checkout-paypal:${SDK_VERSION}")
+          \`\`\`
+
+          The attached \`api-reference-${SDK_VERSION}.zip\` is the generated KDoc reference for this version.
+          NOTES
+          )

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<SmellBaseline>
+  <ManuallySuppressedIssues/>
+  <CurrentIssues>
+    <ID>NestedBlockDepth:AlfredClient.kt$AlfredClient$private fun request(urlString: String, method: String, body: String?): String</ID>
+  </CurrentIssues>
+</SmellBaseline>

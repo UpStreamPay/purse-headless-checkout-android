@@ -19,22 +19,25 @@ import eu.purse.checkout.payment.item.SavedSecondaryToken
 import eu.purse.checkout.payment.item.SecondaryMethod
 import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.checkout.payment.split.PaymentSplit
+import eu.purse.core.error.PurseException
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
+import eu.purse.partnerui.PartnerUiException
 import eu.purse.partnerui.PaymentElementListener
+import eu.purse.partnerui.PaymentOutcome
 import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayPlugin
 import eu.purse.partnerui.plugins.generics.redirection.RedirectionPlugin
 import eu.purse.partnerui.plugins.partners.paypal.wallet.PaypalPlugin
 import eu.purse.partnerui.redirect.RedirectionResolver
+import java.math.BigDecimal
+import java.math.RoundingMode
+import java.util.Base64
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.math.BigDecimal
-import java.math.RoundingMode
-import java.util.Base64
 
 /** The three screens this demo walks through, in order. */
 enum class DemoStep { Session, Pay, Result }
@@ -102,7 +105,7 @@ class DemoController(private val activity: ComponentActivity) {
 
     // --- 3 · result -------------------------------------------------------------------------------
 
-    var outcome by mutableStateOf<PaymentOutcome?>(null)
+    var outcome by mutableStateOf<DemoResult?>(null)
         private set
 
     /** Prefilled by [initCheckout], editable — the id the transactions lookup uses. */
@@ -271,11 +274,13 @@ class DemoController(private val activity: ComponentActivity) {
     fun listenerFor(item: PaymentItem): PaymentElementListener {
         val label = label(item)
         return object : PaymentElementListener {
-            override fun onResult(summary: String, globalStatus: String?) = succeed(label, summary, globalStatus)
+            override fun onOutcome(outcome: PaymentOutcome) = when (outcome) {
+                PaymentOutcome.Canceled -> cancel(label)
+                is PaymentOutcome.Failed -> fail(label, outcome, inFlight = submitting)
+                else -> finishWith(label, outcome)
+            }
             override fun onRequiresAction() = announceAction(label)
             override fun onPaymentId(paymentId: String) = notePaymentId(label, paymentId)
-            override fun onCanceled() = cancel(label)
-            override fun onError(message: String?) = fail(label, message, inFlight = submitting)
         }
     }
 
@@ -323,9 +328,10 @@ class DemoController(private val activity: ComponentActivity) {
             try {
                 val result = withContext(Dispatchers.IO) { co.submitPayment() }
                 RedirectionResolver.extractWidgetConfirmationPaymentId(result.raw)?.let { notePaymentId(label, it) }
-                succeed(label, "global_status=${result.globalStatus}", result.globalStatus)
+                finishWith(label, PaymentOutcome.Completed(result))
             } catch (e: Exception) {
-                fail(label, e.message, inFlight = true)
+                val error = e as? PurseException ?: PartnerUiException(e.message ?: "unknown error", e)
+                fail(label, PaymentOutcome.Failed(error), inFlight = true)
             }
         }
     }
@@ -427,7 +433,7 @@ class DemoController(private val activity: ComponentActivity) {
 
     /**
      * `GET /payment_session/{id}` through alfred — the independent status check a redirect return
-     * points at. A successful AUTHORIZE/CAPTURE settles an [PaymentOutcome.Unconfirmed] screen.
+     * points at. A successful AUTHORIZE/CAPTURE settles an [DemoResult.Unconfirmed] screen.
      */
     fun getTransactions() {
         val sessionId = alfredSessionId.trim()
@@ -459,14 +465,14 @@ class DemoController(private val activity: ComponentActivity) {
 
     private fun confirmOutcomeFrom(transactions: JSONArray) {
         val current = outcome
-        if (current !is PaymentOutcome.Unconfirmed) return
+        if (current !is DemoResult.Unconfirmed) return
         val authorized = (0 until transactions.length()).any { index ->
             val status = transactions.optJSONObject(index)?.optJSONObject("status")
             val action = status?.optString("action")
             (action == "AUTHORIZE" || action == "CAPTURE") && status.optString("state") == "SUCCESS"
         }
         if (authorized) {
-            outcome = PaymentOutcome.Authorized(
+            outcome = DemoResult.Authorized(
                 method = current.method,
                 detail = activity.getString(R.string.result_confirmed_by_transactions),
             )
@@ -517,12 +523,12 @@ class DemoController(private val activity: ComponentActivity) {
 
     // --- outcome plumbing -------------------------------------------------------------------------
 
-    private fun succeed(method: String, summary: String, globalStatus: String?) {
-        log("$method → $summary")
-        finish(PaymentOutcome.of(method, summary, globalStatus))
+    private fun finishWith(method: String, outcome: PaymentOutcome) {
+        log("$method → $outcome")
+        finish(DemoResult.of(method, outcome))
     }
 
-    private fun finish(outcome: PaymentOutcome) {
+    private fun finish(outcome: DemoResult) {
         submitting = false
         this.outcome = outcome
         step = DemoStep.Result
@@ -532,13 +538,14 @@ class DemoController(private val activity: ComponentActivity) {
      * An error is only a *payment* failure when a payment was in flight; a widget that fails to load
      * or a `/init` that throws leaves the shopper on the pay screen with a snackbar.
      */
-    private fun fail(method: String, message: String?, inFlight: Boolean) {
-        log("$method → error: $message")
+    private fun fail(method: String, outcome: PaymentOutcome.Failed, inFlight: Boolean) {
+        log("$method → error: ${outcome.error.code} ${outcome.error.message}")
         submitting = false
         if (inFlight) {
-            finish(PaymentOutcome.Failed(method, message.orEmpty().ifBlank { "unknown error" }))
+            finish(DemoResult.of(method, outcome))
         } else {
-            snackbar = "$method — $message"
+            // Before any submit: the method could not be set up (its item is disabled accordingly).
+            snackbar = "$method — ${outcome.error.message}"
         }
     }
 

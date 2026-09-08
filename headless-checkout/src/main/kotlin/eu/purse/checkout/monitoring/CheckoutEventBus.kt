@@ -4,9 +4,9 @@
 package eu.purse.checkout.monitoring
 
 import eu.purse.core.monitoring.SimpleQueue
-import org.json.JSONObject
 import java.time.OffsetDateTime
 import java.util.concurrent.CopyOnWriteArrayList
+import org.json.JSONObject
 
 /** Event severity — web common's `EventType` (`EventBus.ts`). */
 enum class EventLevel { DEBUG, INFO, ERROR, SUCCESS, WARNING, PERFORMANCE, UI, NETWORK }

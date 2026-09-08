@@ -1,9 +1,9 @@
 package eu.purse.checkout
 
 import com.sun.net.httpserver.HttpServer
-import org.json.JSONObject
 import java.net.InetSocketAddress
 import java.util.concurrent.CopyOnWriteArrayList
+import org.json.JSONObject
 
 /**
  * A tiny in-process Payment API for the JVM tests — the SDK's clients are plain

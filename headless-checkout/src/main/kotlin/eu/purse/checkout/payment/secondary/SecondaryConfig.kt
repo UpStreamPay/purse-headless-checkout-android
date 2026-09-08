@@ -9,8 +9,8 @@ import eu.purse.core.api.PaymentApiClient
 import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
-import org.json.JSONObject
 import java.math.BigDecimal
+import org.json.JSONObject
 
 /**
  * Per-partner rules for a secondary (co-payment) method — the Kotlin port of web headless-checkout's
@@ -97,6 +97,7 @@ object BuyboxConfig : SecondaryConfig {
     private val ONEY = Regex("^\\d{19}D\\d{17}$|^\\d{19}$")
     override val takePolicy = SecondaryTakePolicy.NONE
     override val nameLogKey = "card.mask"
+
     // Storeland cards carry no CVV; every other BuyBox card does.
     override fun requiresCvv(pan: String) = !STORELAND.matches(pan)
     override fun validatePan(pan: String) = STORELAND.matches(pan) || ONEY.matches(pan) || BUYBOX.matches(pan)

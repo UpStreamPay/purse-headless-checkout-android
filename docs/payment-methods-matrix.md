@@ -4,8 +4,13 @@ Source of truth, checked on 2026-09-04:
 
 - **Web**: `usp-widget/packages/partner-ui/src/plugins/{vaults,generics,partners}/index.ts` and
   `packages/headless-checkout/src/session/payment/mops/secondaries/configs/configs.ts`.
-- **Android**: `partner-ui/.../PluginRegistry.kt` (`init` block) and
-  `headless-checkout/.../payment/secondary/SecondaryConfig.kt` (`SecondaryConfigs`).
+- **Android**: `headless-checkout/.../partnerui/PluginRegistry.kt` (`init` block: card and
+  redirection) plus each optional artifact's `PartnerModule` (`partner-googlepay/.../GooglePayModule.kt`,
+  `partner-klarna/.../KlarnaModule.kt`, `partner-paypal/.../PaypalModule.kt`), and
+  `headless-checkout/.../checkout/payment/secondary/SecondaryConfig.kt` (`SecondaryConfigs`).
+  Google Pay, Klarna and PayPal need their artifact on the app's classpath
+  (`eu.purse:headless-checkout-googlepay` / `-klarna` / `-paypal`); everything else ships in
+  `eu.purse:headless-checkout-android`.
 
 Legend: ✅ shipped · 🧪 ported, not validated on a sandbox · ❌ not available · — not applicable to
 the platform.

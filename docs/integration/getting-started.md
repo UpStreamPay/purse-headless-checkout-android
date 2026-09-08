@@ -8,14 +8,40 @@ page takes you from an empty project to a first payment. Everything else is in t
 
 | | |
 |---|---|
-| Android | minSdk 26, compileSdk 36 |
+| Android | minSdk 26; the libraries compile against API 37 |
 | UI | Jetpack Compose (the payment elements are composables; a View-based app hosts them in a `ComposeView`) |
 | Backend | your server creates a Purse **Client Session** and hands the app its base64 `widget.data` string |
 
 ## 2. Install
 
-The SDK is not published to a Maven repository yet. Consume it as Gradle source modules from this
-repository (a checkout or a git submodule):
+The SDK is on **Maven Central** (`eu.purse` group). One artifact carries the engine, the payment
+elements and the card and redirection methods; Google Pay, Klarna and PayPal each bring a partner
+SDK, so they are separate artifacts you add only if you offer them:
+
+```kotlin
+// app/build.gradle.kts
+dependencies {
+    implementation("eu.purse:headless-checkout-android:<version>")      // engine, payment elements, card, redirection methods
+    implementation("eu.purse:headless-checkout-googlepay:<version>")    // only if you offer Google Pay
+    implementation("eu.purse:headless-checkout-klarna:<version>")       // only if you offer Klarna
+    implementation("eu.purse:headless-checkout-paypal:<version>")       // only if you offer PayPal
+}
+```
+
+Pin one version for all of them (they release together). The current version is on the
+[releases page](https://github.com/UpStreamPay/purse-headless-checkout-android/releases), which also
+carries the generated API reference; your IDE shows the same KDoc from the published javadoc jar.
+
+A partner artifact registers its payment method on its own once it is on the classpath. If the
+session offers a method whose artifact you did not add, the SDK logs a warning at `init` naming the
+dependency to add, and the method's payment element has no UI — `submit` reports the same message
+as a `PaymentOutcome.Failed(NoPluginRegistered)`.
+
+Everything else ships in the artifacts' own manifests: the `INTERNET` permission, Google Pay's
+`meta-data`, the redirect WebView Activity (3-D Secure, redirection methods) and PayPal's return
+Activity. R8/ProGuard needs no rules from you — each artifact carries its consumer rules.
+
+**Only if you offer Klarna**, two more things. Klarna's SDK is not on Maven Central:
 
 ```kotlin
 // settings.gradle.kts
@@ -23,34 +49,12 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
-        maven("https://x.klarnacdn.net/mobile-sdk/")   // Klarna's SDK is not on Maven Central
-    }
-}
-includeBuild("../purse-headless-checkout-android") {
-    dependencySubstitution {
-        substitute(module("eu.purse:headless-checkout")).using(project(":headless-checkout"))
-        substitute(module("eu.purse:partner-ui")).using(project(":partner-ui"))
-        substitute(module("eu.purse:core")).using(project(":core"))
+        maven("https://x.klarnacdn.net/mobile-sdk/")
     }
 }
 ```
 
-```kotlin
-// app/build.gradle.kts
-dependencies {
-    implementation("eu.purse:headless-checkout")   // pulls :partner-ui and :core transitively
-}
-```
-
-A composite build shares no plugin classpath: keep the Android Gradle Plugin and Kotlin versions of
-your app aligned with this repository's `gradle/libs.versions.toml`.
-
-Everything the plugins need (Play Services Wallet, PayPal SDK, Klarna SDK, SecureFields) comes
-with `:partner-ui`. The `INTERNET` permission, Google Pay's `meta-data`, the redirect WebView
-Activity and PayPal's return Activity ship in the SDK's manifest.
-
-**Manifest: one thing, and only if you offer Klarna.** Klarna's widget returns to the Activity that
-hosts it, so that Activity declares the deep link:
+and Klarna's widget returns to the Activity that hosts it, so that Activity declares the deep link:
 
 ```xml
 <activity android:name=".CheckoutActivity" android:launchMode="singleTask" android:exported="true">
@@ -62,6 +66,25 @@ hosts it, so that Activity declares the deep link:
     </intent-filter>
 </activity>
 ```
+
+<details>
+<summary>Working from a checkout of this repository instead (SDK contributors)</summary>
+
+```kotlin
+// settings.gradle.kts of your app
+includeBuild("../purse-headless-checkout-android") {
+    dependencySubstitution {
+        substitute(module("eu.purse:headless-checkout-android")).using(project(":headless-checkout"))
+        substitute(module("eu.purse:headless-checkout-googlepay")).using(project(":partner-googlepay"))
+        substitute(module("eu.purse:headless-checkout-klarna")).using(project(":partner-klarna"))
+        substitute(module("eu.purse:headless-checkout-paypal")).using(project(":partner-paypal"))
+    }
+}
+```
+
+A composite build shares no plugin classpath: keep your Android Gradle Plugin and Kotlin versions
+aligned with this repository's `gradle/libs.versions.toml`.
+</details>
 
 ## 3. Create the checkout
 
@@ -77,7 +100,9 @@ val checkout = PurseHeadlessCheckout.init(
 
 `init` throws `PurseSessionException.SessionMalformed` when the blob cannot be decoded. Call
 `checkout.teardown()` when the checkout screen is dismissed for good. One session pays once; for a
-new cart, mint a new session and call `checkout.setSession(widgetData)`.
+new cart, mint a new session and call `checkout.setSession(widgetData)`. Hold the checkout in a
+`ViewModel`, and snapshot it with `saveState()` / `restore()` so a process death mid-redirect does
+not lose the payment ([recipe 16](recipes.md#16-survive-process-death)).
 
 ## 4. Show the methods
 
@@ -103,9 +128,7 @@ One composable renders any method or saved token, wiring the native SDK, its lau
 @Composable
 fun SelectedMethod(checkout: PurseHeadlessCheckout, item: PaymentItem) {
     val element = rememberPaymentElement(checkout, item, listener = object : PaymentElementListener {
-        override fun onResult(summary: String, globalStatus: String?) { /* step 6 */ }
-        override fun onCanceled() { }
-        override fun onError(message: String?) { }
+        override fun onOutcome(outcome: PaymentOutcome) { /* step 6 */ }
     })
     LaunchedEffect(item.id) {
         when (item) {
@@ -134,11 +157,20 @@ redirection methods creation runs a `POST /init`.
 
 ## 6. Read the outcome
 
-`onResult(summary, globalStatus)`:
+`onOutcome` receives a sealed `PaymentOutcome`:
 
-- `globalStatus != null` — `/validate` answered directly. `"SUCCESS"` is a success, anything else a
-  declined payment.
-- `globalStatus == null` — the shopper came back from a redirect (3-D Secure, PayPal, a PSP page).
+```kotlin
+override fun onOutcome(outcome: PaymentOutcome) = when (outcome) {
+    is PaymentOutcome.Completed -> if (outcome.isSuccess) showSuccess() else showDeclined(outcome.status)
+    PaymentOutcome.ReturnedFromRedirect -> confirmWithSession()          // below
+    PaymentOutcome.Canceled -> Unit                                      // the shopper backed out, nothing changed
+    is PaymentOutcome.Failed -> showError(outcome.error)                 // a PurseException with a stable code
+}
+```
+
+- `Completed` — `/validate` answered directly. `status` is the API's verdict: `PaymentStatus.SUCCESS`
+  is a payment, anything else a declined payment.
+- `ReturnedFromRedirect` — the shopper came back from a redirect (3-D Secure, PayPal, a PSP page).
   That is **not** an outcome. Ask the session:
 
 ```kotlin
@@ -149,8 +181,8 @@ when (checkout.awaitPaymentOutcome()) {              // polls the session's tran
 }
 ```
 
-`onError` before any submit (a widget that failed to load) is not a failed payment: leave the
-shopper on the screen with a message.
+A `Failed` before any submit (a widget that failed to load) is not a failed payment: leave the
+shopper on the screen with a message; the method is disabled on `paymentMethods` accordingly.
 
 ## 7. Gift cards
 
@@ -170,8 +202,7 @@ saved cards, BNPL simulation. It mints sessions through `alfred` (the `usp-widge
 [testing with alfred](../internal/testing-with-alfred.md).
 
 ```bash
-export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
-./gradlew :app:installDebug
+./gradlew :app:installDebug      # Gradle provisions its own JDK; nothing to export
 ```
 
 ## Next

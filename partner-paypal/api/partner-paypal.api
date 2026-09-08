@@ -1,0 +1,166 @@
+public final class eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalButtonKt {
+	public static final fun PaypalButton (Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCoordinator;Landroidx/compose/ui/Modifier;Landroidx/compose/runtime/Composer;II)V
+}
+
+public final class eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutActivity : androidx/appcompat/app/AppCompatActivity {
+	public static final field $stable I
+	public static final field Companion Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutActivity$Companion;
+	public static final field STATUS_APPROVED Ljava/lang/String;
+	public static final field STATUS_CANCELED Ljava/lang/String;
+	public static final field STATUS_FAILED Ljava/lang/String;
+	public fun <init> ()V
+}
+
+public final class eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutActivity$Companion {
+}
+
+public final class eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutContract : androidx/activity/result/contract/ActivityResultContract {
+	public static final field $stable I
+	public static final field Companion Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutContract$Companion;
+	public static final field EXTRA_CLIENT_ID Ljava/lang/String;
+	public static final field EXTRA_MESSAGE Ljava/lang/String;
+	public static final field EXTRA_ORDER_ID Ljava/lang/String;
+	public static final field EXTRA_PAYER_ID Ljava/lang/String;
+	public static final field EXTRA_SANDBOX Ljava/lang/String;
+	public static final field EXTRA_STATUS Ljava/lang/String;
+	public fun <init> ()V
+	public fun createIntent (Landroid/content/Context;Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutInput;)Landroid/content/Intent;
+	public synthetic fun createIntent (Landroid/content/Context;Ljava/lang/Object;)Landroid/content/Intent;
+	public fun parseResult (ILandroid/content/Intent;)Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutResult;
+	public synthetic fun parseResult (ILandroid/content/Intent;)Ljava/lang/Object;
+}
+
+public final class eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutContract$Companion {
+}
+
+public final class eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutInput {
+	public static final field $stable I
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Z)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun component3 ()Z
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;Z)Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutInput;
+	public static synthetic fun copy$default (Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutInput;Ljava/lang/String;Ljava/lang/String;ZILjava/lang/Object;)Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutInput;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getClientId ()Ljava/lang/String;
+	public final fun getOrderId ()Ljava/lang/String;
+	public final fun getSandbox ()Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public abstract interface class eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutResult {
+}
+
+public final class eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutResult$Approved : eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutResult {
+	public static final field $stable I
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;Ljava/lang/String;)Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutResult$Approved;
+	public static synthetic fun copy$default (Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutResult$Approved;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutResult$Approved;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getOrderId ()Ljava/lang/String;
+	public final fun getPayerId ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutResult$Canceled : eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutResult {
+	public static final field $stable I
+	public static final field INSTANCE Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutResult$Canceled;
+	public fun equals (Ljava/lang/Object;)Z
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutResult$Failed : eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutResult {
+	public static final field $stable I
+	public fun <init> (Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;)Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutResult$Failed;
+	public static synthetic fun copy$default (Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutResult$Failed;Ljava/lang/String;ILjava/lang/Object;)Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCheckoutResult$Failed;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getMessage ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalConfig {
+	public static final field $stable I
+	public fun <init> (Ljava/lang/String;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun copy (Ljava/lang/String;)Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalConfig;
+	public static synthetic fun copy$default (Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalConfig;Ljava/lang/String;ILjava/lang/Object;)Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalConfig;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getClientId ()Ljava/lang/String;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}
+
+public final class eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCoordinator : eu/purse/partnerui/PaymentCoordinator {
+	public static final field $stable I
+	public final fun isReady ()Z
+	public final fun prepare (Leu/purse/partnerui/PluginHost;)V
+	public final fun submit ()V
+}
+
+public final class eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalMapper {
+	public static final field $stable I
+	public static final field INSTANCE Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalMapper;
+	public static final field METHOD Ljava/lang/String;
+	public final fun buildInitPayload (Ljava/math/BigDecimal;Ljava/lang/String;)Lorg/json/JSONObject;
+	public final fun ensureInitSucceeded (Lorg/json/JSONObject;)V
+	public final fun extractStepId (Lorg/json/JSONObject;)Ljava/lang/Integer;
+	public final fun isApprovalUrl (Ljava/lang/String;)Z
+	public final fun parseInit (Lorg/json/JSONObject;)Ljava/lang/String;
+	public final fun parseSessionConfig (Leu/purse/core/session/LegacyPaymentSession;Leu/purse/core/payment/Partner;Leu/purse/core/payment/Method;)Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalConfig;
+}
+
+public final class eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalModule : eu/purse/partnerui/PartnerModule {
+	public static final field $stable I
+	public fun <init> ()V
+	public fun register (Leu/purse/partnerui/PluginRegistry;)V
+	public fun rememberSurface (Leu/purse/partnerui/PartnerUiPlugin;Leu/purse/partnerui/SurfaceRequest;Landroidx/compose/runtime/Composer;I)Leu/purse/partnerui/PaymentSurface;
+	public fun renders (Leu/purse/partnerui/PartnerUiPlugin;)Z
+}
+
+public final class eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalModuleKt {
+	public static final fun rememberPaypalCoordinator (Leu/purse/partnerui/PaymentElementListener;Landroidx/compose/runtime/Composer;I)Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalCoordinator;
+}
+
+public final class eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalPlugin : eu/purse/partnerui/PartnerUiPlugin {
+	public static final field $stable I
+	public static final field COLLECTED_ORDER_ID Ljava/lang/String;
+	public static final field COLLECTED_PAYER_ID Ljava/lang/String;
+	public static final field COLLECTED_STEP_ID Ljava/lang/String;
+	public static final field Companion Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalPlugin$Companion;
+	public fun <init> (Leu/purse/core/payment/Partner;)V
+	public final fun buildRequest (Leu/purse/partnerui/PartnerUiContext;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun destroyClient (Leu/purse/partnerui/PartnerUiContext;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun ensureClientCompatibility (Leu/purse/partnerui/PartnerUiContext;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun getMethod ()Leu/purse/core/payment/Method;
+	public fun getPartner ()Leu/purse/core/payment/Partner;
+	public fun onAmountUpdate (Leu/purse/partnerui/PartnerUiContext;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun onSessionSet (Leu/purse/partnerui/PartnerUiContext;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun postValidation (Leu/purse/core/payload/ValidationResult;Leu/purse/partnerui/PartnerUiContext;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun preValidation (Leu/purse/partnerui/PartnerUiContext;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+	public fun validateUi (Leu/purse/partnerui/PartnerUiContext;Lkotlin/coroutines/Continuation;)Ljava/lang/Object;
+}
+
+public final class eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalPlugin$Companion {
+}
+
+public final class eu/purse/partnerui/plugins/partners/paypal/wallet/PaypalRequest {
+	public static final field $stable I
+	public fun <init> (Ljava/lang/String;Ljava/lang/Integer;)V
+	public final fun component1 ()Ljava/lang/String;
+	public final fun component2 ()Ljava/lang/Integer;
+	public final fun copy (Ljava/lang/String;Ljava/lang/Integer;)Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalRequest;
+	public static synthetic fun copy$default (Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalRequest;Ljava/lang/String;Ljava/lang/Integer;ILjava/lang/Object;)Leu/purse/partnerui/plugins/partners/paypal/wallet/PaypalRequest;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getOrderId ()Ljava/lang/String;
+	public final fun getStepId ()Ljava/lang/Integer;
+	public fun hashCode ()I
+	public fun toString ()Ljava/lang/String;
+}

@@ -5,6 +5,12 @@
 package eu.purse.checkout
 
 import android.util.Log
+import eu.purse.checkout.confirmation.PaymentSessionStatus
+import eu.purse.checkout.monitoring.CheckoutEventBus
+import eu.purse.checkout.monitoring.CheckoutEventCode
+import eu.purse.checkout.monitoring.CheckoutMonitoring
+import eu.purse.checkout.monitoring.EventLevel
+import eu.purse.checkout.monitoring.monitoringPayload
 import eu.purse.checkout.payment.item.DisabledState
 import eu.purse.checkout.payment.item.MethodAvailability
 import eu.purse.checkout.payment.item.PaymentItem
@@ -22,40 +28,42 @@ import eu.purse.checkout.payment.split.PrimarySource
 import eu.purse.checkout.payment.split.PursePaymentSplitter
 import eu.purse.checkout.session.PaymentSession
 import eu.purse.checkout.session.PaymentSessionBuilder
+import eu.purse.checkout.simulation.LoanSimulator
+import eu.purse.checkout.state.CheckoutSavedState
 import eu.purse.checkout.state.SessionState
+import eu.purse.checkout.state.secondaryTokenFromSavedJson
+import eu.purse.checkout.state.toCollectedMap
+import eu.purse.checkout.state.toSavedJson
 import eu.purse.checkout.validation.PaymentValidator
+import eu.purse.checkout.wallet.WalletTokens
 import eu.purse.core.api.PaymentApiClient
+import eu.purse.core.api.PaymentApiException
+import eu.purse.core.api.WalletApiClient
+import eu.purse.core.assets.PurseAssets
+import eu.purse.core.datetime.DatetimeApiClient
+import eu.purse.core.datetime.ServerDatetimeChecker
 import eu.purse.core.environment.PurseEnvironment
+import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.payload.ItemPayload
 import eu.purse.core.payload.ValidationResult
 import eu.purse.core.payment.LoanProduct
 import eu.purse.core.payment.LoanSimulation
-import eu.purse.core.payment.Partner
 import eu.purse.core.payment.Method
+import eu.purse.core.payment.MethodKey
+import eu.purse.core.payment.Partner
 import eu.purse.core.session.LegacyPaymentSession
 import eu.purse.core.session.PurseSessionParams
 import eu.purse.core.session.SessionCodec
-import eu.purse.core.assets.PurseAssets
+import eu.purse.partnerui.PartnerArtifacts
 import eu.purse.partnerui.PartnerUiContext
 import eu.purse.partnerui.PartnerUiPlugin
-import eu.purse.partnerui.PluginOptions
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.PluginHost
+import eu.purse.partnerui.PluginOptions
 import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.redirect.RedirectAction
-import eu.purse.checkout.confirmation.PaymentSessionStatus
-import eu.purse.checkout.monitoring.CheckoutEventBus
-import eu.purse.checkout.monitoring.CheckoutMonitoring
-import eu.purse.checkout.monitoring.monitoringPayload
-import eu.purse.checkout.simulation.LoanSimulator
-import eu.purse.checkout.wallet.WalletTokens
-import eu.purse.checkout.monitoring.CheckoutEventCode
-import eu.purse.checkout.monitoring.EventLevel
-import eu.purse.core.api.PaymentApiException
-import eu.purse.core.api.WalletApiClient
-import eu.purse.core.datetime.DatetimeApiClient
-import eu.purse.core.error.PurseErrorCode
-import eu.purse.core.datetime.ServerDatetimeChecker
+import java.math.BigDecimal
+import java.time.Instant
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -74,8 +82,6 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
-import java.math.BigDecimal
-import java.time.Instant
 
 /**
  * The headless purse-payment SDK — the Kotlin analog of web's `PurseHeadlessCheckout`. It owns the
@@ -94,6 +100,7 @@ import java.time.Instant
  * from a coroutine scope. The Payment API is blocking, so [submitPayment] is `suspend`.
  */
 class PurseHeadlessCheckout private constructor(
+    initialWidgetData: String,
     initialParams: PurseSessionParams,
     initialSession: PaymentSession,
     initialPaymentApiRoot: String,
@@ -104,7 +111,12 @@ class PurseHeadlessCheckout private constructor(
     private val watchdogIntervalMs: Long,
     /** The build-locked environment [init] was given, re-applied by [setSession]. */
     private val lockedEnvironment: PurseEnvironment?,
+    /** Methods this app build opts out of — never listed, whatever the session offers; re-applied by [setSession]. */
+    val disabledMethods: Set<MethodKey>,
 ) {
+    /** The `widget.data` string the current session came from — what [saveState] carries. */
+    private var widgetData: String = initialWidgetData
+
     /** The decoded widget data behind [session]; replaced by [setSession]. */
     var params: PurseSessionParams = initialParams
         private set
@@ -312,7 +324,6 @@ class PurseHeadlessCheckout private constructor(
         resolveSavedSecondaryBalances()
     }
 
-
     /** The running expiry watchdog, so [setSession] can restart it against the new expiry. */
     private var watchdogJob: Job? = null
 
@@ -378,7 +389,16 @@ class PurseHeadlessCheckout private constructor(
      */
     private fun runEligibilityChecks() {
         meansOfPayment.forEach { item ->
-            val plugin = PluginRegistry.getPlugin(item.partner, item.method, session.source) ?: return@forEach
+            val plugin = PluginRegistry.getPlugin(item.partner, item.method, session.source)
+            if (plugin == null) {
+                // A method the session offers but no plugin serves. When a Purse artifact would serve
+                // it, say which one: the most likely cause is a missing Gradle dependency.
+                PartnerArtifacts.forMethod(item.partner, item.method)?.let {
+                    val hint = PartnerArtifacts.missingPluginMessage(item.partner, item.method)
+                    Log.w("PurseHeadlessCheckout", "session offers ${item.id} but $hint")
+                }
+                return@forEach
+            }
             scope.launch {
                 try {
                     plugin.ensureClientCompatibility(pluginContext(item))
@@ -416,7 +436,8 @@ class PurseHeadlessCheckout private constructor(
     suspend fun setSession(widgetData: String) {
         requireOpen()
         if (_sessionState.value == SessionState.SUBMITTING) throw PurseCheckoutException.SubmitBlocked(SessionState.SUBMITTING)
-        val (newParams, newSession, newRoot) = resolve(widgetData, lockedEnvironment)
+        val (newParams, newSession, newRoot) = resolve(widgetData, lockedEnvironment, disabledMethods)
+        this.widgetData = widgetData
         if (newSession.id == session.id) {
             Log.w("PurseHeadlessCheckout", "setSession: attempting to set the same payment session again, ignoring.")
             return
@@ -617,8 +638,11 @@ class PurseHeadlessCheckout private constructor(
      * Always `registered = false` for a saved instrument.
      */
     fun registrationOf(token: SecondaryToken): RegistrationState =
-        if (token.isSaved) RegistrationState(registered = false)
-        else registrationBySecondaryToken[token.id] ?: RegistrationState(token.saveTokenMode.registeredByDefault)
+        if (token.isSaved) {
+            RegistrationState(registered = false)
+        } else {
+            registrationBySecondaryToken[token.id] ?: RegistrationState(token.saveTokenMode.registeredByDefault)
+        }
 
     /**
      * Ask to keep a temporary gift card for the next session, optionally under [name] — web's
@@ -633,8 +657,11 @@ class PurseHeadlessCheckout private constructor(
     fun registerSecondary(token: SecondaryToken, registered: Boolean = true, name: String? = null) {
         if (!token.canBeRegistered) {
             throw PurseCheckoutException.WalletOperationFailed(
-                if (token.isSaved) "${token.id} is already a saved instrument"
-                else "${token.id} cannot be registered (save_token_mode=${token.saveTokenMode})",
+                if (token.isSaved) {
+                    "${token.id} is already a saved instrument"
+                } else {
+                    "${token.id} cannot be registered (save_token_mode=${token.saveTokenMode})"
+                },
                 PurseErrorCode.TOKEN_NOT_REGISTERABLE,
             )
         }
@@ -785,6 +812,107 @@ class PurseHeadlessCheckout private constructor(
      * and every operation that reaches the network, hands out a host or replaces the session throws
      * [PurseCheckoutException.CheckoutTornDown]; calling it again is a no-op.
      */
+    /**
+     * Snapshot this checkout for [restore] after process death: the session's `widget.data`, the
+     * primary selection, the applied gift cards and their slices, the save decisions, what the native
+     * steps collected (JSON-representable values only) and whether a submit has left the device.
+     * Cheap and synchronous — call it from `onSaveInstanceState`, a `SavedStateHandle`, or a
+     * `rememberSaveable` saver. No card data is ever included.
+     *
+     * @throws PurseCheckoutException.CheckoutTornDown after [teardown].
+     */
+    fun saveState(): CheckoutSavedState {
+        if (_isTornDown.value) throw PurseCheckoutException.CheckoutTornDown()
+        val splits = splitter.splits
+        val json = JSONObject()
+            .put(CheckoutSavedState.KEY_VERSION, CheckoutSavedState.VERSION)
+            .put(CheckoutSavedState.WIDGET_DATA, widgetData)
+            .put(CheckoutSavedState.LOCKED_ENVIRONMENT, lockedEnvironment?.wireValue ?: JSONObject.NULL)
+            .put(
+                CheckoutSavedState.DISABLED_METHODS,
+                JSONArray().also { array ->
+                    disabledMethods.forEach {
+                        array.put(JSONObject().put("partner", it.partner.wireValue).put("method", it.method.wireValue))
+                    }
+                },
+            )
+            .put(CheckoutSavedState.PRIMARY_ID, splitter.primaryMethod?.id ?: JSONObject.NULL)
+            .put(
+                CheckoutSavedState.SECONDARIES,
+                JSONArray().also { array ->
+                    splits.filter { it.source is SecondaryToken }
+                        .forEach { array.put((it.source as SecondaryToken).toSavedJson(it.amount)) }
+                },
+            )
+            .put(CheckoutSavedState.REGISTRATION_BY_METHOD, registrationByMethod.toSavedJson())
+            .put(CheckoutSavedState.REGISTRATION_BY_SECONDARY_TOKEN, registrationBySecondaryToken.toSavedJson())
+            .put(
+                CheckoutSavedState.COLLECTED,
+                JSONObject().also { out -> collectedByMethod.forEach { (id, data) -> out.put(id, data.toSavedJson()) } },
+            )
+            .put(
+                CheckoutSavedState.SUBMITTED,
+                validationConsumed || _sessionState.value == SessionState.SUBMITTING || _sessionState.value == SessionState.SUBMITTED,
+            )
+            .put(CheckoutSavedState.SAVED_AT, System.currentTimeMillis())
+        return CheckoutSavedState(json)
+    }
+
+    private fun Map<String, RegistrationState>.toSavedJson(): JSONObject = JSONObject().also { out ->
+        forEach { (id, state) -> out.put(id, JSONObject().put("registered", state.registered).put("name", state.name ?: JSONObject.NULL)) }
+    }
+
+    private fun JSONObject.toRegistrations(): Map<String, RegistrationState> = keys().asSequence().associateWith { id ->
+        val entry = getJSONObject(id)
+        RegistrationState(entry.optBoolean("registered"), entry.optString("name").takeIf { !entry.isNull("name") })
+    }
+
+    /** Replay a [CheckoutSavedState] onto this freshly built checkout — see [restore]. */
+    private fun applySavedState(json: JSONObject) {
+        json.optJSONObject(CheckoutSavedState.REGISTRATION_BY_METHOD)?.let { registrationByMethod.putAll(it.toRegistrations()) }
+        json.optJSONObject(CheckoutSavedState.REGISTRATION_BY_SECONDARY_TOKEN)?.let {
+            registrationBySecondaryToken.putAll(it.toRegistrations())
+        }
+        json.optJSONObject(CheckoutSavedState.COLLECTED)?.let { collected ->
+            collected.keys().forEach { id -> collectedByMethod[id] = collected.getJSONObject(id).toCollectedMap() }
+        }
+        json.optJSONArray(CheckoutSavedState.SECONDARIES)?.let(::restoreSecondaries)
+        json.optString(CheckoutSavedState.PRIMARY_ID).takeIf { !json.isNull(CheckoutSavedState.PRIMARY_ID) }?.let(::restorePrimary)
+        if (json.optBoolean(CheckoutSavedState.SUBMITTED)) markSubmittedBeforeDeath()
+        refresh()
+    }
+
+    private fun restoreSecondaries(array: JSONArray) {
+        for (i in 0 until array.length()) {
+            val (token, amount) = secondaryTokenFromSavedJson(array.getJSONObject(i))
+            // A slice the new session cannot honour (a smaller order, a spent usage limit) is dropped.
+            runCatching { splitter.takeSplit(token, amount) }
+                .onFailure { Log.w("PurseHeadlessCheckout", "restore: dropping ${token.id}: ${it.message}") }
+        }
+    }
+
+    private fun restorePrimary(id: String) {
+        val item = meansOfPayment.firstOrNull { it.id == id } as? PrimarySource
+        if (item == null || (item as PaymentItem).disabled != null) {
+            Log.w("PurseHeadlessCheckout", "restore: primary $id is not selectable in the session, skipping")
+            return
+        }
+        // Armed at selection, as setPrimaryToken does: a CVV-gated token stays unfulfilled until its form says otherwise.
+        if (item is PaymentToken && item.requiresCvv) fulfilledByMethod.putIfAbsent(item.id, false)
+        splitter.setPrimary(item)
+    }
+
+    /**
+     * A `/validate` left the device before the process died: the session's one submit is spent
+     * whatever the answer was. Never send another; the merchant confirms the outcome.
+     */
+    private fun markSubmittedBeforeDeath() {
+        validationConsumed = true
+        if (_sessionState.value != SessionState.EXPIRED && _sessionState.value != SessionState.TERMINATED) {
+            _sessionState.value = SessionState.SUBMITTED
+        }
+    }
+
     fun teardown() {
         if (!_isTornDown.compareAndSet(expect = false, update = true)) return
         // Give every tracked plugin its destroyClient (web parity), then cancel everything.
@@ -873,8 +1001,11 @@ class PurseHeadlessCheckout private constructor(
         }
         if (!current.balanceResolved || current.balance.signum() <= 0) {
             throw PurseCheckoutException.SecondaryTokenizationFailed(
-                if (current.balanceResolved) "saved token ${token.id} has no balance"
-                else "saved token ${token.id} balance is not resolved yet",
+                if (current.balanceResolved) {
+                    "saved token ${token.id} has no balance"
+                } else {
+                    "saved token ${token.id} balance is not resolved yet"
+                },
                 PurseErrorCode.SECONDARY_TOKEN_EMPTY_BALANCE,
             )
         }
@@ -1078,8 +1209,11 @@ class PurseHeadlessCheckout private constructor(
                 deactivate(item, DisabledState.PartnerUiFatalError(event.message))
             is PluginEvent.PartnerError -> deactivate(
                 item,
-                if (event.recoverable) DisabledState.PartnerUiRecoverableError(event.message)
-                else DisabledState.PartnerUiFatalError(event.message),
+                if (event.recoverable) {
+                    DisabledState.PartnerUiRecoverableError(event.message)
+                } else {
+                    DisabledState.PartnerUiFatalError(event.message)
+                },
             )
             PluginEvent.EndOfSession -> _sessionState.value = SessionState.TERMINATED
             // Informational — merchants observe these on [pluginEvents].
@@ -1088,7 +1222,7 @@ class PurseHeadlessCheckout private constructor(
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_PARTNER_UI_EVENT,
             payload = monitoringPayload(
-                "code" to event::class.simpleName,
+                "code" to event.code,
                 "partner" to item.partner.wireValue,
                 "method" to item.method.wireValue,
             ),
@@ -1295,8 +1429,11 @@ class PurseHeadlessCheckout private constructor(
             validationConsumed = true
             _sessionState.value = if (result.isSuccess) SessionState.SUBMITTED else SessionState.ERROR
             bus.post(
-                if (result.isSuccess) CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_SUCCESS
-                else CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_FAILED,
+                if (result.isSuccess) {
+                    CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_SUCCESS
+                } else {
+                    CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_FAILED
+                },
                 if (result.isSuccess) EventLevel.SUCCESS else EventLevel.ERROR,
                 monitoringPayload("global_status" to result.globalStatus),
             )
@@ -1456,6 +1593,8 @@ class PurseHeadlessCheckout private constructor(
         /**
          * @param widgetData the base64-encoded `widget.data` string from the merchant backend's
          * Client Session response (the "V2" params).
+         * @param disabledMethods methods this app build opts out of, whatever the session offers —
+         * never listed on [paymentMethods] (their saved instruments included), scoped to this checkout.
          * @param lockedEnvironment when non-null, overrides whatever [widgetData] declares — a
          * release build should always pass [PurseEnvironment.PRODUCTION] rather than trusting a
          * session-declared environment.
@@ -1467,7 +1606,9 @@ class PurseHeadlessCheckout private constructor(
             lockedEnvironment: PurseEnvironment? = null,
             hooks: PurseCheckoutHooks? = null,
             options: PluginOptions = PluginOptions(),
-        ): PurseHeadlessCheckout = init(widgetData, lockedEnvironment, hooks, options, datetimeChecker = null)
+            disabledMethods: Set<MethodKey> = emptySet(),
+        ): PurseHeadlessCheckout =
+            init(widgetData, lockedEnvironment, hooks, options, datetimeChecker = null, disabledMethods = disabledMethods)
 
         /**
          * Test seam: inject a [datetimeChecker] (and a fast watchdog) so unit tests never touch the
@@ -1480,8 +1621,9 @@ class PurseHeadlessCheckout private constructor(
             options: PluginOptions = PluginOptions(),
             datetimeChecker: ServerDatetimeChecker?,
             watchdogIntervalMs: Long = WATCHDOG_INTERVAL_MS,
+            disabledMethods: Set<MethodKey> = emptySet(),
         ): PurseHeadlessCheckout {
-            val (params, session, apiRoot) = resolve(widgetData, lockedEnvironment)
+            val (params, session, apiRoot) = resolve(widgetData, lockedEnvironment, disabledMethods)
             val checker = datetimeChecker ?: ServerDatetimeChecker(
                 fetchServerTime = {
                     DatetimeApiClient(params.apiKey, params.environment.datetimeApiRoot).datetime()
@@ -1493,12 +1635,67 @@ class PurseHeadlessCheckout private constructor(
                 CheckoutMonitoring.install(params, sessionId = params.paymentSession.id, version = VERSION)
             }
             return PurseHeadlessCheckout(
-                params, session, apiRoot, hooks, options, checker, watchdogIntervalMs, lockedEnvironment,
+                widgetData, params, session, apiRoot, hooks, options, checker, watchdogIntervalMs, lockedEnvironment, disabledMethods,
             )
         }
 
+        /**
+         * Rebuild a checkout from a [CheckoutSavedState] — after Android killed the process while the
+         * shopper was in a bank app, PayPal or a 3-D Secure page. The session is decoded again from the
+         * saved `widget.data`; the primary selection, the applied gift cards and their slices, the save
+         * decisions and what the native steps collected come back; a form re-mounts empty (card data is
+         * never saved). When a submit had already left the device ([CheckoutSavedState.submitted]) the
+         * restored session is **spent**: [sessionState] is `SUBMITTED`, [submitPayment] refuses, and
+         * the merchant confirms the outcome with [awaitPaymentOutcome] — a second `/validate` for the
+         * same session is never sent.
+         *
+         * [hooks] and [options] are not saved (they hold code): pass the same ones as at [init].
+         * Anything the saved snapshot names that the session no longer offers is skipped silently.
+         */
+        fun restore(
+            state: CheckoutSavedState,
+            hooks: PurseCheckoutHooks? = null,
+            options: PluginOptions = PluginOptions(),
+        ): PurseHeadlessCheckout = restore(state, hooks, options, datetimeChecker = null)
+
+        internal fun restore(
+            state: CheckoutSavedState,
+            hooks: PurseCheckoutHooks? = null,
+            options: PluginOptions = PluginOptions(),
+            datetimeChecker: ServerDatetimeChecker?,
+            watchdogIntervalMs: Long = WATCHDOG_INTERVAL_MS,
+        ): PurseHeadlessCheckout {
+            val json = state.json
+            val lockedEnvironment = PurseEnvironment.fromWire(
+                json.optString(CheckoutSavedState.LOCKED_ENVIRONMENT).takeIf {
+                    it.isNotBlank()
+                }
+            )
+            val disabled = json.optJSONArray(CheckoutSavedState.DISABLED_METHODS)?.let { array ->
+                (0 until array.length()).map { i ->
+                    val pair = array.getJSONObject(i)
+                    MethodKey.of(pair.getString("partner"), pair.getString("method"))
+                }.toSet()
+            } ?: emptySet()
+            val checkout = init(
+                json.getString(CheckoutSavedState.WIDGET_DATA),
+                lockedEnvironment,
+                hooks,
+                options,
+                datetimeChecker,
+                watchdogIntervalMs,
+                disabled,
+            )
+            checkout.applySavedState(json)
+            return checkout
+        }
+
         /** Decoded params, built session and Payment API root for [widgetData] — shared by [init] and [setSession]. */
-        private fun resolve(widgetData: String, lockedEnvironment: PurseEnvironment?): Triple<PurseSessionParams, PaymentSession, String> {
+        private fun resolve(
+            widgetData: String,
+            lockedEnvironment: PurseEnvironment?,
+            disabledMethods: Set<MethodKey>,
+        ): Triple<PurseSessionParams, PaymentSession, String> {
             val decoded = SessionCodec.decode(widgetData)
             val params = if (lockedEnvironment != null && lockedEnvironment != decoded.environment) {
                 decoded.copy(environment = lockedEnvironment)
@@ -1512,7 +1709,7 @@ class PurseHeadlessCheckout private constructor(
             } else {
                 params.apiUrl.ifBlank { params.environment.paymentApiRoot }
             }
-            return Triple(params, PaymentSessionBuilder.build(params.paymentSession), apiRoot)
+            return Triple(params, PaymentSessionBuilder.build(params.paymentSession, disabledMethods), apiRoot)
         }
 
         /** Web's `ServerDatetimeChecker.WATCHDOG_DURATION`. */

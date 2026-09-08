@@ -5,11 +5,11 @@ import eu.purse.core.payment.MethodConfiguration
 import eu.purse.core.payment.MethodSettings
 import eu.purse.core.payment.Partner
 import eu.purse.core.payment.RegistrationMode
+import java.math.BigDecimal
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
-import java.math.BigDecimal
 
 /**
  * The live-recompute path (web's `updateMopDisabledState` reacting to a changing `primaryReach`).

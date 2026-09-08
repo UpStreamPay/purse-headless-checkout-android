@@ -14,20 +14,22 @@ Everything here is the Kotlin analog of web's `@upstreampay/headless-checkout` +
 
 ### Plugins are active by default — no setup call needed
 
-Every plugin `:partner-ui` ships (Google Pay, Klarna, PayPal, Purse-vaulted card, the generic
-redirection template) is registered automatically in `PluginRegistry`; there is nothing to call. Whether a method actually shows
+Every plugin on the classpath — Purse-vaulted card and the generic redirection template from the
+SDK itself, Google Pay / Klarna / PayPal from their optional artifacts — is registered
+automatically in `PluginRegistry`; there is nothing to call. Whether a method actually shows
 up is gated by the **session** alone — the same thing that already decides it server-side, in the
 merchant's Purse configuration. `paymentMethods` simply won't include a method the session doesn't
 offer.
 
 If you need to suppress a shipped method for a specific app build (e.g. its UI isn't ready yet even
-though the backend might offer it), opt it out explicitly:
+though the backend might offer it), opt it out on the checkout — scoped to that instance, never
+process-wide:
 
 ```kotlin
-PluginRegistry.disable(Partner.Klarna, Method.Installments)   // eu.purse.partnerui
+PurseHeadlessCheckout.init(widgetData, disabledMethods = setOf(MethodKey(Partner.Klarna, Method.Installments)))
 ```
 
-`PluginRegistry.enable(partner, method)` reverses it. `register` / `registerGeneric` / `registerVault` exist for
+`register` / `registerGeneric` / `registerVault` exist for
 tests that want to register a plugin in isolation.
 
 ### `PurseHeadlessCheckout.init`
@@ -38,6 +40,7 @@ fun init(
     lockedEnvironment: PurseEnvironment? = null,
     hooks: PurseCheckoutHooks? = null,
     options: PluginOptions = PluginOptions(),
+    disabledMethods: Set<MethodKey> = emptySet(),
 ): PurseHeadlessCheckout
 ```
 
@@ -47,6 +50,7 @@ fun init(
 | `lockedEnvironment` | Overrides whatever `widgetData` declares. **A release build must always pass `PurseEnvironment.PRODUCTION`** rather than trusting a session-declared environment. |
 | `hooks` | Merchant hooks around "create payment" — see [`PurseCheckoutHooks`](#pursecheckouthooks) below. |
 | `options` | Presentation preferences forwarded to every plugin (locale, theme, card-form texts). |
+| `disabledMethods` | `(partner, method)` pairs this app build opts out of: never listed on `paymentMethods`, their saved instruments included, whatever the session offers. Scoped to this checkout and re-applied by `setSession`. |
 
 **Throws:** `PurseSessionException.SessionMalformed` if `widgetData` can't be decoded, or the
 session is missing `id` / `expiration_date`.
@@ -114,6 +118,35 @@ Keying UI on `(item.id, generation)` is what makes "keep what is still valid" wo
 `rememberPaymentElement` already does it, so an unchanged card keeps its SecureFields form and
 whatever the shopper typed, while a changed method gets a fresh element. See
 [recipes §15](recipes.md#15-refresh-the-session).
+
+---
+
+### `saveState` / `restore` — survive process death
+
+```kotlin
+fun saveState(): CheckoutSavedState
+companion object {
+    fun restore(state: CheckoutSavedState, hooks: PurseCheckoutHooks? = null, options: PluginOptions = PluginOptions()): PurseHeadlessCheckout
+}
+```
+
+`saveState` is a cheap, synchronous snapshot (`Parcelable`, also `toJson()` / `fromJson()`): the
+session's `widget.data`, the locked environment and `disabledMethods`, the primary selection, the
+applied gift cards with their slices, the save decisions (`register` / `registerSecondary`), what the
+native steps collected (JSON-representable values only — a Klarna authorize callback is not), and
+whether a submit has left the device. **No card data**, ever. Throws `CheckoutTornDown` after
+`teardown()`.
+
+`restore` decodes the session again and replays the snapshot. Anything the new session no longer
+offers, or a slice it cannot honour, is skipped with a warning. When `CheckoutSavedState.submitted`
+is `true` the restored session is spent — `sessionState` is `SUBMITTED`, `submitPayment` throws
+`SubmitBlocked` — and the merchant confirms the outcome with `awaitPaymentOutcome()`. `hooks` and
+`options` are not saved: pass the same ones as at `init`. A snapshot from a newer SDK is refused
+(`IllegalArgumentException` from `CheckoutSavedState.fromJson`).
+
+Hold the checkout in a `ViewModel` so a rotation never touches it; the card form's text does not
+survive an Activity recreation (SecureFields keeps it in memory only, and saving card data would be
+wrong) — recipe 16 shows the `SavedStateHandle` wiring.
 
 ---
 
@@ -360,9 +393,13 @@ PSP's own behaviour — what its `/init` returns, where its native step sits rel
 its quirks and failure modes, with sequence diagrams — has a page of its own under
 **[docs/plugins](../plugins/README.md)**.
 
+Google Pay, PayPal and Klarna ship as optional artifacts (`eu.purse:headless-checkout-googlepay`,
+`-paypal`, `-klarna`); their classes below exist only when the artifact is on the classpath. Card and
+redirection are in `headless-checkout-android` itself.
+
 Three pieces make up the pattern for every such plugin:
 
-1. A **`*Host` interface** in `:partner-ui` — what the plugin's coordinator needs from the checkout,
+1. A **`*Host` interface** in `eu.purse.partnerui` — what the plugin's coordinator needs from the checkout,
    implemented by `PurseHeadlessCheckout`.
 2. A **`*Coordinator`** class — drives the plugin's native SDK, reports outcomes via a `Listener`.
 3. A **`setCollected`** call — stashes sheet/widget output so `submitPayment`'s `/validate` payload
@@ -456,30 +493,47 @@ What they share:
 | Callback | Fires |
 |---|---|
 | `onReady(ready: Boolean)` | The method's readiness changed — `isReadyToPay` for Google Pay, `prepare()` done for PayPal and redirection, the widget loaded for Klarna, the form's validity for the card. |
-| `onResult(summary: String, globalStatus: String? = null)` | Terminal, non-error outcome. `globalStatus` is the `/validate` response's own `global_status` when the outcome came from one, and `null` after a redirect return — see the note below. |
+| `onOutcome(outcome: PaymentOutcome)` | The attempt ended — see the sealed class below. Once per attempt. |
 | `onRequiresAction()` | A redirect step is being launched (3-D Secure, PayPal's approval, the PSP's page). |
 | `onPaymentId(paymentId: String)` | Informational — a `payment_id` the flow could read, when present. Never required for the payment to resolve. |
-| `onCanceled()` | The shopper backed out (sheet dismissed, approval abandoned, redirect page closed, Klarna declined to authorize). |
-| `onError(message: String?)` | Any failure — native step, `/init`, `/validate`, or redirect launch. |
 
-**Note on `onResult` after a redirect:** a returned-from-redirect outcome means only that the shopper
-came back into the app — **not** that the payment succeeded. That's the case `onResult` reports with a
-`null` `globalStatus`: don't render it as either success or failure. Re-check status independently
-(`paymentStatus()` / `awaitPaymentOutcome()`). A non-`SUCCESS` `globalStatus` is a declined payment,
-not an error. The demo's own three-way mapping (`PaymentOutcome.of`) is the shape to copy:
+**`PaymentOutcome`** (sealed, `eu.purse.partnerui`):
 
 ```kotlin
-when {
-    globalStatus == null -> Unconfirmed   // came back from a redirect — go and check the session
-    globalStatus.equals("SUCCESS", true) -> Authorized
-    else -> Failed
+sealed class PaymentOutcome {
+    data class Completed(val result: ValidationResult) : PaymentOutcome()   // status: PaymentStatus, isSuccess
+    data object ReturnedFromRedirect : PaymentOutcome()
+    data object Canceled : PaymentOutcome()
+    data class Failed(val error: PurseException) : PaymentOutcome()
 }
 ```
 
-An `onError` before any submit (a widget that fails to load, a `/init` that throws) is not a failed
-payment either — leave the shopper able to pick another method.
+| Outcome | Meaning |
+|---|---|
+| `Completed(result)` | `/validate` answered without a redirect. `result.status` is the API's verdict (`PaymentStatus.SUCCESS`, `FAILED`, `ERROR`, `UNCERTAIN`, `WAITING`; `UNKNOWN` for a value this SDK doesn't know, the raw string stays on `result.globalStatus`). A non-`SUCCESS` status is a declined payment, not an error. |
+| `ReturnedFromRedirect` | The shopper came back into the app — **not** that the payment succeeded. Don't render it as either success or failure; re-check with `paymentStatus()` / `awaitPaymentOutcome()`. |
+| `Canceled` | The shopper backed out (sheet dismissed, approval abandoned, redirect page closed, Klarna declined to authorize). The split is untouched; they may try again. |
+| `Failed(error)` | The attempt produced no payment. `error` is typed: the checkout's own exceptions (`PurseCheckoutException.*`, `PaymentApiException`) as they are, a partner SDK failure as `PartnerUiException` (code `PARTNER_UI_ERROR`, the partner's exception as `cause`). A `ValidateFailed` whose `outcomeUnknown` is `true` must be confirmed against the session before showing a failure. |
+
+The demo's three-way mapping (`DemoResult.of`) is the shape to copy:
+
+```kotlin
+when (outcome) {
+    is PaymentOutcome.Completed -> if (outcome.isSuccess) Authorized else Declined(outcome.status)
+    PaymentOutcome.ReturnedFromRedirect -> Unconfirmed        // go and check the session
+    PaymentOutcome.Canceled -> BackToMethods
+    is PaymentOutcome.Failed -> if (outcome.error is ValidateFailed && outcome.error.outcomeUnknown) Unconfirmed else Failed(outcome.error)
+}
+```
+
+A `Failed` before any submit (a widget that fails to load, a `/init` that throws) is not a failed
+payment either — the item is disabled on `paymentMethods` with the matching state; leave the shopper
+able to pick another method.
 
 #### Google Pay
+
+Artifact `eu.purse:headless-checkout-googlepay`, package `eu.purse.partnerui.plugins.generics.googlepay`.
+
 
 > Deep dive — `/init` shapes per gateway, sequence diagram, quirks, failure modes:
 > **[docs/plugins/google-pay.md](../plugins/google-pay.md)**.
@@ -492,6 +546,9 @@ shows itself only once ready and passes button looks (`theme`, `type`, `cornerRa
 
 #### PayPal
 
+Artifact `eu.purse:headless-checkout-paypal`, package `eu.purse.partnerui.plugins.partners.paypal.wallet`.
+
+
 > Deep dive — the out-of-app approval round trip, sequence diagram, quirks, failure modes:
 > **[docs/plugins/paypal.md](../plugins/paypal.md)**.
 
@@ -500,10 +557,13 @@ creates the PayPal order waits for `submit()`, so merely showing the button neve
 order. `submit()` runs `/init`, launches PayPal's approval (the PayPal app when installed, else a
 Custom Tab), and captures via `/validate` once the buyer approves; with a saved token on the host it
 captures straight away. `onRequiresAction` fires for the approval, and again only if `/validate` chains
-a 3-D Secure step. **No manifest work**: the approval returns to an Activity `:partner-ui` ships
+a 3-D Secure step. **No manifest work**: the approval returns to an Activity `eu.purse.partnerui` ships
 (scheme `${applicationId}.paypal`).
 
 #### Klarna
+
+Artifact `eu.purse:headless-checkout-klarna`, package `eu.purse.partnerui.plugins.partners.klarna`.
+
 
 > Deep dive — why `authorize()` runs after `/validate`, sequence diagram, quirks, failure modes:
 > **[docs/plugins/klarna.md](../plugins/klarna.md)**.
@@ -584,21 +644,22 @@ for this template it means the PSP never handed over its page.
 
 ### Registering a new plugin, or opting a built-in one out (`PluginRegistry`)
 
-The `register*` functions are only relevant if you're adding a plugin that isn't bundled in
-`:partner-ui` itself — built-in ones are already registered, see
+The `register*` functions are only relevant if you're adding a plugin that isn't one of Purse's own —
+built-in ones are already registered, and the optional partner artifacts register themselves, see
 [§1](#plugins-are-active-by-default--no-setup-call-needed).
 
 | Function | Signature |
 |---|---|
+| `install` | `fun install(module: PartnerModule)` — add a whole module (its plugins + how they render); every Purse partner artifact on the classpath is installed automatically through `ServiceLoader`, so this is for a module of your own, or for a build that strips `META-INF/services`. Installing the same module twice is a no-op. |
+| `modules` | `val modules: List<PartnerModule>` — what is installed, built-ins (card, redirection) first. |
+| `moduleFor` | `fun moduleFor(plugin: PartnerUiPlugin): PartnerModule?` — the module that renders a plugin. |
 | `register` | `fun register(partner: Partner, method: Method, builder: PluginBuilder)` |
 | `registerFallback` | `fun registerFallback(method: Method, builder: PluginBuilder)` |
 | `registerVault` | `fun registerVault(vendor: VaultVendor, builder: PluginBuilder)` |
 | `registerGeneric` | `fun registerGeneric(template: String, builder: PluginBuilder)` — a reusable **template** keyed by `configurations.template`, naming no partner or method; the session decides which methods it covers. |
-| `disable` | `fun disable(partner: Partner, method: Method)` — suppress a built-in plugin for this app build. |
-| `enable` | `fun enable(partner: Partner, method: Method)` — reverse a previous `disable`. |
 | `getPlugin` | `fun getPlugin(partner: Partner, method: Method, session: LegacyPaymentSession): PartnerUiPlugin?` |
 
-Resolution order: `disable`d check → vault vendor → generic template (strict equality) →
+Resolution order: vault vendor → generic template (strict equality) →
 `merchant_specifics.integration_mode = redirection` → exact `(partner, method)` → method fallback.
 `getPlugin` is also the honest way to ask *what will actually handle this item* — e.g.
 `getPlugin(...) is RedirectionPlugin` to decide how to render a row, rather than re-reading `template`
@@ -607,9 +668,38 @@ yourself and disagreeing with the registry. Full chain and rationale:
 
 ---
 
+### Writing your own partner module (`PartnerModule`)
+
+An artifact that adds a payment method contributes one `PartnerModule` — the seam Purse's own
+Google Pay, Klarna and PayPal artifacts use. `PluginRegistry` finds them through `ServiceLoader`
+(`META-INF/services/eu.purse.partnerui.PartnerModule`, a `class` with a public no-arg constructor)
+or you hand one over with `PluginRegistry.install(module)`.
+
+```kotlin
+interface PartnerModule {
+    fun register(registry: PluginRegistry)                       // add your plugins: register / registerFallback / registerGeneric / registerVault
+    fun renders(plugin: PartnerUiPlugin): Boolean                // `plugin is MyPlugin`
+    @Composable fun rememberSurface(plugin: PartnerUiPlugin, request: SurfaceRequest): PaymentSurface
+}
+
+class SurfaceRequest(val host: PluginHost, val isToken: Boolean, val key: Any, val listener: PaymentElementListener, val appReturnUrl: String? = null)
+class PaymentSurface(val hasUi: Boolean, val selfSubmitting: Boolean, onSubmit: () -> Unit, val ui: @Composable (Modifier) -> Unit) {
+    fun submit()
+    companion object { fun headless(onSubmit: () -> Unit): PaymentSurface }   // nothing on screen; submit runs the flow
+}
+```
+
+`rememberSurface` is where you create your coordinator (`PaymentCoordinator` subclass), wire its
+Activity-result launchers and run `prepare(request.host)`; `rememberPaymentElement` then wraps the
+returned `PaymentSurface` exactly as it does for the shipped methods. `PartnerArtifacts.forMethod` /
+`missingPluginMessage` are the table behind the "add this dependency" hint the SDK gives when a
+Purse artifact is missing; they know only Purse's own artifacts.
+
+---
+
 ## 7. Declaring your own deep link for Klarna
 
-Unlike Google Pay's 3-D Secure return (a self-contained Activity `:partner-ui` ships), Klarna's
+Unlike Google Pay's 3-D Secure return (a self-contained Activity `eu.purse.partnerui` ships), Klarna's
 `returnURL` must resume the **same Activity** hosting the live `KlarnaPaymentView`. Your app must
 declare a matching `singleTask` intent-filter:
 
@@ -626,8 +716,8 @@ declare a matching `singleTask` intent-filter:
 
 Pass the matching URL (e.g. `"$packageName.klarna://return"`) as `rememberPaymentElement`'s
 `klarnaReturnUrl` (its default is exactly that), or to `KlarnaCoordinator.prepare(host, returnUrl)`.
-No manifest change is required for Google Pay or PayPal — both of their return Activities ship
-inside `:partner-ui`.
+No manifest change is required for Google Pay or PayPal — the 3-D Secure return Activity ships in
+`headless-checkout-android`, PayPal's approval return Activity in `headless-checkout-paypal`.
 
 ---
 
@@ -660,14 +750,15 @@ While in flight, every item reads `DisabledState.Submitting`; the lock lifts whe
 - `PurseCheckoutException.CheckoutTornDown` — after `teardown()`.
 - `PurseCheckoutException.HookFailed` — your `onBeforeValidate` hook threw (code
   `ON_BEFORE_VALIDATE_HOOK_FAILED`, your exception as `cause`); nothing was sent.
-- `PurseCheckoutException.NoPluginRegistered` — no `:partner-ui` plugin registered for the chosen
-  primary's `(partner, method)`.
+- `PurseCheckoutException.NoPluginRegistered` — no plugin registered for the chosen primary's
+  `(partner, method)`. For Google Pay, Klarna or PayPal this means the optional artifact is missing;
+  `PartnerArtifacts.missingPluginMessage(partner, method)` (and the warning `init` logs) name it.
 - `PurseCheckoutException.ValidateFailed` — `/validate` failed. **Check `outcomeUnknown`**: `true`
   means the request left the device and no answer came back, so the payment may exist server-side —
   reconcile with `awaitPaymentOutcome()` instead of telling the shopper it failed.
 
 Most callers reach `submitPayment` indirectly, through `PluginHost.submitPayment`, which coordinators
-call for you; the coordinator's `onError` carries the same message.
+call for you; the element's `PaymentOutcome.Failed` carries the same exception.
 
 ### Re-checking status after a redirect or an unknown outcome
 
@@ -719,7 +810,7 @@ interactive plugin.
 |---|---|---|
 | `PurseCheckoutException.PaymentNotFulfilled` | `submitPayment` | Split doesn't cover the amount / no primary set. |
 | `PurseCheckoutException.ItemNotFulfilled` | `submitPayment` | An item in the split has an incomplete or invalid form (web's `ELEMENT_NOT_FULFILLED`). |
-| `PurseCheckoutException.NoPluginRegistered` | `submitPayment` | No `:partner-ui` plugin for the chosen `(partner, method)`. |
+| `PurseCheckoutException.NoPluginRegistered` | `submitPayment` | No `eu.purse.partnerui` plugin for the chosen `(partner, method)`. |
 | `PurseCheckoutException.ValidateFailed` | `submitPayment` | `/validate` failed. `outcomeUnknown == true` means the request left and nothing answered: reconcile with `awaitPaymentOutcome()`. |
 | `PurseCheckoutException.SessionExpired` | `submitPayment`, `setSession` | The session (or the new one) is expired (`EXPIRED_SESSION`). |
 | `PurseCheckoutException.SubmitBlocked` | `submitPayment`, `setSession` | A submit is in flight, or the session's one validation is spent (`SUBMIT_BLOCKED`). |

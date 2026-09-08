@@ -29,20 +29,15 @@ rootProject.name = "purse-headless-checkout-android"
 
 // Minimal demo host — mints a session via alfred and drives the headless SDK. ≈ web playground.
 include(":app")
-// The headless purse-payment SDK (≈ usp-widget's `headless-checkout`): session decode, the payment
-// model, the splitter, and the plugin-driven validate pipeline. Depends on `:core` + `:partner-ui`.
+// The SDK — one module, published as `eu.purse:headless-checkout-android`, with the card and
+// redirection methods inside. Its three packages mirror usp-widget's packages (`eu.purse.core` ≈
+// `sdk`+`model`+`common`, `eu.purse.partnerui` ≈ `partner-ui`, `eu.purse.checkout` ≈
+// `headless-checkout`); see headless-checkout/build.gradle.kts for what lives where.
 include(":headless-checkout")
-// Shared concepts (≈ usp-widget's `sdk` + `model` + `common`): the Payment API client, environment
-// targets, the Partner/Method/vault enums, and the raw session DTO + decode. No orchestration here.
-include(":core")
-// Per-partner plugin lifecycle contract (≈ usp-widget's `partner-ui`) PLUS its concrete plugins —
-// the `PartnerUiPlugin` interface/resolver, the Google Pay (Ingenico/Worldline) implementation
-// (protocol + Play-Services payment sheet + 3-D Secure), and the Klarna implementation (protocol +
-// native `KlarnaPaymentView`), living under `plugins.generics.googlepay` / `plugins.partners.klarna`
-// inside this same module, exactly like web's `partner-ui` package bundles
-// `plugins/generics/googlepay` / `plugins/partners/klarna-installments`. Each registers itself into
-// `PluginRegistry` at class load (its `init` block). Sits on
-// `:core` only — it talks to `:headless-checkout` through the `PluginHost` seam so
-// the dependency never points back the other way (`:headless-checkout` depends on `:partner-ui`, not
-// vice versa).
-include(":partner-ui")
+// Optional partner artifacts — one plugin + the partner's own SDK each, contributed to
+// `PluginRegistry` through `PartnerModule` + `ServiceLoader`, so a merchant embeds only the partner
+// SDKs of the methods they offer (and only Klarna merchants declare Klarna's Maven repository).
+// Each sits on `:headless-checkout`.
+include(":partner-googlepay")   // Google Pay (Ingenico/Worldline, Adyen, default) — Play Services Wallet
+include(":partner-klarna")      // Klarna installments — Klarna Mobile SDK (needs Klarna's CDN repository)
+include(":partner-paypal")      // PayPal wallet — PayPal Android SDK
