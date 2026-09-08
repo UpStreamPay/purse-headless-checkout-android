@@ -146,7 +146,8 @@ class PurseHeadlessCheckout private constructor(
                 bus.post(
                     CheckoutEventCode.HEADLESS_CHECKOUT_UNCAUGHT_ERROR,
                     EventLevel.ERROR,
-                    monitoringPayload("stack" to e.stackTraceToString().take(4_000)),
+                    // Web caps its stacks at 1 000; a minified stack says no more past that.
+                    monitoringPayload("stack" to e.stackTraceToString().take(1_000)),
                 )
             },
     )
@@ -301,7 +302,7 @@ class PurseHeadlessCheckout private constructor(
             payload = monitoringPayload(
                 "paymentSessionId" to session.id,
                 "sessionType" to "v2",
-                "amount" to session.amount.toPlainString(),
+                // No amount (web sends one): SDK-12220 keeps raw amounts out of every event.
                 "nb_methods" to session.meansOfPayment.size,
             ),
         )
@@ -550,7 +551,6 @@ class PurseHeadlessCheckout private constructor(
                 "paymentSessionId" to newSession.id,
                 "previousPaymentSessionId" to previous.id,
                 "sessionType" to "v2",
-                "amount" to newSession.amount.toPlainString(),
                 "nb_methods" to newSession.meansOfPayment.size,
                 "nb_surviving_methods" to survivingMethodIds.size,
             ),
@@ -996,7 +996,8 @@ class PurseHeadlessCheckout private constructor(
             payload = monitoringPayload(
                 "partner" to token.partner.wireValue,
                 "method" to token.method.wireValue,
-                "amount" to (amount ?: token.balance).toPlainString(),
+                // Whether the shopper chose the slice, never how much it is.
+                "partial" to (amount != null),
             ),
         )
         refresh()

@@ -219,4 +219,15 @@ class CheckoutTelemetryTest {
         checkout.pluginContext(paypal).dispatchEvent(PluginEvent.ClientError("sdk died again"))
         assertTrue(events.none { it.code == CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_DISABLED })
     }
+
+    @Test
+    fun `SET_SESSION names the session and its shape, never the amount`() {
+        checkout()
+
+        val payload = payload(CheckoutEventCode.HEADLESS_CHECKOUT_SET_SESSION)
+        assertEquals("session-123", payload.getString("paymentSessionId"))
+        assertTrue(payload.getInt("nb_methods") > 0)
+        assertFalse("web sends the amount; the Android SDK keeps raw amounts out of telemetry", payload.has("amount"))
+        assertFalse(payload.toString().contains("4.8"))
+    }
 }
