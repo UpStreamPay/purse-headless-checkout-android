@@ -314,6 +314,7 @@ public final class eu/purse/checkout/monitoring/CheckoutEventCode : java/lang/En
 	public static final field HEADLESS_CHECKOUT_CREATE Leu/purse/checkout/monitoring/CheckoutEventCode;
 	public static final field HEADLESS_CHECKOUT_DELETE_ALL_TOKENS Leu/purse/checkout/monitoring/CheckoutEventCode;
 	public static final field HEADLESS_CHECKOUT_EXPIRED_SESSION Leu/purse/checkout/monitoring/CheckoutEventCode;
+	public static final field HEADLESS_CHECKOUT_METHOD_DISABLED Leu/purse/checkout/monitoring/CheckoutEventCode;
 	public static final field HEADLESS_CHECKOUT_METHOD_GET_HOSTED_FIELDS Leu/purse/checkout/monitoring/CheckoutEventCode;
 	public static final field HEADLESS_CHECKOUT_METHOD_GET_PAYMENT_ELEMENT Leu/purse/checkout/monitoring/CheckoutEventCode;
 	public static final field HEADLESS_CHECKOUT_METHOD_GET_SECONDARY_TOKEN Leu/purse/checkout/monitoring/CheckoutEventCode;

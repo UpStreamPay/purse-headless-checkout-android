@@ -284,11 +284,12 @@ disabled-state classification sets; the server-clock expiry watchdog (`GET /date
 `initGuard`); typed error codes (`PurseErrorCode`) on every checkout exception; the live plugin
 event system (`PluginEvent` sealed class, dispatched by every coordinator, reacted to by the
 checkout, re-exposed on `pluginEvents`); driven lifecycle hooks (`onSessionSet`, `onAmountUpdate`,
-`destroyClient`, `ensureClientCompatibility`); full monitoring parity (`CheckoutEventBus`, all 40
-codes, batched to the same `/widget/headless_checkout` route as web in web's envelope
+`destroyClient`, `ensureClientCompatibility`); full monitoring parity (`CheckoutEventBus`, web's 40
+codes plus `METHOD_DISABLED`, batched to the same `/widget/headless_checkout` route as web in web's envelope
 `{event, instanceId, entityId, paymentSessionId, version, wrapper, env}` plus `platform: "android"`
 — the top-level field the native SecureFields loggers already send, and the one to filter a
-platform on; `wrapper` keeps web's meaning and is `direct` — flushed on app-background); wallet / saved cards
+platform on; `wrapper` keeps web's meaning and is `direct` — flushed on app-background; the
+contract, event by event, is [docs/integration/monitoring.md](../integration/monitoring.md)); wallet / saved cards
 (`wallet_session`, `paymentTokens`, pay-with-token, rename/delete/favorite, `SaveTokenMode`
 registration incl. `payment_preferences.registration` + `card.token_label`); saved gift cards
 (`SavedSecondaryToken` / `savedSecondaryTokens`, background balance `/init`, apply/remove,

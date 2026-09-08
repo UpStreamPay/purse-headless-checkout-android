@@ -30,7 +30,7 @@ adds or removes a divergence.
 | `payment-element/payment-element.ts` | `checkout/element/PaymentElement.kt` + `partnerui/PaymentCoordinator.kt` and one coordinator per plugin | see divergences |
 | none | `partnerui/PluginHost.kt` | the seam through which a coordinator reaches the checkout |
 | none (web bundles every plugin) | `partnerui/PartnerModule.kt`, `PartnerArtifacts.kt`, `META-INF/services/eu.purse.partnerui.PartnerModule` in each partner module | optional partner artifacts discovered with `ServiceLoader`; a missing one is named at `init` |
-| `monitoring/*`, `monitoringConfigs.ts` | `checkout/monitoring/CheckoutEventBus.kt`, `CheckoutEventCode.kt`, `core/monitoring/*` | same 40 codes, envelope + `platform: android` |
+| `monitoring/*`, `monitoringConfigs.ts` | `checkout/monitoring/CheckoutEventBus.kt`, `CheckoutEventCode.kt`, `MonitoringPayloads.kt`, `core/monitoring/*` | web's 40 codes + `METHOD_DISABLED`, envelope + `platform: android` — see [monitoring](integration/monitoring.md) |
 | `utils/error/*` | `checkout/PurseCheckoutException.kt`, `core/error/PurseErrorCode.kt` | same codes |
 | `sdk/src/API/payment-api.ts` | `core/api/PaymentApiClient.kt` | yes |
 | wallet API | `core/api/WalletApiClient.kt` | yes |
@@ -90,5 +90,10 @@ adds or removes a divergence.
 | Saved gift cards | listed in `mops` | `savedSecondaryTokens` flow, balances re-`/init`ed sequentially | `InitGuard` would coalesce parallel `/init`s of one issuer |
 | Loan simulation total | `(n − 1) × recurring + initial + final`, and the drop-in draws `n + 1` lines | `initial + (n − 2) × recurring + final`, `n` lines | `instalment_number` is the total count; web counts one instalment twice (bug to report on web) |
 | Monitoring envelope | `wrapper`, `env`, … | same plus `platform: "android"` | matches the native vault SDKs |
+| `HEADLESS_CHECKOUT_CREATE` payload | `user_agent`, `screen` | same plus `device` (OS version, API level, manufacturer, model) | what RUN parses out of a web user agent (SDK-12189) |
+| Amounts in telemetry | `SET_SESSION.amount`, `SECONDARY_TOKEN_TAKE.amount` | never — `nb_methods`, `partial` | SDK-12220 AC: no raw amount in any event |
+| A method's disabled state | only `pluginIsIncompatibleWithClient` and partner errors, through `PARTNER_UI_EVENT` | `HEADLESS_CHECKOUT_METHOD_DISABLED` on every transition (code, filtered, recoverable), plus web's partner-UI event for an incompatible plugin | the suspension model as events (SDK-12220) |
+| `PAYMENT_ERROR` on a thrown error | `message`, `stack` | plus `code`, `api_path`, `api_status`, `api_error`, `outcome_unknown` | a minified Android stack says nothing; the codes do |
+| SDK `version` on the envelope | `package.json` version | `SdkVersion.VALUE`, generated from the release tag at build time | `0.0.0-SNAPSHOT` for a local build |
 | UI toolkit | DOM | Compose only: `rememberPaymentElement`, `remember*Coordinator`, `PurseCardForm` | SecureFields Android is Compose-first; a View app hosts a `ComposeView` |
 | Secondaries extension | static configs | `SecondaryConfigs.register`, `pollForToken`, `classifyInitError` hooks | lets a host add an issuer without an SDK release |

@@ -12,6 +12,7 @@ SDK, in Kotlin and Compose.
 | [Recipes](integration/recipes.md) | One task per section: each payment method, gift cards, saved cards, hooks, theme, errors, session refresh, BNPL. |
 | [API reference](integration/consumer-api.md) | Every function, flow, type and error. The generated KDoc reference ships with each [release](https://github.com/UpStreamPay/purse-headless-checkout-android/releases). |
 | [Payment methods by platform](payment-methods-matrix.md) | What this SDK supports versus web. |
+| [Monitoring and analytics](integration/monitoring.md) | What the SDK reports to Purse (events, envelope, levels) and what never leaves the device. |
 
 ## Work on the SDK
 
@@ -36,4 +37,4 @@ SDK, in Kotlin and Compose.
 :partner-paypal      PayPal plugin (optional)       eu.purse:headless-checkout-paypal
 ```
 
-Requirements: minSdk 26, Jetpack Compose. Related tickets: [SDK-12039](https://upstreampay.atlassian.net/browse/SDK-12039), [SDK-12216](https://upstreampay.atlassian.net/browse/SDK-12216), [SDK-12218](https://upstreampay.atlassian.net/browse/SDK-12218), [SDK-12219](https://upstreampay.atlassian.net/browse/SDK-12219).
+Requirements: minSdk 26, Jetpack Compose. Related tickets: [SDK-12039](https://upstreampay.atlassian.net/browse/SDK-12039), [SDK-12216](https://upstreampay.atlassian.net/browse/SDK-12216), [SDK-12218](https://upstreampay.atlassian.net/browse/SDK-12218), [SDK-12219](https://upstreampay.atlassian.net/browse/SDK-12219), [SDK-12220](https://upstreampay.atlassian.net/browse/SDK-12220).
