@@ -280,9 +280,15 @@ class PurseHeadlessCheckout private constructor(
         // Web emits CREATE + SET_SESSION + READY across init/setSession; one construction here.
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_CREATE,
-            // Web sends navigator.userAgent here; the platform itself travels on the message
-            // envelope (`platform: android`), so this stays a genuine user agent.
-            payload = monitoringPayload("sessionType" to "v2", "user_agent" to CheckoutMonitoring.androidUserAgent()),
+            // Web sends navigator.userAgent + screen here; the platform itself travels on the message
+            // envelope (`platform: android`), so this stays a genuine user agent, and `device` adds
+            // what RUN would parse out of a web user agent (OS version, model).
+            payload = monitoringPayload(
+                "sessionType" to "v2",
+                "user_agent" to CheckoutMonitoring.androidUserAgent(),
+                "device" to CheckoutMonitoring.deviceContext(),
+                "screen" to CheckoutMonitoring.screen(),
+            ),
         )
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_SET_SESSION,

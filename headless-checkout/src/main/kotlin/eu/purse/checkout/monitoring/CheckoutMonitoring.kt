@@ -103,4 +103,28 @@ internal object CheckoutMonitoring {
 
     /** The process's HTTP user agent, available without a Context; falls back to `"android"`. */
     fun androidUserAgent(): String = System.getProperty("http.agent")?.takeIf { it.isNotBlank() } ?: "android"
+
+    /**
+     * What RUN reads off a parsed web user agent (SDK-12189), for a device: OS version, API level,
+     * manufacturer and model — from `android.os.Build`, no Context needed. Travels in
+     * `HEADLESS_CHECKOUT_CREATE` next to `user_agent`, like web's `screen`. Every field is optional:
+     * the JVM test classpath (Android stubs) simply yields less.
+     */
+    fun deviceContext(): JSONObject = monitoringPayload(
+        "os" to "android",
+        "os_version" to android.os.Build.VERSION.RELEASE?.takeIf { it.isNotBlank() },
+        "sdk_int" to android.os.Build.VERSION.SDK_INT.takeIf { it > 0 },
+        "manufacturer" to android.os.Build.MANUFACTURER?.takeIf { it.isNotBlank() },
+        "model" to android.os.Build.MODEL?.takeIf { it.isNotBlank() },
+    )
+
+    /** Web's `screen` payload (`width`, `height`, `devicePixelRatio`) from the system display; `null` off-device. */
+    fun screen(): JSONObject? = runCatching {
+        val metrics = android.content.res.Resources.getSystem().displayMetrics
+        monitoringPayload(
+            "width" to metrics.widthPixels,
+            "height" to metrics.heightPixels,
+            "devicePixelRatio" to metrics.density,
+        )
+    }.getOrNull()?.takeIf { it.length() > 0 }
 }
