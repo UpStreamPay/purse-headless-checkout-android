@@ -36,6 +36,7 @@ import eu.purse.checkout.state.toCollectedMap
 import eu.purse.checkout.state.toSavedJson
 import eu.purse.checkout.validation.PaymentValidator
 import eu.purse.checkout.wallet.WalletTokens
+import eu.purse.core.SdkVersion
 import eu.purse.core.api.PaymentApiClient
 import eu.purse.core.api.PaymentApiException
 import eu.purse.core.api.WalletApiClient
@@ -1715,7 +1716,10 @@ class PurseHeadlessCheckout private constructor(
         /** Web's `ServerDatetimeChecker.WATCHDOG_DURATION`. */
         const val WATCHDOG_INTERVAL_MS = 5_000L
 
-        /** SDK version stamped onto every monitoring message — web's `version` extra. */
-        const val VERSION = "0.1.0"
+        /**
+         * SDK version stamped onto every monitoring message — web's `version` extra. The value the
+         * artifact is published under (release tag in CI, `0.0.0-SNAPSHOT` for a local build).
+         */
+        const val VERSION = SdkVersion.VALUE
     }
 }
