@@ -26,7 +26,7 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - uses: gradle/actions/setup-gradle@v5
+      - uses: gradle/actions/setup-gradle@v6
 
       - name: ktlint
         run: ./gradlew ktlintCheck --continue
@@ -48,7 +48,7 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - uses: gradle/actions/setup-gradle@v5
+      - uses: gradle/actions/setup-gradle@v6
 
       - name: Assemble every module
         run: ./gradlew assembleDebug
@@ -80,7 +80,7 @@ jobs:
           distribution: temurin
           java-version: 21
 
-      - uses: gradle/actions/setup-gradle@v5
+      - uses: gradle/actions/setup-gradle@v6
 
       # The consumer path a merchant's release build takes: R8 against the SDK's consumer rules.
       - name: Minified demo build
