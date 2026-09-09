@@ -274,7 +274,7 @@ val unsubscribe = CheckoutEventBus.getInstance().subscribe { event -> analytics.
 ```
 
 Every event also reaches Purse's monitoring API automatically, batched and flushed when the app
-goes to background.
+goes to background. What is sent — and what never is — is in [Monitoring and analytics](monitoring.md).
 
 ## 12. Errors
 
