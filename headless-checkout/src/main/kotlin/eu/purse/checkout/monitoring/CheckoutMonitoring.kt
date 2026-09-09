@@ -23,19 +23,22 @@ internal object CheckoutMonitoring {
     private var logger: MonitoringApiClient? = null
 
     /**
-     * Wire the bus to the collector for the session in [params]. [monitoringApiRoot] is the
-     * environment's collector unless a test points it at a loopback server.
+     * Wire the bus to the collector for the session in [params], stamping [instanceId] (the
+     * checkout's, stable across sessions and restores) on every message. [monitoringApiRoot] is
+     * the environment's collector unless a test points it at a loopback server.
      */
     fun install(
         params: PurseSessionParams,
         sessionId: String,
         version: String,
+        instanceId: String,
         monitoringApiRoot: String = params.environment.monitoringApiRoot,
     ) {
         val logger = MonitoringApiClient(
             apiKey = params.apiKey,
             monitoringApiRoot = monitoringApiRoot,
             envWireValue = params.environment.wireValue,
+            instanceId = instanceId,
         )
         // `wrapper` keeps web's meaning (which product embeds the SDK); a merchant integration is `direct`.
         logger.patchExtras(

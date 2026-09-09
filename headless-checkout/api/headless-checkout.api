@@ -123,7 +123,7 @@ public final class eu/purse/checkout/PurseHeadlessCheckout {
 	public static final field Companion Leu/purse/checkout/PurseHeadlessCheckout$Companion;
 	public static final field VERSION Ljava/lang/String;
 	public static final field WATCHDOG_INTERVAL_MS J
-	public synthetic fun <init> (Ljava/lang/String;Leu/purse/core/session/PurseSessionParams;Leu/purse/checkout/session/PaymentSession;Ljava/lang/String;Leu/purse/checkout/PurseCheckoutHooks;Leu/purse/partnerui/PluginOptions;Leu/purse/core/datetime/ServerDatetimeChecker;JLeu/purse/core/environment/PurseEnvironment;Ljava/util/Set;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Leu/purse/core/session/PurseSessionParams;Leu/purse/checkout/session/PaymentSession;Ljava/lang/String;Leu/purse/checkout/PurseCheckoutHooks;Leu/purse/partnerui/PluginOptions;Leu/purse/core/datetime/ServerDatetimeChecker;JLeu/purse/core/environment/PurseEnvironment;Ljava/util/Set;Leu/purse/checkout/monitoring/MonitoringInstance;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun applySecondary (Leu/purse/checkout/payment/item/SavedSecondaryToken;Ljava/math/BigDecimal;)V
 	public final fun applySecondary (Leu/purse/checkout/payment/secondary/SecondaryToken;Ljava/math/BigDecimal;)V
 	public static synthetic fun applySecondary$default (Leu/purse/checkout/PurseHeadlessCheckout;Leu/purse/checkout/payment/item/SavedSecondaryToken;Ljava/math/BigDecimal;ILjava/lang/Object;)V
@@ -142,6 +142,7 @@ public final class eu/purse/checkout/PurseHeadlessCheckout {
 	public final fun getCurrency ()Ljava/lang/String;
 	public final fun getCurrentSessionId ()Ljava/lang/String;
 	public final fun getDisabledMethods ()Ljava/util/Set;
+	public final fun getInstanceId ()Ljava/lang/String;
 	public final fun getItemGenerations ()Lkotlinx/coroutines/flow/StateFlow;
 	public final fun getOptions ()Leu/purse/partnerui/PluginOptions;
 	public final fun getParams ()Leu/purse/core/session/PurseSessionParams;
@@ -1269,15 +1270,14 @@ public final class eu/purse/core/monitoring/MonitoringApiClient {
 	public static final field $stable I
 	public static final field Companion Leu/purse/core/monitoring/MonitoringApiClient$Companion;
 	public static final field PLATFORM_ANDROID Ljava/lang/String;
-	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
-	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun patchExtras (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)V
 	public static synthetic fun patchExtras$default (Leu/purse/core/monitoring/MonitoringApiClient;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;ILjava/lang/Object;)V
 	public final fun sendLogs (Ljava/util/List;)V
 }
 
 public final class eu/purse/core/monitoring/MonitoringApiClient$Companion {
-	public final fun getInstanceId ()Ljava/lang/String;
 }
 
 public final class eu/purse/core/monitoring/SimpleQueue {

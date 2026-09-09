@@ -10,6 +10,7 @@ import eu.purse.checkout.monitoring.CheckoutEventBus
 import eu.purse.checkout.monitoring.CheckoutEventCode
 import eu.purse.checkout.monitoring.CheckoutMonitoring
 import eu.purse.checkout.monitoring.EventLevel
+import eu.purse.checkout.monitoring.MonitoringInstance
 import eu.purse.checkout.monitoring.errorPayload
 import eu.purse.checkout.monitoring.monitoringPayload
 import eu.purse.checkout.monitoring.summarizeValidationResults
@@ -67,6 +68,7 @@ import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.redirect.RedirectAction
 import java.math.BigDecimal
 import java.time.Instant
+import java.util.UUID
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -116,7 +118,17 @@ class PurseHeadlessCheckout private constructor(
     private val lockedEnvironment: PurseEnvironment?,
     /** Methods this app build opts out of — never listed, whatever the session offers; re-applied by [setSession]. */
     val disabledMethods: Set<MethodKey>,
+    /** This checkout's monitoring identity — see [instanceId]. */
+    private val instance: MonitoringInstance,
 ) {
+    /**
+     * Identifies this checkout in Purse's monitoring — the `instanceId` on every message it sends.
+     * Stable for the checkout's life, across [setSession] and [saveState] / [restore], so one
+     * shopper's journey reads as one instance even after Android killed the process. Correlate
+     * your own logs with it.
+     */
+    val instanceId: String get() = instance.id
+
     /** The `widget.data` string the current session came from — what [saveState] carries. */
     private var widgetData: String = initialWidgetData
 
@@ -295,6 +307,8 @@ class PurseHeadlessCheckout private constructor(
                 "user_agent" to CheckoutMonitoring.androidUserAgent(),
                 "device" to CheckoutMonitoring.deviceContext(),
                 "screen" to CheckoutMonitoring.screen(),
+                // Only on a restore: the same instance continues after process death.
+                "restored" to instance.restored.takeIf { it },
             ),
         )
         bus.post(
@@ -863,6 +877,7 @@ class PurseHeadlessCheckout private constructor(
         val json = JSONObject()
             .put(CheckoutSavedState.KEY_VERSION, CheckoutSavedState.VERSION)
             .put(CheckoutSavedState.WIDGET_DATA, widgetData)
+            .put(CheckoutSavedState.INSTANCE_ID, instanceId)
             .put(CheckoutSavedState.LOCKED_ENVIRONMENT, lockedEnvironment?.wireValue ?: JSONObject.NULL)
             .put(
                 CheckoutSavedState.DISABLED_METHODS,
@@ -1713,6 +1728,7 @@ class PurseHeadlessCheckout private constructor(
             datetimeChecker: ServerDatetimeChecker?,
             watchdogIntervalMs: Long = WATCHDOG_INTERVAL_MS,
             disabledMethods: Set<MethodKey> = emptySet(),
+            instance: MonitoringInstance = MonitoringInstance(),
         ): PurseHeadlessCheckout {
             val (params, session, apiRoot) = resolve(widgetData, lockedEnvironment, disabledMethods)
             val checker = datetimeChecker ?: ServerDatetimeChecker(
@@ -1723,10 +1739,11 @@ class PurseHeadlessCheckout private constructor(
             // Monitoring — only against a real checker (i.e. never from unit tests): route the
             // event bus's batches to the monitoring API with this session's context attached.
             if (datetimeChecker == null) {
-                CheckoutMonitoring.install(params, sessionId = params.paymentSession.id, version = VERSION)
+                CheckoutMonitoring.install(params, sessionId = params.paymentSession.id, version = VERSION, instanceId = instance.id)
             }
             return PurseHeadlessCheckout(
                 widgetData, params, session, apiRoot, hooks, options, checker, watchdogIntervalMs, lockedEnvironment, disabledMethods,
+                instance,
             )
         }
 
@@ -1768,6 +1785,8 @@ class PurseHeadlessCheckout private constructor(
                     MethodKey.of(pair.getString("partner"), pair.getString("method"))
                 }.toSet()
             } ?: emptySet()
+            // The saved instance id keeps telemetry on one instance across the process death; a
+            // snapshot from a build that did not save one gets a fresh id.
             val checkout = init(
                 json.getString(CheckoutSavedState.WIDGET_DATA),
                 lockedEnvironment,
@@ -1776,6 +1795,10 @@ class PurseHeadlessCheckout private constructor(
                 datetimeChecker,
                 watchdogIntervalMs,
                 disabled,
+                MonitoringInstance(
+                    id = json.optString(CheckoutSavedState.INSTANCE_ID).ifBlank { UUID.randomUUID().toString() },
+                    restored = true,
+                ),
             )
             checkout.applySavedState(json)
             return checkout

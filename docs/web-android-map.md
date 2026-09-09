@@ -94,6 +94,7 @@ adds or removes a divergence.
 | Amounts in telemetry | `SET_SESSION.amount`, `SECONDARY_TOKEN_TAKE.amount` | never — `nb_methods`, `partial` | SDK-12220 AC: no raw amount in any event |
 | A method's disabled state | only `pluginIsIncompatibleWithClient` and partner errors, through `PARTNER_UI_EVENT` | `HEADLESS_CHECKOUT_METHOD_DISABLED` on every transition (code, filtered, recoverable), plus web's partner-UI event for an incompatible plugin | the suspension model as events (SDK-12220) |
 | `PAYMENT_ERROR` on a thrown error | `message`, `stack` | plus `code`, `api_path`, `api_status`, `api_error`, `outcome_unknown` | a minified Android stack says nothing; the codes do |
+| `instanceId` on the envelope | one per page load (`window.__PURSE_INSTANCE_ID__`) | one per checkout, exposed as `instanceId`, saved with `saveState` and kept by `restore`; CREATE says `restored: true` | a shopper's journey survives process death as one instance |
 | SDK `version` on the envelope | `package.json` version | `SdkVersion.VALUE`, generated from the release tag at build time | `0.0.0-SNAPSHOT` for a local build |
 | UI toolkit | DOM | Compose only: `rememberPaymentElement`, `remember*Coordinator`, `PurseCardForm` | SecureFields Android is Compose-first; a View app hosts a `ComposeView` |
 | Secondaries extension | static configs | `SecondaryConfigs.register`, `pollForToken`, `classifyInitError` hooks | lets a host add an issuer without an SDK release |

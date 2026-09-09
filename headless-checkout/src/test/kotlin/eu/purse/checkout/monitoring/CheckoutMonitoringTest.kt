@@ -55,6 +55,7 @@ class CheckoutMonitoringTest {
             params,
             sessionId = "session-123",
             version = "1.2.3",
+            instanceId = "inst-42",
             monitoringApiRoot = "http://127.0.0.1:${server.address.port}/widget/headless_checkout",
         )
 
@@ -64,6 +65,7 @@ class CheckoutMonitoringTest {
         assertEquals("session-123", first.getString("paymentSessionId"))
         assertEquals("entity-1", first.getString("entityId"))
         assertEquals("1.2.3", first.getString("version"))
+        assertEquals("inst-42", first.getString("instanceId"))
         assertEquals("sandbox", first.getString("env"))
         assertEquals("android", first.getString("platform"))
         assertEquals("direct", first.getString("wrapper"))
@@ -76,5 +78,6 @@ class CheckoutMonitoringTest {
         assertEquals("session-456", second.getString("paymentSessionId"))
         assertEquals("entity-2", second.getString("entityId"))
         assertEquals("1.2.3", second.getString("version"))
+        assertEquals("the instance outlives the session", "inst-42", second.getString("instanceId"))
     }
 }

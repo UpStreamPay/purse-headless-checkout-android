@@ -4,6 +4,7 @@ import eu.purse.checkout.monitoring.CheckoutEventBus
 import eu.purse.checkout.monitoring.CheckoutEventCode
 import eu.purse.checkout.monitoring.CheckoutMonitoringEvent
 import eu.purse.checkout.monitoring.EventLevel
+import eu.purse.checkout.state.CheckoutSavedState
 import eu.purse.core.api.PaymentApiException
 import eu.purse.core.datetime.ServerDatetimeChecker
 import eu.purse.core.payment.Method
@@ -18,6 +19,7 @@ import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -229,5 +231,43 @@ class CheckoutTelemetryTest {
         assertTrue(payload.getInt("nb_methods") > 0)
         assertFalse("web sends the amount; the Android SDK keeps raw amounts out of telemetry", payload.has("amount"))
         assertFalse(payload.toString().contains("4.8"))
+    }
+
+    @Test
+    fun `each checkout has its own instanceId, kept across setSession and restore`() {
+        val first = checkout()
+        val other = checkout()
+        assertTrue(first.instanceId.isNotBlank())
+        assertNotEquals("two checkouts in one process are two instances", first.instanceId, other.instanceId)
+        val creates = events.filter { it.code == CheckoutEventCode.HEADLESS_CHECKOUT_CREATE }
+        assertEquals(2, creates.size)
+        assertTrue("a fresh checkout is not a restored one", creates.none { it.payload?.has("restored") == true })
+
+        val id = first.instanceId
+        val refreshed = CheckoutTestSessions.samplePaymentSessionJson.replace("session-123", "session-456")
+        runBlocking { first.setSession(CheckoutTestSessions.widgetData(refreshed)) }
+        assertEquals("session-456", first.currentSessionId)
+        assertEquals("a new session is the same instance", id, first.instanceId)
+
+        events.clear()
+        val restored = PurseHeadlessCheckout.restore(first.saveState(), datetimeChecker = offlineChecker(), watchdogIntervalMs = 60_000)
+        assertEquals("process death does not start a new instance", first.instanceId, restored.instanceId)
+        assertTrue(payload(CheckoutEventCode.HEADLESS_CHECKOUT_CREATE).getBoolean("restored"))
+    }
+
+    @Test
+    fun `a snapshot without an instanceId (older build) restores with a fresh one`() {
+        val checkout = checkout()
+        val json = JSONObject(checkout.saveState().toJson())
+        json.remove("instanceId")
+
+        val restored = PurseHeadlessCheckout.restore(
+            CheckoutSavedState.fromJson(json.toString()),
+            datetimeChecker = offlineChecker(),
+            watchdogIntervalMs = 60_000,
+        )
+
+        assertTrue(restored.instanceId.isNotBlank())
+        assertNotEquals(checkout.instanceId, restored.instanceId)
     }
 }

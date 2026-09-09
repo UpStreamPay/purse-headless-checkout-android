@@ -21,7 +21,8 @@ import org.json.JSONObject
  * A snapshot of a `PurseHeadlessCheckout` — everything needed to pick a payment up where the
  * shopper left it after Android killed the process: the client session, the primary selection,
  * the applied gift cards and their slices, the save decisions, what the native steps collected,
- * and whether a submit had already left the device. Obtain one with
+ * whether a submit had already left the device, and the monitoring instance id (so telemetry after
+ * a restore continues the same instance). Obtain one with
  * `PurseHeadlessCheckout.saveState()`, store it (`SavedStateHandle`, `onSaveInstanceState`,
  * `rememberSaveable`), hand it back to `PurseHeadlessCheckout.restore`.
  *
@@ -58,6 +59,7 @@ class CheckoutSavedState internal constructor(internal val json: JSONObject) : P
         internal const val WIDGET_DATA = "widgetData"
         internal const val LOCKED_ENVIRONMENT = "lockedEnvironment"
         internal const val DISABLED_METHODS = "disabledMethods"
+        internal const val INSTANCE_ID = "instanceId"
         internal const val PRIMARY_ID = "primaryId"
         internal const val SECONDARIES = "secondaries"
         internal const val REGISTRATION_BY_METHOD = "registrationByMethod"

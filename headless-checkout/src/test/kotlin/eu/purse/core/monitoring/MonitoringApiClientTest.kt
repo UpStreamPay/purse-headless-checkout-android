@@ -48,6 +48,7 @@ class MonitoringApiClientTest {
         apiKey = "key-123",
         monitoringApiRoot = "http://127.0.0.1:${server.address.port}/widget/headless_checkout",
         envWireValue = "sandbox",
+        instanceId = "inst-1",
     )
 
     @Test
@@ -76,7 +77,7 @@ class MonitoringApiClientTest {
             assertEquals("entity-1", message.getString("entityId"))
             assertEquals("session-1", message.getString("paymentSessionId"))
             assertEquals("0.1.0", message.getString("version"))
-            assertEquals(MonitoringApiClient.instanceId, message.getString("instanceId"))
+            assertEquals("inst-1", message.getString("instanceId"))
             assertTrue(message.getJSONObject("event").getString("code").startsWith("HEADLESS_CHECKOUT_"))
         }
         assertEquals("HEADLESS_CHECKOUT_READY", batch.getJSONObject(1).getJSONObject("event").getString("code"))

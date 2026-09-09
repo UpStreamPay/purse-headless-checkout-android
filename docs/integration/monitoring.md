@@ -25,7 +25,7 @@ One message per event, identical to web's `MonitoringApiEventMessage` plus `plat
 | Field | Value |
 |---|---|
 | `event` | `{ code, type, dateString, payload }` — see below |
-| `instanceId` | one UUID per app process (web: per page) |
+| `instanceId` | one UUID per checkout instance (`PurseHeadlessCheckout.instanceId`), kept across `setSession` and `saveState` / `restore` — web: one per page load |
 | `entityId` | the merchant entity of the session |
 | `paymentSessionId` | the current session — re-stamped by `setSession` |
 | `walletSessionId` | when the session carries a wallet session |
@@ -41,7 +41,7 @@ Android additions marked.
 
 | Code | Level | When | Payload |
 |---|---|---|---|
-| `HEADLESS_CHECKOUT_CREATE` | INFO | `init` / `restore` | `sessionType`, `user_agent`, **`device`** `{os, os_version, sdk_int, manufacturer, model}`, `screen` `{width, height, devicePixelRatio}` |
+| `HEADLESS_CHECKOUT_CREATE` | INFO | `init` / `restore` | `sessionType`, `user_agent`, **`device`** `{os, os_version, sdk_int, manufacturer, model}`, `screen` `{width, height, devicePixelRatio}`, **`restored: true`** when `restore` rebuilt the checkout |
 | `HEADLESS_CHECKOUT_SET_SESSION` | INFO | `init`, `setSession` | `paymentSessionId`, `sessionType`, `nb_methods`; on refresh `previousPaymentSessionId`, `nb_surviving_methods` (no amount — web sends one) |
 | **`HEADLESS_CHECKOUT_METHOD_DISABLED`** | INFO / WARNING | a method enters a `DisabledState` | `partner`, `method`, `code` (the state's code, or `MISSING_PARTNER_ARTIFACT` + `artifact`), `filtered`, `recoverable`. WARNING for a technical failure (`TOKEN_INIT_FAILED`, `PARTNER_UI_FATAL_ERROR`, `FATAL_ERROR_BEFORE_RENDER`, missing artifact), INFO for a nominal one (platform suspension, amount rule, incompatible plugin) |
 | `HEADLESS_CHECKOUT_READY` | INFO | end of construction | — |
@@ -88,7 +88,7 @@ Not in any event, by construction:
   its `status` only, and a Payment API error message never quotes the response body;
 - a `DisabledState`'s message (it can quote amounts) — only its code.
 
-What is collected: the entity, session and wallet-session ids, partner/method, the SDK version, the
+What is collected: the entity, session, wallet-session and checkout-instance ids, partner/method, the SDK version, the
 device model and OS version, error codes, capped stack traces and messages.
 
 There is no opt-out yet (Notion US-32): telemetry is on whenever the session has an `api_key`.
