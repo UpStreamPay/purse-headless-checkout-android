@@ -10,7 +10,10 @@ import eu.purse.checkout.monitoring.CheckoutEventBus
 import eu.purse.checkout.monitoring.CheckoutEventCode
 import eu.purse.checkout.monitoring.CheckoutMonitoring
 import eu.purse.checkout.monitoring.EventLevel
+import eu.purse.checkout.monitoring.MonitoringInstance
+import eu.purse.checkout.monitoring.errorPayload
 import eu.purse.checkout.monitoring.monitoringPayload
+import eu.purse.checkout.monitoring.summarizeValidationResults
 import eu.purse.checkout.payment.item.DisabledState
 import eu.purse.checkout.payment.item.MethodAvailability
 import eu.purse.checkout.payment.item.PaymentItem
@@ -36,6 +39,7 @@ import eu.purse.checkout.state.toCollectedMap
 import eu.purse.checkout.state.toSavedJson
 import eu.purse.checkout.validation.PaymentValidator
 import eu.purse.checkout.wallet.WalletTokens
+import eu.purse.core.SdkVersion
 import eu.purse.core.api.PaymentApiClient
 import eu.purse.core.api.PaymentApiException
 import eu.purse.core.api.WalletApiClient
@@ -64,6 +68,7 @@ import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.redirect.RedirectAction
 import java.math.BigDecimal
 import java.time.Instant
+import java.util.UUID
 import kotlinx.coroutines.CoroutineExceptionHandler
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -113,7 +118,17 @@ class PurseHeadlessCheckout private constructor(
     private val lockedEnvironment: PurseEnvironment?,
     /** Methods this app build opts out of — never listed, whatever the session offers; re-applied by [setSession]. */
     val disabledMethods: Set<MethodKey>,
+    /** This checkout's monitoring identity — see [instanceId]. */
+    private val instance: MonitoringInstance,
 ) {
+    /**
+     * Identifies this checkout in Purse's monitoring — the `instanceId` on every message it sends.
+     * Stable for the checkout's life, across [setSession] and [saveState] / [restore], so one
+     * shopper's journey reads as one instance even after Android killed the process. Correlate
+     * your own logs with it.
+     */
+    val instanceId: String get() = instance.id
+
     /** The `widget.data` string the current session came from — what [saveState] carries. */
     private var widgetData: String = initialWidgetData
 
@@ -143,7 +158,8 @@ class PurseHeadlessCheckout private constructor(
                 bus.post(
                     CheckoutEventCode.HEADLESS_CHECKOUT_UNCAUGHT_ERROR,
                     EventLevel.ERROR,
-                    monitoringPayload("stack" to e.stackTraceToString().take(4_000)),
+                    // Web caps its stacks at 1 000; a minified stack says no more past that.
+                    monitoringPayload("stack" to e.stackTraceToString().take(1_000)),
                 )
             },
     )
@@ -157,6 +173,10 @@ class PurseHeadlessCheckout private constructor(
      * outright (`payment.ts:88-97`).
      */
     private var meansOfPayment: List<PaymentItem> = session.meansOfPayment
+        set(value) {
+            reportDisabledTransitions(field, value)
+            field = value
+        }
 
     /** Interactively-collected data per method id (e.g. a Google Pay token) — see [setCollected]. */
     private val collectedByMethod = mutableMapOf<String, Map<String, Any?>>()
@@ -279,19 +299,29 @@ class PurseHeadlessCheckout private constructor(
         // Web emits CREATE + SET_SESSION + READY across init/setSession; one construction here.
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_CREATE,
-            // Web sends navigator.userAgent here; the platform itself travels on the message
-            // envelope (`platform: android`), so this stays a genuine user agent.
-            payload = monitoringPayload("sessionType" to "v2", "user_agent" to CheckoutMonitoring.androidUserAgent()),
+            // Web sends navigator.userAgent + screen here; the platform itself travels on the message
+            // envelope (`platform: android`), so this stays a genuine user agent, and `device` adds
+            // what RUN would parse out of a web user agent (OS version, model).
+            payload = monitoringPayload(
+                "sessionType" to "v2",
+                "user_agent" to CheckoutMonitoring.androidUserAgent(),
+                "device" to CheckoutMonitoring.deviceContext(),
+                "screen" to CheckoutMonitoring.screen(),
+                // Only on a restore: the same instance continues after process death.
+                "restored" to instance.restored.takeIf { it },
+            ),
         )
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_SET_SESSION,
             payload = monitoringPayload(
                 "paymentSessionId" to session.id,
                 "sessionType" to "v2",
-                "amount" to session.amount.toPlainString(),
+                // No amount (web sends one): SDK-12220 keeps raw amounts out of every event.
                 "nb_methods" to session.meansOfPayment.size,
             ),
         )
+        // The states the session was built with (a platform suspension, an unreachable minimum).
+        reportDisabledTransitions(emptyList(), meansOfPayment)
         bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_READY)
 
         startExpiryWatchdog()
@@ -308,11 +338,7 @@ class PurseHeadlessCheckout private constructor(
                         payload = monitoringPayload("walletSessionId" to params.walletSession?.sessionId),
                     )
                 } catch (e: Exception) {
-                    bus.post(
-                        CheckoutEventCode.HEADLESS_CHECKOUT_SET_WALLET_SESSION_FAILED,
-                        EventLevel.ERROR,
-                        monitoringPayload("message" to e.message),
-                    )
+                    bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_SET_WALLET_SESSION_FAILED, EventLevel.ERROR, errorPayload(e))
                 }
             }
         }
@@ -393,16 +419,40 @@ class PurseHeadlessCheckout private constructor(
             if (plugin == null) {
                 // A method the session offers but no plugin serves. When a Purse artifact would serve
                 // it, say which one: the most likely cause is a missing Gradle dependency.
-                PartnerArtifacts.forMethod(item.partner, item.method)?.let {
+                PartnerArtifacts.forMethod(item.partner, item.method)?.let { artifact ->
                     val hint = PartnerArtifacts.missingPluginMessage(item.partner, item.method)
                     Log.w("PurseHeadlessCheckout", "session offers ${item.id} but $hint")
+                    // An integration gap Purse would otherwise never see: the merchant ships without
+                    // the artifact and the method silently never renders.
+                    bus.post(
+                        CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_DISABLED,
+                        EventLevel.WARNING,
+                        monitoringPayload(
+                            "partner" to item.partner.wireValue,
+                            "method" to item.method.wireValue,
+                            "code" to MISSING_PARTNER_ARTIFACT,
+                            "artifact" to artifact,
+                        ),
+                    )
                 }
                 return@forEach
             }
             scope.launch {
                 try {
                     plugin.ensureClientCompatibility(pluginContext(item))
-                } catch (_: Exception) {
+                } catch (e: Exception) {
+                    // Web's `pluginIsIncompatibleWithClient` partner-UI event — a nominal deactivation,
+                    // logged as a WARNING since SDK-12071, never an error.
+                    bus.post(
+                        CheckoutEventCode.HEADLESS_CHECKOUT_PARTNER_UI_EVENT,
+                        EventLevel.WARNING,
+                        monitoringPayload(
+                            "code" to PLUGIN_INCOMPATIBLE_EVENT,
+                            "partner" to item.partner.wireValue,
+                            "method" to item.method.wireValue,
+                            "reason" to e.message?.take(MAX_REASON_LENGTH),
+                        ),
+                    )
                     deactivate(item, DisabledState.PluginIncompatible)
                 }
             }
@@ -495,6 +545,7 @@ class PurseHeadlessCheckout private constructor(
         params = newParams
         session = newSession
         paymentApiRoot = newRoot
+        CheckoutMonitoring.sessionChanged(newParams, newSession.id)
         meansOfPayment = newSession.meansOfPayment
         splitter.reset(newSession.amount)
         // Beyond web (which resets the whole split): an unchanged, still-selectable primary stays
@@ -514,7 +565,6 @@ class PurseHeadlessCheckout private constructor(
                 "paymentSessionId" to newSession.id,
                 "previousPaymentSessionId" to previous.id,
                 "sessionType" to "v2",
-                "amount" to newSession.amount.toPlainString(),
                 "nb_methods" to newSession.meansOfPayment.size,
                 "nb_surviving_methods" to survivingMethodIds.size,
             ),
@@ -827,6 +877,7 @@ class PurseHeadlessCheckout private constructor(
         val json = JSONObject()
             .put(CheckoutSavedState.KEY_VERSION, CheckoutSavedState.VERSION)
             .put(CheckoutSavedState.WIDGET_DATA, widgetData)
+            .put(CheckoutSavedState.INSTANCE_ID, instanceId)
             .put(CheckoutSavedState.LOCKED_ENVIRONMENT, lockedEnvironment?.wireValue ?: JSONObject.NULL)
             .put(
                 CheckoutSavedState.DISABLED_METHODS,
@@ -960,7 +1011,8 @@ class PurseHeadlessCheckout private constructor(
             payload = monitoringPayload(
                 "partner" to token.partner.wireValue,
                 "method" to token.method.wireValue,
-                "amount" to (amount ?: token.balance).toPlainString(),
+                // Whether the shopper chose the slice, never how much it is.
+                "partial" to (amount != null),
             ),
         )
         refresh()
@@ -1117,7 +1169,7 @@ class PurseHeadlessCheckout private constructor(
             bus.post(
                 CheckoutEventCode.HEADLESS_CHECKOUT_PAYMENT_ERROR,
                 EventLevel.WARNING,
-                monitoringPayload("message" to "saved secondary token init failed: ${e.message}", "tokenId" to token.id),
+                errorPayload(e, "saved secondary token init failed", "tokenId" to token.id),
             )
         }
     }
@@ -1219,15 +1271,56 @@ class PurseHeadlessCheckout private constructor(
             // Informational — merchants observe these on [pluginEvents].
             PluginEvent.Redirect, PluginEvent.Cancelled -> Unit
         }
+        // Web's `resolveUIEventLevel`: a partner failure is an error, one the method recovers from a
+        // warning, everything else informational.
+        val level = when (event) {
+            is PluginEvent.InitFailed, is PluginEvent.ClientError -> EventLevel.ERROR
+            is PluginEvent.PartnerError -> if (event.recoverable) EventLevel.WARNING else EventLevel.ERROR
+            else -> EventLevel.INFO
+        }
+        val reason = when (event) {
+            is PluginEvent.InitFailed -> event.message
+            is PluginEvent.ClientError -> event.message
+            is PluginEvent.PartnerError -> event.message
+            else -> null
+        }
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_PARTNER_UI_EVENT,
-            payload = monitoringPayload(
+            level,
+            monitoringPayload(
                 "code" to event.code,
                 "partner" to item.partner.wireValue,
                 "method" to item.method.wireValue,
+                "reason" to reason?.take(MAX_REASON_LENGTH),
             ),
         )
         _pluginEvents.tryEmit(CheckoutPluginEvent(item.id, event))
+    }
+
+    /**
+     * One `HEADLESS_CHECKOUT_METHOD_DISABLED` per method whose disabled state changed between [before]
+     * and [after] — the suspension model as events (SDK-12220). A technical failure is a WARNING; a
+     * nominal deactivation (suspended by the platform, amount rule, incompatible plugin) is INFO and
+     * never pollutes the error dashboards. Only the code travels: a state's message can quote amounts.
+     */
+    private fun reportDisabledTransitions(before: List<PaymentItem>, after: List<PaymentItem>) {
+        val previous = before.associate { it.id to it.disabled?.code }
+        after.forEach { item ->
+            val state = item.disabled ?: return@forEach
+            if (previous[item.id] == state.code) return@forEach
+            val technical = state.isTechnicallyDisabled || state.code == DisabledState.Code.FATAL_ERROR_BEFORE_RENDER
+            bus.post(
+                CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_DISABLED,
+                if (technical) EventLevel.WARNING else EventLevel.INFO,
+                monitoringPayload(
+                    "partner" to item.partner.wireValue,
+                    "method" to item.method.wireValue,
+                    "code" to state.code.name,
+                    "filtered" to state.isFiltered,
+                    "recoverable" to state.isRecoverable,
+                ),
+            )
+        }
     }
 
     /**
@@ -1428,15 +1521,32 @@ class PurseHeadlessCheckout private constructor(
             // call: the session's single validation is spent either way (web's `#validationConsumed`).
             validationConsumed = true
             _sessionState.value = if (result.isSuccess) SessionState.SUBMITTED else SessionState.ERROR
-            bus.post(
-                if (result.isSuccess) {
-                    CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_SUCCESS
-                } else {
-                    CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_FAILED
-                },
-                if (result.isSuccess) EventLevel.SUCCESS else EventLevel.ERROR,
-                monitoringPayload("global_status" to result.globalStatus),
-            )
+            // Web levels: a refused payment is a WARNING on VALIDATION_FAILED and an ERROR on the
+            // PAYMENT_ERROR that follows it, both saying why attempt by attempt (SDK-12197).
+            val attempts = summarizeValidationResults(result.raw)
+            if (result.isSuccess) {
+                bus.post(
+                    CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_SUCCESS,
+                    EventLevel.SUCCESS,
+                    monitoringPayload("global_status" to result.globalStatus, "results" to attempts),
+                )
+            } else {
+                bus.post(
+                    CheckoutEventCode.HEADLESS_CHECKOUT_VALIDATION_FAILED,
+                    EventLevel.WARNING,
+                    monitoringPayload("global_status" to result.globalStatus, "results" to attempts),
+                )
+                bus.post(
+                    CheckoutEventCode.HEADLESS_CHECKOUT_PAYMENT_ERROR,
+                    EventLevel.ERROR,
+                    monitoringPayload(
+                        "message" to "validate answered ${result.globalStatus}",
+                        "api_status" to result.globalStatus,
+                        "has_redirection" to (result.redirection?.url != null),
+                        "results" to summarizeValidationResults(result.raw, onlyFailures = true),
+                    ),
+                )
+            }
             result
         } catch (e: Throwable) {
             _sessionState.value = when {
@@ -1446,11 +1556,7 @@ class PurseHeadlessCheckout private constructor(
                 e is PurseCheckoutException.HookFailed -> SessionState.READY
                 else -> SessionState.ERROR
             }
-            bus.post(
-                CheckoutEventCode.HEADLESS_CHECKOUT_PAYMENT_ERROR,
-                EventLevel.ERROR,
-                monitoringPayload("message" to e.message),
-            )
+            bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_PAYMENT_ERROR, EventLevel.ERROR, errorPayload(e))
             throw e
         } finally {
             submitting = false
@@ -1622,6 +1728,7 @@ class PurseHeadlessCheckout private constructor(
             datetimeChecker: ServerDatetimeChecker?,
             watchdogIntervalMs: Long = WATCHDOG_INTERVAL_MS,
             disabledMethods: Set<MethodKey> = emptySet(),
+            instance: MonitoringInstance = MonitoringInstance(),
         ): PurseHeadlessCheckout {
             val (params, session, apiRoot) = resolve(widgetData, lockedEnvironment, disabledMethods)
             val checker = datetimeChecker ?: ServerDatetimeChecker(
@@ -1632,10 +1739,11 @@ class PurseHeadlessCheckout private constructor(
             // Monitoring — only against a real checker (i.e. never from unit tests): route the
             // event bus's batches to the monitoring API with this session's context attached.
             if (datetimeChecker == null) {
-                CheckoutMonitoring.install(params, sessionId = params.paymentSession.id, version = VERSION)
+                CheckoutMonitoring.install(params, sessionId = params.paymentSession.id, version = VERSION, instanceId = instance.id)
             }
             return PurseHeadlessCheckout(
                 widgetData, params, session, apiRoot, hooks, options, checker, watchdogIntervalMs, lockedEnvironment, disabledMethods,
+                instance,
             )
         }
 
@@ -1677,6 +1785,8 @@ class PurseHeadlessCheckout private constructor(
                     MethodKey.of(pair.getString("partner"), pair.getString("method"))
                 }.toSet()
             } ?: emptySet()
+            // The saved instance id keeps telemetry on one instance across the process death; a
+            // snapshot from a build that did not save one gets a fresh id.
             val checkout = init(
                 json.getString(CheckoutSavedState.WIDGET_DATA),
                 lockedEnvironment,
@@ -1685,6 +1795,10 @@ class PurseHeadlessCheckout private constructor(
                 datetimeChecker,
                 watchdogIntervalMs,
                 disabled,
+                MonitoringInstance(
+                    id = json.optString(CheckoutSavedState.INSTANCE_ID).ifBlank { UUID.randomUUID().toString() },
+                    restored = true,
+                ),
             )
             checkout.applySavedState(json)
             return checkout
@@ -1715,7 +1829,19 @@ class PurseHeadlessCheckout private constructor(
         /** Web's `ServerDatetimeChecker.WATCHDOG_DURATION`. */
         const val WATCHDOG_INTERVAL_MS = 5_000L
 
-        /** SDK version stamped onto every monitoring message — web's `version` extra. */
-        const val VERSION = "0.1.0"
+        /** Web's partner-UI event code for a plugin refusing the client (`events.ts`). */
+        private const val PLUGIN_INCOMPATIBLE_EVENT = "pluginIsIncompatibleWithClient"
+
+        /** `METHOD_DISABLED` code for a method whose optional artifact the app does not ship — not a [DisabledState.Code]. */
+        private const val MISSING_PARTNER_ARTIFACT = "MISSING_PARTNER_ARTIFACT"
+
+        /** Partner and plugin wording is free text: capped like web caps its descriptions. */
+        private const val MAX_REASON_LENGTH = 200
+
+        /**
+         * SDK version stamped onto every monitoring message — web's `version` extra. The value the
+         * artifact is published under (release tag in CI, `0.0.0-SNAPSHOT` for a local build).
+         */
+        const val VERSION = SdkVersion.VALUE
     }
 }

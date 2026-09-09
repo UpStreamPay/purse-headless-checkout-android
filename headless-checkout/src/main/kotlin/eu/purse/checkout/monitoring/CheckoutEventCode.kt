@@ -1,6 +1,6 @@
 // Web: packages/headless-checkout/src/monitoring/monitoringConfigs.ts
 // Same: the same 40 codes and levels.
-// Differs: nothing.
+// Differs: `HEADLESS_CHECKOUT_METHOD_DISABLED` — web has no event for a method's disabled state.
 package eu.purse.checkout.monitoring
 
 /**
@@ -8,6 +8,11 @@ package eu.purse.checkout.monitoring
  * `PurseHeadlessCheckoutEventPayload` keys (`monitoring/checkout-event-bus.ts`). Codes whose web
  * trigger has no Android feature yet (payment elements, wallet tokens, loan simulation) are still
  * declared so dashboards see one vocabulary; they start firing as those features land.
+ *
+ * [HEADLESS_CHECKOUT_METHOD_DISABLED] is Android-first: every transition of a method into a
+ * [eu.purse.checkout.payment.item.DisabledState] (a platform suspension, an amount rule, a partner
+ * failure, an incompatible plugin) as one event with the state's `code` — what the Analytics Events
+ * page lists as "Disabled states" and web only exposes through its partner-UI firehose.
  */
 enum class CheckoutEventCode {
     HEADLESS_CHECKOUT_CLEAR_PRIMARY_SPLIT,
@@ -17,6 +22,7 @@ enum class CheckoutEventCode {
     HEADLESS_CHECKOUT_EXPIRED_SESSION,
     HEADLESS_CHECKOUT_METHOD_GET_PAYMENT_ELEMENT,
     HEADLESS_CHECKOUT_METHOD_GET_HOSTED_FIELDS,
+    HEADLESS_CHECKOUT_METHOD_DISABLED,
     HEADLESS_CHECKOUT_METHOD_GET_SECONDARY_TOKEN,
     HEADLESS_CHECKOUT_METHOD_LOAN_SIM,
     HEADLESS_CHECKOUT_METHOD_REGISTER,

@@ -1,6 +1,7 @@
 package eu.purse.checkout
 
 import java.util.Base64
+import org.json.JSONArray
 import org.json.JSONObject
 
 /**
@@ -120,5 +121,25 @@ internal object CheckoutTestSessions {
             .put("entity_id", "entity-1")
             .put("payment_session", JSONObject(paymentSessionJson))
         return Base64.getEncoder().encodeToString(root.toString().toByteArray())
+    }
+
+    /** The fixture plus a saved PayPal token (`integrated_tokens`) on the wallet primary. */
+    fun paypalTokenSessionJson(): String {
+        val session = JSONObject(samplePaymentSessionJson)
+        session.getJSONObject("protocols").getJSONObject("paypal").getJSONObject("wallet").put(
+            "integrated_tokens",
+            JSONArray().put(
+                JSONObject(
+                    """
+                    {
+                      "id": "pp-1", "value": "pp-value-1", "favorite": false, "name": "my paypal",
+                      "source": "MERCHANT", "created_at": "2026-03-01T00:00:00Z",
+                      "description": { "display_token": "buyer@example.com" }
+                    }
+                    """,
+                ),
+            ),
+        )
+        return session.toString()
     }
 }
