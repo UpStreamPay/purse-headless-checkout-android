@@ -88,6 +88,7 @@ class PurseCheckoutHooks(
 | `currency` | `String` | Session currency code. |
 | `isInformationRequest` | `Boolean` | Whether this session is a zero-amount information request rather than a real charge. |
 | `currentSessionId` | `String` | The Payment API session id (`session.id`). |
+| `instanceId` | `String` | This checkout's id in Purse's monitoring (`instanceId` on every event). Stable across `setSession` and `saveState` / `restore`; correlate your own logs with it. |
 
 ### `setSession` — refresh the session without rebuilding the checkout
 

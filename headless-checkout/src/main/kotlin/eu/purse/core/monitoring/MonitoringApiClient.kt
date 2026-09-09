@@ -32,6 +32,12 @@ class MonitoringApiClient(
      * SDK: `direct` or `dropin`).
      */
     private val platform: String = PLATFORM_ANDROID,
+    /**
+     * The analog of web's `window.__PURSE_INSTANCE_ID__` — one id per checkout instance here (web:
+     * per page load), kept across `setSession` and `saveState`/`restore` so one shopper's journey
+     * reads as one instance even after Android killed the process.
+     */
+    private val instanceId: String = UUID.randomUUID().toString(),
 ) {
     private val root: String = monitoringApiRoot.trimEnd('/')
 
@@ -91,9 +97,6 @@ class MonitoringApiClient(
 
     companion object {
         const val PLATFORM_ANDROID = "android"
-
-        /** Process-scoped analog of web's `window.__PURSE_INSTANCE_ID__`. */
-        val instanceId: String = UUID.randomUUID().toString()
 
         private val EXECUTOR = Executors.newSingleThreadExecutor { runnable ->
             Thread(runnable, "purse-monitoring").apply { isDaemon = true }

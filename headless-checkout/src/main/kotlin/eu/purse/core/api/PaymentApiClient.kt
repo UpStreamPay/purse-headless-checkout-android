@@ -161,10 +161,13 @@ class PaymentApiClient(
             val stream = if (code < 400) connection.inputStream else connection.errorStream
             val responseBody = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (code >= 400) {
+                // The body stays out of the message: it is partner/backend wording that ends up in
+                // telemetry and merchant logs. The parsed `error` code is what a caller acts on.
+                val errorCode = parseErrorCode(responseBody)
                 throw PaymentApiException(
-                    "Payment API $method $path failed: HTTP $code $responseBody",
+                    "Payment API $method $path failed: HTTP $code" + (errorCode?.let { " ($it)" } ?: ""),
                     status = code,
-                    errorCode = parseErrorCode(responseBody),
+                    errorCode = errorCode,
                     path = path,
                 )
             }
