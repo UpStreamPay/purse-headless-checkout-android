@@ -89,6 +89,9 @@ dependencies {
     implementation(libs.androidx.ui)
     implementation(libs.androidx.material3)
     implementation(libs.androidx.activity.compose)
+    // Payment-method logos: the SDK hands back CDN SVG badge URLs (`checkout.iconUrl`), Coil draws them.
+    implementation(libs.coil.compose)
+    implementation(libs.coil.svg)
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.espresso.core)
     androidTestImplementation(libs.androidx.junit)
