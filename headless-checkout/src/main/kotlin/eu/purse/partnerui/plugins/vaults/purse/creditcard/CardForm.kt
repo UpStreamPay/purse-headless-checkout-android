@@ -3,17 +3,22 @@
 // Differs: Compose around SecureFields' `VaultField`s.
 package eu.purse.partnerui.plugins.vaults.purse.creditcard
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
@@ -105,7 +110,9 @@ private fun ThemedField(
                 modifier = Modifier.padding(bottom = 4.dp),
             )
         }
-        VaultField(controller, Modifier.fillMaxWidth().height(48.dp))
+        FieldFrame(theme, focused = state.focused, invalid = invalid) {
+            VaultField(controller, Modifier.fillMaxWidth().height(FIELD_HEIGHT_DP.dp))
+        }
         val helper = message ?: texts.helperText?.takeIf { state.focused && it.isNotBlank() }
         if (helper != null) {
             BasicText(
@@ -116,6 +123,46 @@ private fun ThemedField(
         }
     }
 }
+
+/**
+ * The box around a secure field — web's `BaseInput` border, radius and padding, which SecureFields'
+ * bare `EditText` does not draw itself. The fill is the theme's `input.backgroundColor` (its `:focus`
+ * variant while focused); the 1dp border is the input text colour at low alpha at rest, the label
+ * colour while focused, and the `:invalid` helper colour when the field is in error, so the three
+ * states read without the merchant declaring border colours the theme has no scope for.
+ */
+@Composable
+private fun FieldFrame(
+    theme: PurseTheme.Resolved,
+    focused: Boolean,
+    invalid: Boolean,
+    content: @Composable () -> Unit,
+) {
+    val input = if (focused) theme.inputFocus else theme.input
+    val fill = ThemeValues.colorArgb(input.backgroundColor)?.let { Color(it.toInt()) } ?: Color.Transparent
+    val ink = ThemeValues.colorArgb(input.color)?.let { Color(it.toInt()) } ?: Color.Black
+    val border = when {
+        invalid -> ThemeValues.colorArgb(theme.helperTextInvalid.color)?.let { Color(it.toInt()) } ?: ink
+        focused -> ThemeValues.colorArgb(theme.label.color)?.let { Color(it.toInt()) } ?: ink
+        else -> ink.copy(alpha = REST_BORDER_ALPHA)
+    }
+    val shape = RoundedCornerShape(FIELD_RADIUS_DP.dp)
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .clip(shape)
+            .background(fill)
+            .border(if (focused || invalid) 2.dp else 1.dp, border, shape)
+            .padding(horizontal = FIELD_PADDING_DP.dp),
+    ) {
+        content()
+    }
+}
+
+private const val FIELD_HEIGHT_DP = 52
+private const val FIELD_RADIUS_DP = 12
+private const val FIELD_PADDING_DP = 12
+private const val REST_BORDER_ALPHA = 0.22f
 
 /** Per-field UI state, reduced from SecureFields' change/focus/blur events. */
 internal data class FieldUiState(
