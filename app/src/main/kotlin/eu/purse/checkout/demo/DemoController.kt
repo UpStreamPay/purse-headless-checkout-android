@@ -20,6 +20,7 @@ import eu.purse.checkout.payment.item.SavedSecondaryToken
 import eu.purse.checkout.payment.item.SecondaryMethod
 import eu.purse.checkout.payment.secondary.SecondaryToken
 import eu.purse.checkout.payment.split.PaymentSplit
+import eu.purse.checkout.state.SessionState
 import eu.purse.core.error.PurseException
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
@@ -360,7 +361,7 @@ class DemoController(private val activity: ComponentActivity) {
         val co = checkout ?: return
         val live = item?.let { liveItem(it) }
         val disabled = live?.disabled
-        if (disabled != null) {
+        if (disabled != null && disabled !is DisabledState.Submitting) {
             // The SDK refuses a disabled primary (`MethodDisabled`); the row already says why.
             snackbar = disabledReason(activity, live, co.currency)
             return
@@ -410,7 +411,7 @@ class DemoController(private val activity: ComponentActivity) {
         return object : PaymentElementListener {
             override fun onOutcome(outcome: PaymentOutcome) = when (outcome) {
                 PaymentOutcome.Canceled -> cancel(label)
-                is PaymentOutcome.Failed -> fail(label, outcome, inFlight = submitting)
+                is PaymentOutcome.Failed -> fail(label, outcome, inFlight = isPaying(item))
                 else -> finishWith(label, outcome)
             }
             override fun onRequiresAction() = announceAction(label)
@@ -457,6 +458,20 @@ class DemoController(private val activity: ComponentActivity) {
     /** Whether this gift card's config asks for a CVC alongside the PAN. */
     fun requiresCvv(method: SecondaryMethod): Boolean =
         checkout?.secondaryConfig(method)?.requiresCvv("") ?: false
+
+    /**
+     * Whether a `Failed` from [item]'s element is *this* payment failing, or just that element
+     * complaining on the side (an express button's `/init` on composition, a widget that failed to
+     * load). Only the selected element is paying through the shared button; an express element is
+     * paying only while the SDK has a submit in flight.
+     */
+    private fun isPaying(item: PaymentItem): Boolean {
+        val co = checkout ?: return false
+        return when {
+            item is PrimaryMethod && isExpress(item) -> co.sessionState.value == SessionState.SUBMITTING
+            else -> submitting && selectedItem?.id == item.id
+        }
+    }
 
     /** The shared "Pay" button: split covered, and the selected element (if any) ready. */
     fun submitEnabled(fulfilled: Boolean): Boolean =
@@ -886,7 +901,9 @@ fun disabledReason(context: android.content.Context, item: PaymentItem, currency
         is DisabledState.MinAmountNotMet -> context.getString(R.string.disabled_min_amount, moneyText(state.minAmount, currency))
         is DisabledState.AmountConditionUnreachable -> context.getString(R.string.disabled_amount_unreachable)
         DisabledState.PaymentFulfilled -> context.getString(R.string.disabled_fulfilled)
-        DisabledState.Submitting -> context.getString(R.string.submitting)
+        // A payment in flight locks every method, but that is the busy overlay's job to show; treating
+        // it as "disabled" here would collapse the selected element and cancel its coordinator mid-submit.
+        DisabledState.Submitting -> null
         else -> context.getString(R.string.disabled_unavailable)
     }
 

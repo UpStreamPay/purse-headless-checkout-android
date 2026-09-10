@@ -110,7 +110,13 @@ private fun PaymentSection(controller: DemoController, checkout: PurseHeadlessCh
     val liveMethods by checkout.paymentMethods.collectAsState()
     SectionTitle(stringResource(R.string.section_payment))
 
-    val express = controller.expressMethods.filter { method -> liveMethods.none { it.id == method.id && it.disabled != null } }
+    // Hide an express button only for a real disabled state (amount rules, technical failure): the
+    // SUBMITTING lock of a payment in flight must not dispose the buttons' coordinators.
+    val context = LocalContext.current
+    val express = controller.expressMethods.filter { method ->
+        val live = liveMethods.firstOrNull { it.id == method.id } ?: method
+        disabledReason(context, live, checkout.currency) == null
+    }
     if (express.isNotEmpty()) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             express.forEach { ExpressElement(controller, it) }
@@ -303,7 +309,9 @@ private fun SelectableRow(controller: DemoController, item: PaymentItem) {
                 }
             }
         }
-        AnimatedVisibility(selected && !disabled) { ElementBody(controller, item) }
+        // The element must stay composed for as long as it is selected: its coordinator runs the
+        // payment on the composition's scope, so collapsing it mid-submit cancels the payment.
+        AnimatedVisibility(selected) { ElementBody(controller, item) }
     }
 }
 
