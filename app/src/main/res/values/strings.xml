@@ -1,45 +1,78 @@
 <resources>
     <string name="app_name">Purse Headless Demo</string>
 
-    <!-- Chrome shared by the three screens -->
-    <string name="step_label">Step %1$d of 3</string>
-    <string name="section_event_log">Event log</string>
-
-    <!-- 1 · Session -->
-    <string name="session_title">Session</string>
-    <string name="session_subtitle">Mint an orchestration session through alfred.</string>
+    <!-- Shared -->
+    <string name="section_developer">Developer</string>
+    <string name="section_session_details">Session details</string>
     <string name="label_alfred">alfred</string>
-    <string name="btn_create_session">Create session</string>
-    <string name="btn_creating_session">Creating session…</string>
-    <string name="session_error">Couldn\'t create the session: %1$s</string>
-    <string name="init_error">Couldn\'t read widget.data: %1$s</string>
-    <string name="section_widget_data">Paste a widget.data instead</string>
     <string name="hint_widget_data">widget.data</string>
     <string name="btn_use_widget_data">Use this widget.data</string>
+    <string name="btn_create_session">New session</string>
+    <string name="btn_creating_session">Minting a session…</string>
+    <string name="btn_retry_session">Try again</string>
+    <string name="session_error">Couldn\'t create the session: %1$s</string>
+    <string name="init_error">Couldn\'t read widget.data: %1$s</string>
     <string name="session_ready">Session ready</string>
     <plurals name="session_methods">
-        <item quantity="one">%1$d payment method</item>
-        <item quantity="other">%1$d payment methods</item>
+        <item quantity="one">%1$d payment method in this session</item>
+        <item quantity="other">%1$d payment methods in this session</item>
     </plurals>
-    <string name="section_session_details">Session details</string>
-    <string name="btn_continue">Continue to payment</string>
 
-    <!-- 2 · Pay -->
-    <string name="pay_title">Pay</string>
+    <!-- 1 · Setup (Purse) -->
+    <string name="setup_eyebrow">Purse · Headless Checkout</string>
+    <string name="setup_title">Store setup</string>
+    <string name="setup_basket">Basket</string>
+    <string name="picker_title">What the shopper can pay with</string>
+    <string name="picker_helper">Same session, same backend. The store chooses which methods its checkout shows.</string>
+    <string name="preset_everything">Everything</string>
+    <string name="preset_card_only">Card only</string>
+    <string name="preset_wallets">Wallets</string>
+    <string name="preset_no_express">No express</string>
+    <string name="picker_saved">Saved cards &amp; accounts</string>
+    <string name="picker_hint_card">%1$s · secure fields · 3-D Secure in app</string>
+    <string name="card_provider_purse">Purse vault</string>
+    <string name="picker_hint_express">Express · pays with its own button</string>
+    <string name="picker_hint_redirection">Provider page, inside the app</string>
+    <string name="picker_hint_installments">Pay in instalments · schedule preview</string>
+    <string name="picker_hint_giftcard">Balance check, splits with any method</string>
+    <string name="picker_hint_saved">One-tap payment for returning shoppers</string>
+    <string name="btn_open_checkout">Open %1$s checkout</string>
+
+    <!-- 2 · Checkout (merchant) -->
+    <string name="checkout_eyebrow">Secure checkout</string>
+    <string name="section_order">Your order</string>
+    <string name="order_reference">Nº %1$s</string>
+    <string name="order_quantity">Qty %1$d</string>
+    <string name="label_subtotal">Subtotal</string>
+    <string name="label_free">Free</string>
+    <string name="label_giftcard_applied">Gift card</string>
     <string name="label_total">Total</string>
-    <string name="label_remaining">Left to pay</string>
-    <string name="label_covered">Fully covered</string>
-    <string name="section_express">Express checkout</string>
-    <string name="section_saved_cards">Saved cards</string>
-    <string name="saved_card_cvv_badge">CVC required</string>
-    <string name="saved_card_no_cvv_badge">no CVC</string>
+    <string name="label_to_pay_now">To pay now</string>
+    <string name="label_deliver_to">Deliver to</string>
+    <string name="section_payment">Payment</string>
+    <string name="label_or_pay_with">or pay with</string>
+    <string name="section_saved_cards">Your saved cards</string>
+    <string name="section_primary">Other ways to pay</string>
+    <string name="checkout_no_methods">This store has no payment method switched on. Go back to the setup page to enable some.</string>
+    <string name="saved_card_cvv_badge">security code required</string>
+    <string name="saved_card_no_cvv_badge">no security code</string>
     <string name="helper_saved_card_cvv">Enter this card\'s security code to pay with it.</string>
     <string name="helper_saved_card_no_cvv">No security code needed — tap Pay.</string>
-    <string name="saved_wallet_token_badge">saved account · no CVC</string>
+    <string name="saved_wallet_token_badge">Saved account</string>
     <string name="helper_saved_wallet_token">Your saved %1$s account pays without a security code — tap Pay.</string>
-    <string name="section_primary">Choose how to pay</string>
+    <string name="subtitle_installments">Pay in instalments</string>
+    <string name="disabled_max_amount">Available for orders up to %1$s</string>
+    <string name="disabled_min_amount">Available for orders from %1$s</string>
+    <string name="disabled_amount_unreachable">Not available for this order amount</string>
+    <string name="disabled_fulfilled">Your order is already fully covered</string>
+    <string name="disabled_unavailable">Temporarily unavailable</string>
+    <string name="subtitle_card_via">via %1$s</string>
+    <string name="subtitle_redirection">You\'ll be taken to the provider\'s page</string>
     <string name="section_secondary">Gift card</string>
-    <string name="helper_giftcard">Test card 9250004781234567890, CVC 123.</string>
+    <string name="giftcard_fold">Have a gift card?</string>
+    <string name="helper_giftcard_prefix">Test card </string>
+    <string name="helper_giftcard_suffix"> · CVC 509 · tap to copy</string>
+    <string name="giftcard_copied">Gift card number copied</string>
     <string name="hint_giftcard_pan">Gift card number</string>
     <string name="hint_giftcard_cvv">CVC</string>
     <string name="hint_giftcard_amount">Amount (blank = as much as needed)</string>
@@ -52,7 +85,6 @@
     <string name="giftcard_error">Couldn\'t read that card: %1$s</string>
     <string name="giftcard_save">Keep this card for next time</string>
     <string name="hint_giftcard_label">Name (optional)</string>
-    <string name="section_saved_giftcards">Your saved gift cards</string>
     <string name="giftcard_balance_pending">%1$s — checking balance…</string>
     <string name="giftcard_unavailable">%1$s — unavailable (%2$s)</string>
     <string name="btn_apply_saved_giftcard">Use</string>
@@ -77,13 +109,25 @@
     <string name="pay_canceled">Payment canceled — nothing was charged.</string>
     <string name="requires_action">Redirecting for authentication…</string>
     <string name="error_required">Required</string>
+    <string name="dev_session_id">session id</string>
+    <string name="dev_state">state</string>
+    <string name="dev_fulfilled">fulfilled</string>
+    <string name="dev_remaining">remaining</string>
+    <string name="dev_split">split</string>
+    <string name="btn_refresh_session">Refresh session (new cart)</string>
 
-    <!-- 3 · Result -->
-    <string name="result_title">Result</string>
-    <string name="result_authorized">Payment authorized</string>
-    <string name="result_failed">Payment failed</string>
-    <string name="result_unconfirmed">Outcome unconfirmed</string>
-    <string name="result_unconfirmed_hint">The shopper came back from the partner\'s redirect, which isn\'t proof of payment. Fetch the transactions below to confirm.</string>
+    <!-- 3 · Result (merchant) -->
+    <string name="result_thanks">Thank you!</string>
+    <string name="result_thanks_name">Thank you, %1$s!</string>
+    <string name="result_order_confirmed">Order Nº %1$s is confirmed.</string>
+    <string name="result_email">A confirmation is on its way to %1$s.</string>
+    <string name="result_failed">Payment declined</string>
+    <string name="result_failed_body">Nothing was charged. You can try another way to pay.</string>
+    <string name="result_confirming">Confirming your payment…</string>
+    <string name="result_confirming_body">You\'re back from your bank. We\'re checking the payment went through.</string>
+    <string name="result_pending">Payment pending</string>
+    <string name="result_pending_body">We haven\'t heard back yet. Your order is on hold until the payment is confirmed.</string>
+    <string name="result_paid_with">Paid with</string>
     <string name="result_via">via %1$s</string>
     <string name="result_confirmed_by_transactions">Confirmed by the session\'s transactions.</string>
     <string name="section_transactions">Transactions</string>
@@ -99,6 +143,6 @@
     <string name="capture_amount_invalid">Enter a valid amount</string>
     <string name="capture_capturing">Capturing…</string>
     <string name="alfred_error">alfred error: %1$s</string>
-    <string name="btn_start_over">Start a new payment</string>
-    <string name="btn_refresh_session">Refresh session (new cart)</string>
+    <string name="btn_try_again">Try another way to pay</string>
+    <string name="btn_back_to_store">Back to the store</string>
 </resources>

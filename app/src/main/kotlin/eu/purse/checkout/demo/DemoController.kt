@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import androidx.lifecycle.lifecycleScope
 import eu.purse.checkout.PurseHeadlessCheckout
 import eu.purse.checkout.element.PaymentElement
+import eu.purse.checkout.payment.item.DisabledState
 import eu.purse.checkout.payment.item.PaymentItem
 import eu.purse.checkout.payment.item.PaymentToken
 import eu.purse.checkout.payment.item.PrimaryMethod
@@ -25,7 +26,9 @@ import eu.purse.core.payment.Partner
 import eu.purse.partnerui.PartnerUiException
 import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PaymentOutcome
+import eu.purse.partnerui.PluginOptions
 import eu.purse.partnerui.PluginRegistry
+import eu.purse.partnerui.PurseTheme
 import eu.purse.partnerui.plugins.generics.googlepay.GooglePayPlugin
 import eu.purse.partnerui.plugins.generics.redirection.RedirectionPlugin
 import eu.purse.partnerui.plugins.partners.paypal.wallet.PaypalPlugin
@@ -34,13 +37,20 @@ import java.math.BigDecimal
 import java.math.RoundingMode
 import java.util.Base64
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** The three screens this demo walks through, in order. */
-enum class DemoStep { Session, Pay, Result }
+/** The three screens this demo walks through, in order: Purse's setup page, then the store's checkout and result. */
+enum class DemoStep { Setup, Checkout, Result }
+
+/** The presets on the setup page — which of the session's methods the store shows the shopper. */
+enum class MethodPreset { Everything, CardOnly, Wallets, NoExpress }
+
+/** One entry of the setup page's method picker: a method the session offers, or the saved-instruments group. */
+data class PickerEntry(val id: String, val name: String, val iconUrl: String?, val hint: String)
 
 /**
  * All of the demo's state and logic, so the screens ([SessionScreen], [PayScreen], [ResultScreen])
@@ -59,8 +69,11 @@ class DemoController(private val activity: ComponentActivity) {
 
     // --- navigation -------------------------------------------------------------------------------
 
-    var step by mutableStateOf(DemoStep.Session)
+    var step by mutableStateOf(DemoStep.Setup)
         private set
+
+    /** The `</>` panel on the store screens: session, split, events, transactions, capture. */
+    var developerPanel by mutableStateOf(false)
 
     // --- 1 · session ------------------------------------------------------------------------------
 
@@ -86,6 +99,17 @@ class DemoController(private val activity: ComponentActivity) {
 
     /** The orchestration session id alfred returned — fallback default for the transactions lookup. */
     private var lastOrchestrationSessionId: String? = null
+
+    /** The basket the checkout shows, read off the order alfred minted the session from. */
+    var order by mutableStateOf<OrderSummary?>(null)
+        private set
+
+    /**
+     * Picker entries the store has switched **off** — the complement is what the checkout renders.
+     * Kept as the hidden set so a method that appears with a new session is shown by default.
+     */
+    var hiddenIds by mutableStateOf<Set<String>>(emptySet())
+        private set
 
     // --- 2 · pay ----------------------------------------------------------------------------------
 
@@ -121,6 +145,10 @@ class DemoController(private val activity: ComponentActivity) {
     var loadingTransactions by mutableStateOf(false)
         private set
 
+    /** The result screen is polling the session's transactions to settle an unconfirmed outcome. */
+    var confirming by mutableStateOf(false)
+        private set
+
     /** Prefilled from whichever element reported a `payment_id`. */
     var capturePaymentId by mutableStateOf("")
 
@@ -150,6 +178,7 @@ class DemoController(private val activity: ComponentActivity) {
             try {
                 val session = alfred.createSession()
                 lastOrchestrationSessionId = session.orchestrationSessionId
+                order = OrderSummary.from(session.order)
                 widgetData = session.widgetData
                 initCheckout()
             } catch (e: Exception) {
@@ -169,7 +198,7 @@ class DemoController(private val activity: ComponentActivity) {
         checkout = null
         sessionDetails = ""
         val co = try {
-            PurseHeadlessCheckout.init(data)
+            PurseHeadlessCheckout.init(data, options = PluginOptions(theme = MerchantCardTheme))
         } catch (e: Exception) {
             sessionError = activity.getString(R.string.init_error, e.message)
             return
@@ -179,11 +208,81 @@ class DemoController(private val activity: ComponentActivity) {
         sessionDetails = summarize(co)
         alfredSessionId = resolveAlfredSessionId(data)
         captureAmount = co.session.amount.toPlainString()
+        // A pasted widget.data has no order behind it: one line for the session's own amount.
+        if (order == null || order?.total?.compareTo(co.session.amount) != 0) {
+            order = order?.takeIf { it.total.compareTo(co.session.amount) == 0 }
+                ?: OrderSummary.placeholder(co.session.amount, co.currency)
+        }
     }
 
-    fun goToPay() {
-        if (checkout != null) step = DemoStep.Pay
+    fun openCheckout() {
+        if (checkout != null) step = DemoStep.Checkout
     }
+
+    // --- 1 · method picker ------------------------------------------------------------------------
+
+    /** Everything the store can switch on or off: each usable method, gift cards, and saved instruments. */
+    val pickerEntries: List<PickerEntry>
+        get() {
+            val co = checkout ?: return emptyList()
+            val primaries = co.primaryMethods.filter { pluginOf(it) != null }.sortedBy(::displayRank).map { method ->
+                val hint = disabledReason(activity, method, co.currency)?.let { "$it · ${pickerHint(method)}" } ?: pickerHint(method)
+                PickerEntry(method.id, displayName(method), co.iconUrl(method), hint)
+            }
+            val secondaries = co.secondaryMethods.filter { co.secondaryConfig(it) != null }.map { method ->
+                PickerEntry(method.id, displayName(method), co.iconUrl(method), activity.getString(R.string.picker_hint_giftcard))
+            }
+            val saved = if (co.paymentTokens.value.isNotEmpty() || co.savedSecondaryTokens.value.isNotEmpty()) {
+                val name = activity.getString(R.string.picker_saved)
+                listOf(PickerEntry(SAVED_GROUP, name, null, activity.getString(R.string.picker_hint_saved)))
+            } else {
+                emptyList()
+            }
+            return primaries + secondaries + saved
+        }
+
+    fun isShown(id: String): Boolean = id !in hiddenIds
+
+    fun toggleShown(id: String) {
+        hiddenIds = if (id in hiddenIds) hiddenIds - id else hiddenIds + id
+    }
+
+    /** Which preset the current hidden set amounts to, for the chip row; `null` when it's a custom mix. */
+    val activePreset: MethodPreset?
+        get() = MethodPreset.entries.firstOrNull { hiddenFor(it) == hiddenIds }
+
+    fun applyPreset(preset: MethodPreset) {
+        hiddenIds = hiddenFor(preset)
+    }
+
+    private fun hiddenFor(preset: MethodPreset): Set<String> {
+        val all = pickerEntries.map { it.id }.toSet()
+        val cards = checkout?.primaryMethods?.filter { it.method == Method.CreditCard }?.map { it.id }.orEmpty().toSet()
+        val express = expressIds()
+        return when (preset) {
+            MethodPreset.Everything -> emptySet()
+            MethodPreset.CardOnly -> all - cards
+            MethodPreset.Wallets -> all - express
+            MethodPreset.NoExpress -> express
+        }
+    }
+
+    private fun expressIds(): Set<String> = checkout?.primaryMethods?.filter { isExpress(it) }?.map { it.id }.orEmpty().toSet()
+
+    /** Whether saved cards and saved gift cards are shown — one switch for the group. */
+    val showSaved: Boolean get() = isShown(SAVED_GROUP)
+
+    private fun pickerHint(method: PrimaryMethod): String = when {
+        isExpress(method) -> activity.getString(R.string.picker_hint_express)
+        isRedirection(method) -> activity.getString(R.string.picker_hint_redirection)
+        method.method == Method.Installments -> activity.getString(R.string.picker_hint_installments)
+        method.method == Method.CreditCard -> activity.getString(R.string.picker_hint_card, cardProviderName(activity, method))
+        else -> method.id
+    }
+
+    /** More than one card method on the checkout: each row names its provider so they can be told apart. */
+    val severalCardMethods: Boolean
+        get() = payableMethods.count { it.method == Method.CreditCard } > 1
 
     /**
      * Mint a **new** session and hand it to the live checkout — `setSession`, the "cart changed /
@@ -198,6 +297,7 @@ class DemoController(private val activity: ComponentActivity) {
                 val session = alfred.createSession()
                 co.setSession(session.widgetData)
                 widgetData = session.widgetData
+                order = OrderSummary.from(session.order)
                 lastOrchestrationSessionId = session.orchestrationSessionId
                 alfredSessionId = resolveAlfredSessionId(session.widgetData)
                 sessionDetails = summarize(co)
@@ -214,7 +314,7 @@ class DemoController(private val activity: ComponentActivity) {
     // --- 2 · pay ----------------------------------------------------------------------------------
 
     /** Express methods render their own button and submit themselves: Google Pay, PayPal pay-now. */
-    fun isExpress(method: PrimaryMethod): Boolean =
+    private fun isExpress(method: PrimaryMethod): Boolean =
         pluginOf(method).let { it is GooglePayPlugin || it is PaypalPlugin }
 
     /** Whether [method] resolves to the generic redirection plugin — asked of the registry, not re-derived. */
@@ -223,16 +323,30 @@ class DemoController(private val activity: ComponentActivity) {
     private fun pluginOf(method: PrimaryMethod) =
         checkout?.session?.source?.let { PluginRegistry.getPlugin(method.partner, method.method, it) }
 
+    /** The express methods the store shows (see [hiddenIds]). */
     val expressMethods: List<PrimaryMethod>
-        get() = checkout?.primaryMethods?.filter { isExpress(it) }.orEmpty()
+        get() = checkout?.primaryMethods?.filter { isExpress(it) && isShown(it.id) }.orEmpty()
 
-    /** Every other primary with a plugin: a row the shopper selects, submitted by the shared button. */
+    /** Every other shown primary with a plugin: a row the shopper selects, submitted by the shared button. */
     val payableMethods: List<PrimaryMethod>
-        get() = checkout?.primaryMethods?.filter { !isExpress(it) && pluginOf(it) != null }.orEmpty()
+        get() = checkout?.primaryMethods?.filter { !isExpress(it) && pluginOf(it) != null && isShown(it.id) }.orEmpty()
+            .sortedBy(::displayRank)
 
-    /** The secondaries with a registered config — the rest can't be tokenized. */
+    /**
+     * Card first, then the wallets, then instalments, then everything else as the session lists it —
+     * the order a shopper expects on a checkout, independent of the session's own ordering.
+     */
+    private fun displayRank(method: PrimaryMethod): Int = when {
+        method.method == Method.CreditCard -> 0
+        method.method == Method.GooglePay -> 1
+        method.partner == Partner.Paypal -> 2
+        method.method == Method.Installments -> 3
+        else -> 4
+    }
+
+    /** The shown secondaries with a registered config — the rest can't be tokenized. */
     val giftCardMethods: List<SecondaryMethod>
-        get() = checkout?.let { co -> co.secondaryMethods.filter { co.secondaryConfig(it) != null } }.orEmpty()
+        get() = checkout?.let { co -> co.secondaryMethods.filter { co.secondaryConfig(it) != null && isShown(it.id) } }.orEmpty()
 
     fun giftCardState(method: SecondaryMethod): GiftCardFormState =
         giftCards.getOrPut(method.id) { GiftCardFormState() }
@@ -244,13 +358,33 @@ class DemoController(private val activity: ComponentActivity) {
      */
     fun select(item: PaymentItem?) {
         val co = checkout ?: return
-        selectedItem = item
-        selectedElement = null
-        when (item) {
-            is PrimaryMethod -> co.setPrimary(item)
-            is PaymentToken -> co.setPrimaryToken(item)
-            else -> co.clearPrimarySplit()
+        val live = item?.let { liveItem(it) }
+        val disabled = live?.disabled
+        if (disabled != null) {
+            // The SDK refuses a disabled primary (`MethodDisabled`); the row already says why.
+            snackbar = disabledReason(activity, live, co.currency)
+            return
         }
+        selectedItem = live
+        selectedElement = null
+        try {
+            when (live) {
+                is PrimaryMethod -> co.setPrimary(live)
+                is PaymentToken -> co.setPrimaryToken(live)
+                else -> co.clearPrimarySplit()
+            }
+        } catch (e: PurseException) {
+            selectedItem = null
+            snackbar = e.message
+        }
+    }
+
+    /** The current copy of [item] — `disabled` moves with the split, so never trust a stale reference. */
+    private fun liveItem(item: PaymentItem): PaymentItem {
+        val co = checkout ?: return item
+        return co.paymentMethods.value.firstOrNull { it.id == item.id }
+            ?: co.paymentTokens.value.firstOrNull { it.id == item.id }
+            ?: item
     }
 
     /** The selected row's element, once composed — what [submit] drives. */
@@ -284,7 +418,26 @@ class DemoController(private val activity: ComponentActivity) {
         }
     }
 
-    fun label(item: PaymentItem): String = when (item) {
+    /** What the shopper reads on a method row: "Card", "Google Pay", "Klarna", "iDEAL", a saved card's name. */
+    fun displayName(item: PaymentItem): String = when (item) {
+        is PaymentToken -> item.name.ifBlank { if (item.isVaultedCard) "${item.brand} ${item.maskedPan}" else partnerLabel(item) }
+        is PrimaryMethod -> when {
+            item.method == Method.GooglePay -> GOOGLE_PAY
+            item.partner == Partner.Paypal -> PAYPAL
+            item.method == Method.Installments -> klarnaLabel
+            item.method == Method.CreditCard -> cardLabel
+            isRedirection(item) -> {
+                val wire = item.method.wireValue.lowercase()
+                if (wire in SCHEME_METHODS) prettyWire(wire) else prettyWire(item.partner.wireValue)
+            }
+            else -> prettyWire(item.method.wireValue)
+        }
+        is SecondaryMethod -> if (item.partner == Partner.Illicado) "Illicado" else activity.getString(R.string.section_secondary)
+        else -> item.id
+    }
+
+    /** The label the event log and the result screen use — more precise than [displayName]. */
+    private fun label(item: PaymentItem): String = when (item) {
         is PaymentToken -> "${partnerLabel(item)} · ${item.name.ifBlank { item.label }}"
         is PrimaryMethod -> when {
             isRedirection(item) -> "$redirectionLabel — ${item.partner.wireValue}"
@@ -500,7 +653,7 @@ class DemoController(private val activity: ComponentActivity) {
         }
     }
 
-    /** Back to screen 1, keeping nothing but the alfred URL. */
+    /** Back to the setup page with a fresh session — the store is ready for the next shopper. */
     fun startOver() {
         resetPayment()
         checkout?.teardown()
@@ -508,16 +661,26 @@ class DemoController(private val activity: ComponentActivity) {
         widgetData = ""
         sessionDetails = ""
         sessionError = null
-        step = DemoStep.Session
+        order = null
+        developerPanel = false
+        step = DemoStep.Setup
+        createSession()
+    }
+
+    /** From a declined payment, back to the checkout to try another method — same session. */
+    fun tryAgain() {
+        if (submitting) return
+        outcome = null
+        step = DemoStep.Checkout
     }
 
     /** The back gesture: one step back, never out of a payment in flight. */
     fun back() {
         if (submitting) return
         step = when (step) {
-            DemoStep.Session -> DemoStep.Session
-            DemoStep.Pay -> DemoStep.Session
-            DemoStep.Result -> DemoStep.Pay
+            DemoStep.Setup -> DemoStep.Setup
+            DemoStep.Checkout -> DemoStep.Setup
+            DemoStep.Result -> DemoStep.Checkout
         }
     }
 
@@ -532,6 +695,30 @@ class DemoController(private val activity: ComponentActivity) {
         submitting = false
         this.outcome = outcome
         step = DemoStep.Result
+        if (outcome is DemoResult.Unconfirmed) confirmInBackground()
+    }
+
+    /**
+     * A redirect return is not a verdict, so the result screen settles it itself: poll the session's
+     * transactions a few times, the way a merchant backend (or `awaitPaymentOutcome`) would. The
+     * "Get transactions" button in the developer panel stays for a manual retry.
+     */
+    private fun confirmInBackground() {
+        if (alfredSessionId.isBlank()) return
+        confirming = true
+        scope.launch {
+            repeat(CONFIRM_ATTEMPTS) { attempt ->
+                delay(if (attempt == 0) CONFIRM_FIRST_DELAY_MS else CONFIRM_RETRY_DELAY_MS)
+                if (outcome !is DemoResult.Unconfirmed) return@launch
+                getTransactions()
+                while (loadingTransactions) delay(100)
+                if (outcome !is DemoResult.Unconfirmed) {
+                    confirming = false
+                    return@launch
+                }
+            }
+            confirming = false
+        }
     }
 
     /**
@@ -655,7 +842,59 @@ class DemoController(private val activity: ComponentActivity) {
         const val GOOGLE_PAY = "Google Pay"
         const val PAYPAL = "PayPal"
         const val LEGACY_ID = "legacy_payment_session_id"
+        const val SAVED_GROUP = "saved"
+        const val CONFIRM_ATTEMPTS = 4
+        const val CONFIRM_FIRST_DELAY_MS = 1_500L
+        const val CONFIRM_RETRY_DELAY_MS = 3_000L
+
+        /** Redirection methods a shopper knows by the scheme, not the PSP behind it. */
+        val SCHEME_METHODS =
+            setOf("ideal", "bancontact", "mbway", "multibanco", "sepa", "bizum", "sofort", "giropay", "eps", "blik", "twint")
     }
+}
+
+/**
+ * The store's styling for the secure card form — what a merchant passes so Purse's fields sit in
+ * its own checkout without looking bolted on. Same scopes as the web SDK's theme (`global`, `input`,
+ * `label`, `helperText`, with `:focus` / `:invalid` variants); values are CSS-like strings.
+ */
+private val MerchantCardTheme = PurseTheme(
+    global = PurseTheme.Text(color = "#16181F", fontFamily = "sans-serif", fontSize = "16px"),
+    globalInvalid = PurseTheme.Text(color = "#B3261E"),
+    input = PurseTheme.FieldStyle(backgroundColor = "#F4F5F8", placeholderColor = "#858A98", color = "#16181F"),
+    inputFocus = PurseTheme.FieldStyle(backgroundColor = "#FFFFFF"),
+    label = PurseTheme.Text(color = "#223B7A", fontSize = "13px", fontWeight = "600"),
+    labelInvalid = PurseTheme.Text(color = "#B3261E"),
+    helperText = PurseTheme.Text(color = "#858A98", fontSize = "12px"),
+    helperTextInvalid = PurseTheme.Text(color = "#B3261E"),
+    gap = "12px",
+)
+
+/** "ideal" → "iDEAL", "bancontact" → "Bancontact", "sepa_debit" → "Sepa debit". */
+private fun prettyWire(wire: String): String = when (wire.lowercase()) {
+    "ideal" -> "iDEAL"
+    "mbway" -> "MB WAY"
+    "sepa" -> "SEPA"
+    else -> wire.replace('_', ' ').replaceFirstChar { it.uppercase() }
+}
+
+/** A shopper-facing line for a disabled item: amounts in the order's currency, no codes. `null` when usable. */
+fun disabledReason(context: android.content.Context, item: PaymentItem, currency: String): String? =
+    when (val state = item.disabled) {
+        null -> null
+        is DisabledState.MaxAmountExceeded -> context.getString(R.string.disabled_max_amount, moneyText(state.maxAmount, currency))
+        is DisabledState.MinAmountNotMet -> context.getString(R.string.disabled_min_amount, moneyText(state.minAmount, currency))
+        is DisabledState.AmountConditionUnreachable -> context.getString(R.string.disabled_amount_unreachable)
+        DisabledState.PaymentFulfilled -> context.getString(R.string.disabled_fulfilled)
+        DisabledState.Submitting -> context.getString(R.string.submitting)
+        else -> context.getString(R.string.disabled_unavailable)
+    }
+
+/** "Purse vault", "Adyen", "ACI" — the PSP behind a card method, for telling two card rows apart. */
+fun cardProviderName(context: android.content.Context, method: PrimaryMethod): String = when (method.partner) {
+    Partner.Purse -> context.getString(R.string.card_provider_purse)
+    Partner.Aci -> "ACI"
+    else -> prettyWire(method.partner.wireValue)
 }
 
 /** Per-gift-card form state, held outside composition so a collapsed row keeps its checked balance. */

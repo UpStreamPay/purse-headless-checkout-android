@@ -6,7 +6,7 @@ import androidx.activity.enableEdgeToEdge
 import androidx.appcompat.app.AppCompatActivity
 
 /**
- * The demo's single Activity: three screens (session → pay → result, see [DemoStep]) rendered in
+ * The demo's single Activity: three screens (setup → checkout → result, see [DemoStep]) rendered in
  * Compose off one [DemoController].
  *
  * A single `singleTask` Activity on purpose: Klarna's `KlarnaPaymentView` needs a deep link that
@@ -20,8 +20,6 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         val controller = DemoController(this)
-        setContent {
-            DemoTheme { DemoApp(controller) }
-        }
+        setContent { DemoApp(controller) }
     }
 }
