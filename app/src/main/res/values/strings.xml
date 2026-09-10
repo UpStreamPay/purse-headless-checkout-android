@@ -128,6 +128,7 @@
     <string name="result_pending">Payment pending</string>
     <string name="result_pending_body">We haven\'t heard back yet. Your order is on hold until the payment is confirmed.</string>
     <string name="result_paid_with">Paid with</string>
+    <string name="result_attempted_with">Payment method</string>
     <string name="result_via">via %1$s</string>
     <string name="result_confirmed_by_transactions">Confirmed by the session\'s transactions.</string>
     <string name="section_transactions">Transactions</string>

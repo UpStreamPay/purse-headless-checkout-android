@@ -208,7 +208,9 @@ private fun OrderRecap(controller: DemoController, order: OrderSummary) {
         controller.outcome?.let { outcome ->
             Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
-                    text = stringResource(R.string.result_paid_with),
+                    text = stringResource(
+                        if (outcome is DemoResult.Authorized) R.string.result_paid_with else R.string.result_attempted_with,
+                    ),
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.weight(1f),
