@@ -34,7 +34,8 @@ import com.google.android.gms.wallet.button.PayButton
  *
  * @param theme [ButtonConstants.ButtonTheme] — `DARK` (default) or `LIGHT`.
  * @param type [ButtonConstants.ButtonType] — `PAY` (default), `BUY`, `CHECKOUT`, `ORDER`, …
- * @param cornerRadius the button's corner radius.
+ * @param cornerRadius the button's corner radius — 4dp by default, a rectangle that sits level with
+ *   PayPal's button and a merchant's own; pass `100.dp` for Google's pill.
  */
 @Composable
 fun GooglePayButton(
@@ -42,7 +43,7 @@ fun GooglePayButton(
     modifier: Modifier = Modifier,
     theme: Int = ButtonConstants.ButtonTheme.DARK,
     type: Int = ButtonConstants.ButtonType.PAY,
-    cornerRadius: Dp = 100.dp,
+    cornerRadius: Dp = 4.dp,
 ) {
     val allowedPaymentMethods = coordinator.allowedPaymentMethodsJson
     if (!coordinator.isReady || allowedPaymentMethods == null) return

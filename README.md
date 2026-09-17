@@ -63,7 +63,7 @@ Outcomes arrive on the listener; after a redirect, confirm with `checkout.awaitP
 | `:partner-googlepay` | `eu.purse:headless-checkout-googlepay` | Optional: the Google Pay plugin + Play Services Wallet. |
 | `:partner-klarna` | `eu.purse:headless-checkout-klarna` | Optional: the Klarna plugin + Klarna Mobile SDK. |
 | `:partner-paypal` | `eu.purse:headless-checkout-paypal` | Optional: the PayPal plugin + PayPal Android SDK. |
-| `:app` | — | Demo: session → pay → result, every method, against sessions minted by `alfred`. Never published. |
+| `:app` | — | Demo: a Purse setup page (pick the methods the store offers) → a store checkout → the result, every method, against sessions minted by `alfred`. Never published. |
 
 Requirements: minSdk 26, Jetpack Compose.
 

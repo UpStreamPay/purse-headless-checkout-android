@@ -21,7 +21,7 @@ import org.json.JSONObject
 class AlfredClient(private val baseUrl: String) {
 
     /** What [createSession] came back with — see its doc for the two ids. */
-    data class Session(val widgetData: String, val orchestrationSessionId: String?)
+    data class Session(val widgetData: String, val orchestrationSessionId: String?, val order: JSONObject)
 
     /**
      * Mint an orchestration session, in the two steps alfred's own demo site uses:
@@ -34,7 +34,8 @@ class AlfredClient(private val baseUrl: String) {
      * [Session.widgetData] is the base64 blob [eu.purse.checkout.PurseHeadlessCheckout.init] takes.
      * [Session.orchestrationSessionId] is the response's own top-level `id` (the v2 ClientSession id,
      * distinct from `payment_session.id`) — kept only as the fallback default for the transactions
-     * lookup, see `DemoController.resolveAlfredSessionId`.
+     * lookup, see `DemoController.resolveAlfredSessionId`. [Session.order] is the legacy order the
+     * session was minted from — the basket, delivery and customer the checkout screen shows.
      */
     suspend fun createSession(): Session = withContext(Dispatchers.IO) {
         val legacyOrder = JSONObject(get("$baseUrl/order")).getJSONObject("order")
@@ -42,6 +43,7 @@ class AlfredClient(private val baseUrl: String) {
         Session(
             widgetData = session.getJSONObject("widget").getString("data"),
             orchestrationSessionId = session.optString("id").takeIf { it.isNotBlank() },
+            order = legacyOrder,
         )
     }
 

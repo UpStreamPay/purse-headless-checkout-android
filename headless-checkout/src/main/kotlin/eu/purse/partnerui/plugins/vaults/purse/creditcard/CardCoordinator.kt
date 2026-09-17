@@ -73,6 +73,10 @@ fun rememberCardCoordinator(host: PluginHost, listener: PaymentElementListener):
     val config = remember(brands, mode, texts, theme) {
         SecureFieldsConfig(
             brands = brands,
+            // A co-badged card (Carte Bancaire + Visa/Mastercard) lets the shopper pick the network,
+            // as web's hosted fields do; SecureFields renders the picker in the card-number field
+            // and reports the choice through `onBrandUserSelection`.
+            brandSelector = mode == CardCoordinator.Mode.FRESH_CARD,
             fields = when (mode) {
                 CardCoordinator.Mode.FRESH_CARD -> SecureFieldsFieldsConfig(
                     cardNumber = VaultFieldConfig(placeholder = texts.cardNumber.placeholder),
