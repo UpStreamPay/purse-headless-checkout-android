@@ -19,9 +19,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 
 /**
- * The three screens, one at a time, plus the snackbar the transient notices go to (a canceled
- * payment, a redirect being launched, a coordinator error that isn't a payment failure — see
- * `DemoController.fail`). Terminal outcomes don't come through here: they get screen 3 to themselves.
+ * The three screens, one at a time, each in its owner's colours ([DemoBrand]: Purse for the setup
+ * page, the merchant for the checkout and the result), plus the snackbar the transient notices go to
+ * (a canceled payment, a redirect being launched, a coordinator error that isn't a payment failure —
+ * see `DemoController.fail`). Terminal outcomes don't come through here: they get the result screen.
  */
 @Composable
 fun DemoApp(controller: DemoController) {
@@ -33,7 +34,7 @@ fun DemoApp(controller: DemoController) {
         controller.snackbar = null
     }
 
-    BackHandler(enabled = controller.step != DemoStep.Session) { controller.back() }
+    BackHandler(enabled = controller.step != DemoStep.Setup) { controller.back() }
 
     Box(Modifier.fillMaxSize()) {
         AnimatedContent(
@@ -41,17 +42,22 @@ fun DemoApp(controller: DemoController) {
             transitionSpec = { fadeIn() togetherWith fadeOut() },
             label = "step",
         ) { step ->
-            when (step) {
-                DemoStep.Session -> SessionScreen(controller)
-                DemoStep.Pay -> PayScreen(controller)
-                DemoStep.Result -> ResultScreen(controller)
+            val brand = if (step == DemoStep.Setup) DemoBrand.Purse else DemoBrand.Merchant
+            DemoTheme(brand) {
+                when (step) {
+                    DemoStep.Setup -> SetupScreen(controller)
+                    DemoStep.Checkout -> CheckoutScreen(controller)
+                    DemoStep.Result -> ResultScreen(controller)
+                }
             }
         }
-        SnackbarHost(
-            hostState = snackbarHostState,
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .windowInsetsPadding(WindowInsets.safeDrawing),
-        )
+        DemoTheme(if (controller.step == DemoStep.Setup) DemoBrand.Purse else DemoBrand.Merchant) {
+            SnackbarHost(
+                hostState = snackbarHostState,
+                modifier = Modifier
+                    .align(Alignment.BottomCenter)
+                    .windowInsetsPadding(WindowInsets.safeDrawing),
+            )
+        }
     }
 }
