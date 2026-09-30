@@ -1,0 +1,33 @@
+name: Release Please
+
+# Conventional commits on main decide the next semantic version. release-please keeps a release PR
+# open with the changelog; merging it (reviewed and gated like any other PR) creates the `v<version>`
+# tag and a draft GitHub release, and the tag triggers staging.yml. Nothing is pushed to main
+# directly, so the main ruleset needs no bypass. See docs/contributing/release.md.
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+  # Documented by the action as required. A token passed as an input is not scoped by this block,
+  # so a missing entry here stays invisible until the token changes.
+  issues: write
+  pull-requests: write
+
+jobs:
+  release-please:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      # RELEASE_PLEASE_TOKEN is a fine-grained token scoped to this repository alone (Contents,
+      # Pull requests and Issues: read and write). It is not GITHUB_TOKEN because events raised by
+      # GITHUB_TOKEN start no workflow: CI must run on the release PR, and the tag must trigger
+      # staging.yml.
+      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
+        with:
+          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          config-file: release-please-config.json
+          manifest-file: .release-please-manifest.json

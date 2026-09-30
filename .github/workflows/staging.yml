@@ -1,6 +1,6 @@
 name: Publish to Central Portal Staging
 
-# A `v*` tag (pushed by auto-tag.yml) builds, signs and uploads the SDK and partner artifacts to the
+# A `v*` tag (pushed by release-please.yml) builds, signs and uploads the SDK and partner artifacts to the
 # Central Portal as a pending deployment, and attaches the API reference to a draft GitHub release.
 # Promotion to Maven Central is the manual release.yml workflow. See docs/contributing/release.md.
 
@@ -59,13 +59,14 @@ jobs:
           ./gradlew dokkaGenerate
           (cd build/dokka/html && zip -qr "$GITHUB_WORKSPACE/api-reference-${SDK_VERSION}.zip" .)
 
-      - name: Draft GitHub release with the API reference
+      # release-please created the draft release with the changelog when it pushed the tag. Put
+      # the Maven coordinates above that changelog and attach the reference.
+      - name: Add the coordinates and the API reference to the draft GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "v${SDK_VERSION}" "api-reference-${SDK_VERSION}.zip" \
-            --draft --generate-notes --title "v${SDK_VERSION}" \
-            --notes-file <(cat <<NOTES
+          {
+            cat <<NOTES
           Maven coordinates (after the release workflow promotes them to Maven Central):
 
           \`\`\`kotlin
@@ -77,5 +78,9 @@ jobs:
           \`\`\`
 
           The attached \`api-reference-${SDK_VERSION}.zip\` is the generated KDoc reference for this version.
+
           NOTES
-          )
+            gh release view "v${SDK_VERSION}" --json body -q .body
+          } > release-notes.md
+          gh release edit "v${SDK_VERSION}" --notes-file release-notes.md
+          gh release upload "v${SDK_VERSION}" "api-reference-${SDK_VERSION}.zip" --clobber
