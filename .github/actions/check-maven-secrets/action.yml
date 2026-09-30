@@ -1,7 +1,7 @@
 name: Check Maven publishing secrets
 description: >
   Verifies the four secrets required for Maven Central publishing.
-  Outputs ok=true when all are set; emits a warning and ok=false otherwise.
+  Fails the run when any is missing, so a release cannot pass silently unpublished.
 
 inputs:
   maven-central-username:
@@ -34,9 +34,11 @@ runs:
         [ -z "$MAVEN_CENTRAL_PASSWORD" ] && missing+=("MAVEN_CENTRAL_PASSWORD")
         [ -z "$GPG_PRIVATE_KEY" ]         && missing+=("GPG_PRIVATE_KEY")
         [ -z "$GPG_PASSPHRASE" ]          && missing+=("GPG_PASSPHRASE")
+        # Fail, do not skip. A warning here left the publish job skipped and the run green: the
+        # v0.1.0 staging run reported success having uploaded nothing.
         if [ ${#missing[@]} -ne 0 ]; then
-          echo "::warning::Publish skipped — missing secrets: ${missing[*]}"
           echo "ok=false" >> "$GITHUB_OUTPUT"
-        else
-          echo "ok=true" >> "$GITHUB_OUTPUT"
+          echo "::error::Publish cannot run — missing secrets: ${missing[*]}"
+          exit 1
         fi
+        echo "ok=true" >> "$GITHUB_OUTPUT"
