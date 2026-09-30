@@ -31,9 +31,9 @@ buildscript {
         // Dokka (FreeMarker, Jackson, jsoup) and ktlint (logback), never a published AAR. Raised past the versions GitHub's security
         // advisories flag, as in Secure Fields; drop each line once the tool ships the fix itself.
         constraints {
-            classpath("org.bouncycastle:bcprov-jdk18on:1.85")
-            classpath("org.bouncycastle:bcpkix-jdk18on:1.85")
-            classpath("org.bouncycastle:bcutil-jdk18on:1.85")
+            classpath("org.bouncycastle:bcprov-jdk18on:1.86")
+            classpath("org.bouncycastle:bcpkix-jdk18on:1.86")
+            classpath("org.bouncycastle:bcutil-jdk18on:1.86")
             classpath("org.bitbucket.b_c:jose4j:0.9.6")
             classpath("org.jdom:jdom2:2.0.6.1")
             classpath("org.apache.commons:commons-lang3:3.18.0")
