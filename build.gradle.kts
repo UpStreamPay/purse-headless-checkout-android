@@ -135,7 +135,16 @@ abstract class ApiBuildTask : DefaultTask() {
 val apiDump by tasks.registering { group = "verification"; description = "Refreshes every library's committed api/*.api dump." }
 val apiCheck by tasks.registering { group = "verification"; description = "Fails when a library's public API differs from its committed api/*.api dump." }
 
+// The buildscript constraints above, as coordinates the modules can reuse.
+val buildToolConstraints = buildscript.configurations["classpath"].allDependencyConstraints.map { "${it.group}:${it.name}:${it.version}" }
+
 subprojects {
+    // Android Lint runs on its own classpath, resolved per module from AGP's lint artifacts, so the
+    // buildscript constraints do not reach it. Same build-time-only libraries, same versions.
+    configurations.matching { it.name == "androidLintTool" }.configureEach {
+        buildToolConstraints.forEach { this@subprojects.dependencies.constraints.add(name, it) }
+    }
+
     // ── Style + static analysis, every module including the demo ─────────────────────────────────
     apply(plugin = "org.jlleitschuh.gradle.ktlint")
     apply(plugin = "io.gitlab.arturbosch.detekt")
