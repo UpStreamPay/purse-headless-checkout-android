@@ -27,8 +27,8 @@ buildscript {
         // classpath — AGP's built-in Kotlin does not, so the apiDump/apiCheck tasks below need it.
         classpath("org.jetbrains.kotlin:kotlin-metadata-jvm:${libs.versions.kotlin.get()}")
 
-        // Build-time only: these reach the build through AGP (sdk-common, bundletool, jetifier, lint)
-        // and Dokka (FreeMarker), never a published AAR. Raised past the versions GitHub's security
+        // Build-time only: these reach the build through AGP (sdk-common, bundletool, jetifier, lint),
+        // Dokka (FreeMarker, Jackson, jsoup) and ktlint (logback), never a published AAR. Raised past the versions GitHub's security
         // advisories flag, as in Secure Fields; drop each line once the tool ships the fix itself.
         constraints {
             classpath("org.bouncycastle:bcprov-jdk18on:1.85")
@@ -38,6 +38,13 @@ buildscript {
             classpath("org.jdom:jdom2:2.0.6.1")
             classpath("org.apache.commons:commons-lang3:3.18.0")
             classpath("org.freemarker:freemarker:2.3.35")
+            classpath("com.fasterxml.jackson.core:jackson-core:2.18.10")
+            classpath("com.fasterxml.jackson.core:jackson-databind:2.18.10")
+            classpath("com.fasterxml.jackson.core:jackson-annotations:2.18.10")
+            classpath("ch.qos.logback:logback-core:1.5.34")
+            classpath("ch.qos.logback:logback-classic:1.5.34")
+            classpath("org.apache.httpcomponents:httpclient:4.5.14")
+            classpath("org.jsoup:jsoup:1.23.1")
         }
     }
 }
@@ -148,10 +155,10 @@ fun isOlder(version: String, than: String): Boolean {
 }
 
 allprojects {
-    // Android Lint and Dokka's generator run on their own classpaths, resolved per project, so the
+    // Android Lint, Dokka's generator and ktlint run on their own classpaths, resolved per project, so the
     // buildscript constraints do not reach them. Dokka's resolvers take no constraints either:
     // raise the same build-time-only libraries to the same minimums as they resolve.
-    configurations.matching { it.name == "androidLintTool" || (it.name.startsWith("dokka") && it.name.contains("Resolver")) }.configureEach {
+    configurations.matching { it.name in setOf("androidLintTool", "ktlint") || (it.name.startsWith("dokka") && it.name.contains("Resolver")) }.configureEach {
         resolutionStrategy.eachDependency {
             val minimum = buildToolMinimums["${requested.group}:${requested.name}"] ?: return@eachDependency
             if (requested.version?.let { isOlder(it, minimum) } == true) useVersion(minimum)
