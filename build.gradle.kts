@@ -27,9 +27,9 @@ buildscript {
         // classpath — AGP's built-in Kotlin does not, so the apiDump/apiCheck tasks below need it.
         classpath("org.jetbrains.kotlin:kotlin-metadata-jvm:${libs.versions.kotlin.get()}")
 
-        // Build-time only: these reach the plugin classpath through AGP (sdk-common, bundletool,
-        // jetifier), never a published AAR. Raised past the versions GitHub's security advisories
-        // flag, as in Secure Fields; drop each line once AGP ships the fixed version itself.
+        // Build-time only: these reach the build through AGP (sdk-common, bundletool, jetifier, lint)
+        // and Dokka (FreeMarker), never a published AAR. Raised past the versions GitHub's security
+        // advisories flag, as in Secure Fields; drop each line once the tool ships the fix itself.
         constraints {
             classpath("org.bouncycastle:bcprov-jdk18on:1.85")
             classpath("org.bouncycastle:bcpkix-jdk18on:1.85")
@@ -37,6 +37,7 @@ buildscript {
             classpath("org.bitbucket.b_c:jose4j:0.9.6")
             classpath("org.jdom:jdom2:2.0.6.1")
             classpath("org.apache.commons:commons-lang3:3.18.0")
+            classpath("org.freemarker:freemarker:2.3.35")
         }
     }
 }
@@ -135,16 +136,30 @@ abstract class ApiBuildTask : DefaultTask() {
 val apiDump by tasks.registering { group = "verification"; description = "Refreshes every library's committed api/*.api dump." }
 val apiCheck by tasks.registering { group = "verification"; description = "Fails when a library's public API differs from its committed api/*.api dump." }
 
-// The buildscript constraints above, as coordinates the modules can reuse.
-val buildToolConstraints = buildscript.configurations["classpath"].allDependencyConstraints.map { "${it.group}:${it.name}:${it.version}" }
+// The buildscript constraints above, as the minimum version of each module.
+val buildToolMinimums = buildscript.configurations["classpath"].allDependencyConstraints.associate { "${it.group}:${it.name}" to it.version!! }
+
+/** Numeric, dot-separated comparison: enough for the release versions in the constraints above. */
+fun isOlder(version: String, than: String): Boolean {
+    val a = version.split('.').map { it.toIntOrNull() ?: 0 }
+    val b = than.split('.').map { it.toIntOrNull() ?: 0 }
+    val diff = a.zip(b).map { (x, y) -> x.compareTo(y) }.firstOrNull { it != 0 } ?: a.size.compareTo(b.size)
+    return diff < 0
+}
+
+allprojects {
+    // Android Lint and Dokka's generator run on their own classpaths, resolved per project, so the
+    // buildscript constraints do not reach them. Dokka's resolvers take no constraints either:
+    // raise the same build-time-only libraries to the same minimums as they resolve.
+    configurations.matching { it.name == "androidLintTool" || (it.name.startsWith("dokka") && it.name.contains("Resolver")) }.configureEach {
+        resolutionStrategy.eachDependency {
+            val minimum = buildToolMinimums["${requested.group}:${requested.name}"] ?: return@eachDependency
+            if (requested.version?.let { isOlder(it, minimum) } == true) useVersion(minimum)
+        }
+    }
+}
 
 subprojects {
-    // Android Lint runs on its own classpath, resolved per module from AGP's lint artifacts, so the
-    // buildscript constraints do not reach it. Same build-time-only libraries, same versions.
-    configurations.matching { it.name == "androidLintTool" }.configureEach {
-        buildToolConstraints.forEach { this@subprojects.dependencies.constraints.add(name, it) }
-    }
-
     // ── Style + static analysis, every module including the demo ─────────────────────────────────
     apply(plugin = "org.jlleitschuh.gradle.ktlint")
     apply(plugin = "io.gitlab.arturbosch.detekt")
