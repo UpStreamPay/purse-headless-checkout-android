@@ -11,7 +11,11 @@ updates:
         patterns:
           - "*"
 
+  # Keeps the SHA pins in .github/workflows/ current: Dependabot rewrites both the SHA and its
+  # trailing version comment. The `ci` prefix keeps these bumps out of the changelog.
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    commit-message:
+      prefix: "ci"

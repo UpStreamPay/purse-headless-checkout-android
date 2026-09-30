@@ -1,7 +1,8 @@
 # CI and quality gates
 
-`.github/workflows/ci.yml` runs on every pull request and every push to `main`. Branch protection
-on `main` requires its three jobs, so a merge is blocked on any of:
+`.github/workflows/ci.yml` runs on every pull request and every push to `main`. The `main` ruleset
+requires its three jobs (and `Dependency review`, see [Dependencies](#dependencies)), so a merge is
+blocked on any of:
 
 | Job | Gate | Gradle task | Fails when |
 |---|---|---|---|
@@ -66,16 +67,47 @@ Kotlin does not apply. Same `.api` format, same filtering (Kotlin `internal` and
 excluded), per-module dumps under `<module>/api/`. The Kotlin Gradle plugin's own `abiValidation`
 does not support Android libraries.
 
-## Branch protection
+## Dependencies
 
-`main` must require the three CI jobs as status checks (and a pull request; direct pushes off).
-It is a repository setting, not code — a repository admin sets it once, under **Settings → Rules →
-Rulesets** (or **Branches → Branch protection rules**):
+`.github/workflows/dependencies.yml` submits the resolved Gradle dependency graph (GitHub cannot
+read it from a manifest) on every push to `main` and every pull request. On a pull request,
+`Dependency review` then fails when the change adds a dependency with a known **high** or
+**critical** vulnerability. Dependabot alerts come from the graph submitted on `main`.
 
-- Require a pull request before merging
-- Require status checks to pass: `Style, static analysis, API surface`, `Build, unit tests, lint`,
-  `Minified demo (R8) + 16 KB alignment`
-- Require branches to be up to date before merging
+CodeQL runs through GitHub's default setup (Settings → Code security) for `java-kotlin` and
+`actions`; the `main` ruleset blocks a merge on a high or critical code scanning alert.
+
+## Workflow hygiene
+
+- Every action is pinned by commit SHA with its version in a trailing comment; Dependabot's
+  `github-actions` updates rewrite both, under a `ci:` prefix that keeps them out of the changelog.
+- Every workflow declares `permissions:`, read-only unless a job needs more, and every job has a
+  `timeout-minutes`.
+- The Gradle wrapper jar is checked against Gradle's published checksums before a build uses it.
+
+## Repository settings
+
+Repository settings, not code — a repository admin applies them once. `.github/CODEOWNERS` makes
+`@UpStreamPay/pci-dss` the owner of every file.
+
+**`main: CI gates` ruleset** (Settings → Rules → Rulesets):
+
+- no deletion, no force-push, no bypass
+- pull request required, **1 approval**, **review from a code owner**, approvals dismissed on a new push
+- status checks, **strict** (branch up to date with `main`): `Style, static analysis, API surface`,
+  `Build, unit tests, lint`, `Minified demo (R8) + 16 KB alignment`, `Dependency review`
+- code scanning: CodeQL, blocking on high or critical security alerts and on errors
+
+**`release tags` ruleset** on `refs/tags/v*`: creation, update and deletion restricted, repository
+admins bypass. release-please's token belongs to an admin, so it can create the tag; nobody else
+can create, move or delete one.
+
+**`release` environment**: required reviewers `@UpStreamPay/pci-dss`, self-review prevented,
+deployments only from `v*` tags and `main`. It must exist **before** a workflow naming it runs,
+otherwise GitHub creates it with no protection.
+
+**Actions** (Settings → Actions → General): the default `GITHUB_TOKEN` is read-only and workflows
+cannot approve pull requests.
 
 ## What is not automated
 
