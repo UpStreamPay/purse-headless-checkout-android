@@ -12,11 +12,12 @@ The release is driven from GitHub, exactly like [securefields-android](https://g
 
 | Step | Trigger | What happens |
 |---|---|---|
-| 1 | Push to `main` | `auto-tag.yml`: conventional commits decide the next version; tag `v<version>` is pushed |
-| 2 | Tag push (`v*`) | `staging.yml`: gates run, the four artifacts are signed and uploaded to the Central Portal as a **pending deployment**, a **draft GitHub release** gets the generated API reference attached |
-| 3 | Manual workflow | `release.yml`: re-publishes from the latest tag with `automaticRelease = true`, promoting to **Maven Central**; the GitHub release is published |
+| 1 | Push to `main` | `release-please.yml`: conventional commits decide the next version; a **release PR** carries the version and the changelog |
+| 2 | Release PR merged | release-please pushes tag `v<version>` and opens a **draft GitHub release** with the changelog |
+| 3 | Tag push (`v*`), after a codeowner approves | `staging.yml`: gates run, the four artifacts are signed and uploaded to the Central Portal as a **pending deployment**, the draft release gets the Maven coordinates and the generated API reference |
+| 4 | Manual workflow, after a codeowner approves | `release.yml`: re-publishes the latest tag on `main` with `automaticRelease = true`, promoting to **Maven Central**; the GitHub release is published |
 
-Merging to `main` is all it takes to start a release. The pending deployment lets you inspect POMs
+Merging the release PR is all it takes to start a release. The pending deployment lets you inspect POMs
 and artifacts before anything goes public. Pushes made only of non-releasable commits (`docs:`,
 `chore:`, …) produce no tag and trigger nothing.
 
@@ -49,56 +50,86 @@ Actions**), copied from securefields-android:
 
 | Secret | Used by | Value |
 |---|---|---|
-| `USP_GITHUB_ADMIN_ACCES_TOKEN` | auto-tag | Fine-grained PAT with **Contents: Read and Write** on this repository, so the pushed tag triggers `staging.yml` (`GITHUB_TOKEN` cannot trigger downstream workflows). The misspelling is intentional and must match. |
+| `RELEASE_PLEASE_TOKEN` | release-please | Fine-grained PAT on this repository alone with **Contents**, **Pull requests** and **Issues: Read and Write**, so CI runs on the release PR and the tag triggers `staging.yml` (events raised by `GITHUB_TOKEN` start no workflow). Its account must be a repository admin: the `v*` tag ruleset lets only admins create tags. |
 | `GPG_PRIVATE_KEY` | staging, release | The organisational signing key, armored (`purse-signing-key.asc`) |
 | `GPG_PASSPHRASE` | staging, release | Its passphrase |
 | `MAVEN_CENTRAL_USERNAME` | staging, release | Username of a Central Portal **user token** of a publisher on `eu.purse` |
 | `MAVEN_CENTRAL_PASSWORD` | staging, release | Its password |
 
-Both publish workflows start with a `check-secrets` job and skip with a warning (not a failure)
-when any is missing, so a fork or a fresh clone of the repository cannot half-publish.
+Both publish workflows check the four publishing secrets inside the gated job and **fail** when any
+is missing. They used to skip with a warning, which left the run green having published nothing:
+that is what happened to the first `v0.1.0` staging run.
+
+## Release approval
+
+`staging.yml` and `release.yml` run in the **`release` environment**. Each run waits until a member
+of `@UpStreamPay/pci-dss` approves it under **Actions → the run → Review deployments**; GitHub emails
+the reviewers. The person who started the run cannot approve it, and only `v*` tags and `main` may
+deploy to the environment (PCI-DSS 6.5.1).
+
+Two more guards keep unreviewed code out of a release:
+
+- **Staging refuses a tag that is not on `main`.** Only code that went through a reviewed PR is
+  signed and uploaded.
+- **The manual release builds the latest tag on `main`**, whatever branch it is started from.
+
+Around them, repository settings (applied once by an admin, see [ci.md](ci.md#repository-settings)):
+the `main` ruleset (PR, one codeowner approval, stale approvals dismissed, strict checks, no bypass)
+and the `v*` tag ruleset (only admins create, move or delete a release tag).
 
 ## Versioning
 
-The version lives **only in the git tag**; no file carries it. Gradle reads `SDK_VERSION`, set by
-the workflows from the tag; a local build is `0.0.0-SNAPSHOT`.
+The version lives in the git tag. release-please also records it in `.release-please-manifest.json`
+and `version.txt`, but Gradle reads only `SDK_VERSION`, set by the workflows from the tag; a local
+build is `0.0.0-SNAPSHOT`.
 
-| Commit prefix | Bump | Example |
+| Commit prefix | Bump from 1.0.0 | While on 0.x |
 |---|---|---|
-| `feat!:` / `BREAKING CHANGE:` footer | major | `1.2.3` → `2.0.0` |
-| `feat:` | minor | `1.2.3` → `1.3.0` |
-| `fix:`, `perf:`, `refactor:` | patch | `1.2.3` → `1.2.4` |
-| `docs:`, `chore:`, `style:`, `test:`, `ci:`, `build:` | none | no release |
+| `feat!:` / `BREAKING CHANGE:` footer | major: `1.2.3` → `2.0.0` | minor: `0.1.0` → `0.2.0` |
+| `feat:` | minor: `1.2.3` → `1.3.0` | minor: `0.1.0` → `0.2.0` |
+| `fix:`, `perf:` | patch: `1.2.3` → `1.2.4` | patch: `0.1.0` → `0.1.1` |
+| `docs:`, `chore:`, `style:`, `test:`, `ci:`, `build:`, `refactor:` | none | none |
+
+`bump-minor-pre-major` in `release-please-config.json` keeps breaking changes on 0.x until the
+SDK is declared stable; going to `1.0.0` is a `Release-As: 1.0.0` footer on any commit.
 
 A change that `./gradlew apiCheck` flags as an API break must ship as `feat!:` (or with a
-`BREAKING CHANGE:` footer): the release-manager preset is `conventionalcommits`, so the `!`
-shorthand bumps the major. Renaming, removing or changing the signature of anything in the `*/api/*.api` dumps is such a
+`BREAKING CHANGE:` footer), so the changelog lists it under breaking changes. Renaming, removing or changing the signature of anything in the `*/api/*.api` dumps is such a
 change; adding is not.
 
-## Step 1 — auto-tag on push to main
+## Step 1 — the release PR
 
-`.github/workflows/auto-tag.yml` calls
-`UpStreamPay/usp-reusable-workflows/.github/workflows/release-manager.yaml@reusable-v0`, which
-reads the commits since the last `v*` tag, computes the bump and pushes the annotated tag with
-`USP_GITHUB_ADMIN_ACCES_TOKEN`. `skip-version-file: true` because the version has no file.
+On every push to `main`, `.github/workflows/release-please.yml` reads the commits since the last
+release and keeps one PR open, `chore(main): release <version>`, that bumps the manifest and
+prepends the changelog. It goes through CI and a codeowner's review like any other PR; nothing is
+ever pushed to `main` directly, so the ruleset needs no bypass. Pushes made only of non-releasable
+commits leave no PR.
 
-## Step 2 — staging on tag push
+## Step 2 — merge the release PR
 
-`.github/workflows/staging.yml`:
+release-please creates tag `v<version>` on the merge commit (`force-tag-creation`, since a draft
+release would otherwise hold its tag back until published) and a **draft** GitHub release whose
+notes are the changelog.
 
-1. `SDK_VERSION` from the tag name.
-2. Gates: `apiCheck`, unit tests, the minified demo build, the 16 KB alignment audit.
-3. `publishAllPublicationsToMavenCentralRepository` — signs and uploads the four artifacts with
+## Step 3 — staging on tag push
+
+`.github/workflows/staging.yml`, once a codeowner approves the run:
+
+1. The tag is on `main`, and the four publishing secrets are set; otherwise the run fails.
+2. `SDK_VERSION` from the tag name.
+3. Gates: `apiCheck`, unit tests, the minified demo build, the 16 KB alignment audit.
+4. `publishAllPublicationsToMavenCentralRepository` — signs and uploads the four artifacts with
    `automaticRelease = false`. The deployment waits under **Deployments** on
    [central.sonatype.com](https://central.sonatype.com).
-4. `dokkaGenerate` (one reference for all four) → `api-reference-<version>.zip`, attached to a **draft** GitHub release whose
-   notes carry the Maven coordinates and the auto-generated changelog.
+5. `dokkaGenerate` (one reference for all four) → `api-reference-<version>.zip`, attached to the
+   draft GitHub release, whose notes get the Maven coordinates above the changelog.
 
-## Step 3 — release to Maven Central
+## Step 4 — release to Maven Central
 
 Once the staging deployment looks right: **Actions → Release to Maven Central → Run workflow**.
-`release.yml` republishes from the latest tag with `-PautoRelease=true` (Central validates and
-promotes, ~10 minutes) and publishes the draft GitHub release.
+Once a codeowner approves the run, `release.yml` checks out the latest tag on `main`, republishes it
+with `-PautoRelease=true` (Central validates and promotes, ~10 minutes) and publishes the draft
+GitHub release.
 
 Confirm:
 

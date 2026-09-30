@@ -64,8 +64,8 @@ list grew by three lines.
 
 ## Versioning
 
-Semantic, computed from conventional commits by the shared `release-manager` workflow, stored only
-in the git tag (see [release.md](../contributing/release.md#versioning)).
+Semantic, computed from conventional commits by release-please through a reviewed release PR, and
+carried by the git tag (see [release.md](../contributing/release.md#versioning)).
 All four artifacts share one version and are published together: a merchant pins one version for
 all of them (a BOM is not worth its weight at four artifacts). `apiCheck` makes the promise
-verifiable: a change to a `*/api/*.api` dump that removes or alters a signature must ship as a major.
+verifiable: a change to a `*/api/*.api` dump that removes or alters a signature must ship as a breaking change (a major from 1.0.0, a minor while on 0.x).
