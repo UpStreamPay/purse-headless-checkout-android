@@ -10,6 +10,11 @@ updates:
       gradle-dependencies:
         patterns:
           - "*"
+      # Groups only cover version updates by default; security updates need their own group.
+      gradle-security:
+        applies-to: security-updates
+        patterns:
+          - "*"
 
   # Keeps the SHA pins in .github/workflows/ current: Dependabot rewrites both the SHA and its
   # trailing version comment. The `ci` prefix keeps these bumps out of the changelog.
@@ -19,3 +24,7 @@ updates:
       interval: weekly
     commit-message:
       prefix: "ci"
+    groups:
+      github-actions:
+        patterns:
+          - "*"
