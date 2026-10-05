@@ -41,8 +41,8 @@ buildscript {
             classpath("com.fasterxml.jackson.core:jackson-core:2.22.3")
             classpath("com.fasterxml.jackson.core:jackson-databind:2.22.3")
             classpath("com.fasterxml.jackson.core:jackson-annotations:2.22")
-            classpath("ch.qos.logback:logback-core:1.6.4")
-            classpath("ch.qos.logback:logback-classic:1.6.4")
+            classpath("ch.qos.logback:logback-core:1.6.5")
+            classpath("ch.qos.logback:logback-classic:1.6.5")
             classpath("org.apache.httpcomponents:httpclient:4.5.14")
             classpath("org.jsoup:jsoup:1.23.2")
         }
