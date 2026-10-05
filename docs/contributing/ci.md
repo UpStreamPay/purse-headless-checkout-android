@@ -67,6 +67,15 @@ Kotlin does not apply. Same `.api` format, same filtering (Kotlin `internal` and
 excluded), per-module dumps under `<module>/api/`. The Kotlin Gradle plugin's own `abiValidation`
 does not support Android libraries.
 
+## Pull request titles
+
+Merges into `main` are squash-only, so a pull request's **title** becomes the commit on `main`, and
+release-please reads it to decide the next version and the changelog section. `PR title`
+(`.github/workflows/pr-title.yml`, a required check) fails unless the title is a Conventional Commit:
+`<type>(<optional scope>)<optional !>: <description>`, with type one of `feat`, `fix`, `perf`,
+`revert`, `docs`, `refactor`, `test`, `ci`, `build`, `chore` or `style`. It reruns when the title is
+edited. A title that would fail here — `Feat/monitoring`, a branch name — releases nothing.
+
 ## Dependencies
 
 `.github/workflows/dependencies.yml` submits the resolved Gradle dependency graph (GitHub cannot

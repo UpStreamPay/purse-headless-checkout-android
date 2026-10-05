@@ -1,0 +1,37 @@
+name: PR title
+
+# Merges are squash-only, so the pull request title becomes the commit on main, and release-please
+# reads that commit to decide the next version and write the changelog. A title that is not a
+# Conventional Commit would silently skip a release, or put a change in the wrong section.
+# Same check in the four SDKs (Secure Fields and Headless Checkout, iOS and Android).
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: pr-title-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  conventional-title:
+    name: PR title
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      # The title is text anyone opening a PR chooses: it reaches the script through env only,
+      # never through ${{ }} interpolation into the script itself.
+      - name: Title is a Conventional Commit
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          types='feat|fix|perf|revert|docs|refactor|test|ci|build|chore|style'
+          if [[ "$TITLE" =~ ^($types)(\([a-z0-9._/-]+\))?!?:\ [^[:space:]].*$ ]]; then
+            echo "OK: $TITLE"
+          else
+            echo "::error::The title must be a Conventional Commit: <type>(<optional scope>): <description>, with type one of ${types//|/, } — e.g. 'fix(applepay): dismiss the sheet on the main actor (SDK-12345)'. Got: $TITLE"
+            exit 1
+          fi
