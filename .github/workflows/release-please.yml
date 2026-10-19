@@ -22,12 +22,12 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
-      # RELEASE_PLEASE_TOKEN is a fine-grained token scoped to this repository alone (Contents,
+      # TF_REPO_AUTOMATION_PAT is a fine-grained token scoped to this repository alone (Contents,
       # Pull requests and Issues: read and write). It is not GITHUB_TOKEN because events raised by
       # GITHUB_TOKEN start no workflow: CI must run on the release PR, and the tag must trigger
       # staging.yml.
       - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
         with:
-          token: ${{ secrets.RELEASE_PLEASE_TOKEN }}
+          token: ${{ secrets.TF_REPO_AUTOMATION_PAT }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json

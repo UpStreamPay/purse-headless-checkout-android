@@ -50,7 +50,7 @@ Actions**), copied from securefields-android:
 
 | Secret | Used by | Value |
 |---|---|---|
-| `RELEASE_PLEASE_TOKEN` | release-please | Fine-grained PAT on this repository alone with **Contents**, **Pull requests** and **Issues: Read and Write**, so CI runs on the release PR and the tag triggers `staging.yml` (events raised by `GITHUB_TOKEN` start no workflow). Its account must be a repository admin: the `v*` tag ruleset lets only admins create tags. |
+| `TF_REPO_AUTOMATION_PAT` | release-please | Fine-grained PAT on this repository alone with **Contents**, **Pull requests** and **Issues: Read and Write**, so CI runs on the release PR and the tag triggers `staging.yml` (events raised by `GITHUB_TOKEN` start no workflow). Its account must be a repository admin: the `v*` tag ruleset lets only admins create tags. |
 | `GPG_PRIVATE_KEY` | staging, release | The organisational signing key, armored (`purse-signing-key.asc`) |
 | `GPG_PASSPHRASE` | staging, release | Its passphrase |
 | `MAVEN_CENTRAL_USERNAME` | staging, release | Username of a Central Portal **user token** of a publisher on `eu.purse` |
