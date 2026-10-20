@@ -1,13 +1,27 @@
 version: 2
+
+# One pull request a week for every dependency, as in the other three SDKs: Gradle and GitHub
+# Actions share this group, so a single review (and a single run of the required checks) covers
+# them all. Security updates still open their own pull request as soon as an advisory lands.
+multi-ecosystem-groups:
+  dependencies:
+    schedule:
+      interval: weekly
+    labels:
+      - dependencies
+
 updates:
   # Gradle version catalog (gradle/libs.versions.toml) + the Gradle wrapper. Partner SDK bumps land
   # as PRs, so CI's 16 KB alignment audit and the minified demo build vet them before merge.
   - package-ecosystem: gradle
     directory: /
-    schedule:
-      interval: weekly
+    multi-ecosystem-group: dependencies
+    patterns:
+      - "*"
     groups:
-      gradle-dependencies:
+      # Security updates are not part of the weekly group; this keeps them in one PR too.
+      gradle-security:
+        applies-to: security-updates
         patterns:
           - "*"
 
@@ -15,7 +29,8 @@ updates:
   # trailing version comment. The `ci` prefix keeps these bumps out of the changelog.
   - package-ecosystem: github-actions
     directory: /
-    schedule:
-      interval: weekly
+    multi-ecosystem-group: dependencies
+    patterns:
+      - "*"
     commit-message:
       prefix: "ci"
