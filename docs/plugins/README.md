@@ -131,7 +131,8 @@ payment does not — and absent whenever a *genuine* redirect took the confirmat
 an **in-app WebView**, not a Custom Tab: a Custom Tab can neither POST nor be observed navigating. It
 finishes once the shopper reaches this app's own deep link (`${applicationId}.redirect`), the flow's
 `returnUrlPrefix` (the session's return URL, attached by the caller as a "known terminal page" hint),
-or a `purse-redirection-data` URL.
+or a `purse-redirection-data` URL. It is not exported: the deep link lands on `RedirectReturnActivity`,
+which forwards only the URI, so no other app can make the WebView load a page or HTML.
 
 > **Caveat:** some ACS providers refuse to render inside an embedded WebView (an anti-phishing measure
 > some card networks require). If one partner's challenge breaks there, that partner needs its own
