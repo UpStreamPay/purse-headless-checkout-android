@@ -762,6 +762,25 @@ class PurseHeadlessCheckoutTest {
     }
 
     @Test
+    fun `a locked environment keeps the session's api_url on its own host and replaces any other`() {
+        fun lockedRoot(apiUrl: String) = PurseHeadlessCheckout.init(
+            CheckoutTestSessions.widgetData(apiUrl = apiUrl),
+            lockedEnvironment = PurseEnvironment.PRODUCTION,
+            datetimeChecker = offlineChecker(),
+        ).paymentApiRoot
+        val tierRoot = PurseEnvironment.PRODUCTION.paymentApiRoot
+
+        // An orchestration session declares another API version on the same host.
+        assertEquals("https://api.purse-live.com/payment/v2", lockedRoot("https://api.purse-live.com/payment/v2"))
+        assertEquals(tierRoot, lockedRoot("https://api.purse-sandbox.com/payment/v2"))
+        assertEquals(tierRoot, lockedRoot("http://api.purse-live.com/payment/v2"))
+        assertEquals(tierRoot, lockedRoot("https://api.purse-live.com.evil.com/payment/v2"))
+        assertEquals(tierRoot, lockedRoot("https://api.purse-live.com@evil.com/payment/v2"))
+        assertEquals(tierRoot, lockedRoot("https://api.purse-live.com:8443/payment/v2"))
+        assertEquals(tierRoot, lockedRoot(""))
+    }
+
+    @Test
     fun `a snapshot from an unknown version or without a session is refused`() {
         assertThrows(IllegalArgumentException::class.java) { CheckoutSavedState.fromJson("""{"version": 99, "widgetData": "x"}""") }
         assertThrows(IllegalArgumentException::class.java) { CheckoutSavedState.fromJson("""{"version": 1}""") }
