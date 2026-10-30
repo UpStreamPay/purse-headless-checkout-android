@@ -77,7 +77,7 @@ object RedirectionMapper {
      * The `partner_data.browser` block, ported field-for-field from web's `getBrowserData`
      * (`plugins/utils/index.ts`) — it feeds the PSP's 3-D Secure device data, so the values must
      * describe the surface that will actually render the challenge: [RedirectionCheckoutActivity]'s
-     * WebView.
+     * WebView. The card plugin sends the same block, since its 3-D Secure challenge opens there too.
      *
      * | Field | Web | Here |
      * |---|---|---|

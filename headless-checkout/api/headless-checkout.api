@@ -2586,6 +2586,7 @@ public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardModule
 public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardPlugin : eu/purse/partnerui/PartnerUiPlugin {
 	public static final field $stable I
 	public static final field COLLECTED_BIN Ljava/lang/String;
+	public static final field COLLECTED_BROWSER Ljava/lang/String;
 	public static final field COLLECTED_NETWORK Ljava/lang/String;
 	public static final field COLLECTED_TOKEN Ljava/lang/String;
 	public static final field Companion Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardPlugin$Companion;
