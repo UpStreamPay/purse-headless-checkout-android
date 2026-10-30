@@ -228,8 +228,8 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
     override fun onNewIntent(newIntent: Intent) {
         super.onNewIntent(newIntent)
         // Only a VIEW of this app's own return scheme, after the redirect was launched, counts as
-        // the shopper returning. The Activity is exported (the browser must reach it), so anything
-        // else — another app's intent, a different scheme — is ignored rather than trusted.
+        // the shopper returning. RedirectReturnActivity forwards any app's deep link here, so
+        // anything else — a different action or scheme — is ignored rather than trusted.
         val isReturn = launched && newIntent.action == Intent.ACTION_VIEW && newIntent.data?.scheme == returnScheme
         if (!isReturn) {
             Log.w(TAG, "ignoring intent ${newIntent.action} ${newIntent.data}")

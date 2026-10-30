@@ -11,13 +11,20 @@
           after Klarna, and the whole payment step for the generic redirection template. Ships here
           so it merges into any integrating app with no manifest work. The deep-link scheme is the
           app's own applicationId plus ".redirect" so it can never collide with another partner's
-          return path. It must stay exported (the browser delivers the return); the Activity checks
-          the intent's action and scheme, and a return only ever means "the shopper came back" — the
-          payment outcome is read from the session, never from the intent.
+          return path. The WebView Activity is not exported, so no other app can make it load a page
+          or HTML; the deep link lands on the exported RedirectReturnActivity, which forwards only the
+          action and URI. The Activity checks the intent's action and scheme, and a return only ever
+          means "the shopper came back" — the payment outcome is read from the session, never from
+          the intent.
         -->
         <activity
             android:name="eu.purse.partnerui.redirect.RedirectionCheckoutActivity"
             android:launchMode="singleTop"
+            android:exported="false" />
+
+        <activity
+            android:name="eu.purse.partnerui.redirect.RedirectReturnActivity"
+            android:theme="@android:style/Theme.NoDisplay"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.VIEW" />
