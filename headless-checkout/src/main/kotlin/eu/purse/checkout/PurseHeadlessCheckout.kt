@@ -1355,10 +1355,15 @@ class PurseHeadlessCheckout private constructor(
      * Commit [item] as the split's primary when it can be one — the SDK-side half of web's
      * `validationRequested` wiring, used by self-submitting flows (an approved wallet sheet /
      * PayPal order chooses its own method; the merchant never pre-selects it).
+     *
+     * A host outlives the item it was built for across [setSession], so the live item is engaged,
+     * not [item]; one the new session no longer offers is left out, and the submit that follows
+     * fails on an unfulfilled payment (web `getEngageableMop`, SDK-12349).
      */
     private fun makePrimary(item: PaymentItem) {
-        val source = item as? PrimarySource ?: return
-        requireSelectable(item)
+        val live = meansOfPayment.firstOrNull { it.id == item.id } ?: return
+        val source = live as? PrimarySource ?: return
+        requireSelectable(live)
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_SET_PRIMARY,
             payload = monitoringPayload("partner" to item.partner.wireValue, "method" to item.method.wireValue),
