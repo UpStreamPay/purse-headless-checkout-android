@@ -148,6 +148,70 @@ class PurseHeadlessCheckoutTest {
     }
 
     @Test
+    fun `an engaged primary the rest to pay pushes above its maximum stops being payable`() {
+        // SDK-12568 (web SDK-12349): younited cb6x capped at 475 on a 480 order, plus a gift card.
+        val json = """
+            {
+              "id": "session-max", "amount": 480.00, "currency_code": "EUR",
+              "expiration_date": "2999-01-01T00:00:00Z",
+              "protocols": {
+                "younited": {
+                  "cb6x": {
+                    "configurations": {
+                      "stable": true, "labels": ["primary"], "position": 1,
+                      "settings": { "registration_mode": "ON_SESSION", "payment_max_amount": 475.00 }
+                    }
+                  }
+                },
+                "illicado": {
+                  "giftcard": {
+                    "configurations": {
+                      "stable": true, "labels": ["secondary"], "position": 2,
+                      "settings": { "registration_mode": "OFF_SESSION", "payment_min_amount": 0.01 }
+                    }
+                  }
+                }
+              }
+            }
+        """.trimIndent()
+        val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(json))
+        val younited = checkout.primaryMethods.single()
+        val giftCard = checkout.secondaryMethods.single()
+        val token = SecondaryToken(
+            id = "illicado-giftcard-7890",
+            partner = giftCard.partner,
+            method = giftCard.method,
+            pan = "9250004781234567890",
+            cvv = "123",
+            name = "gift",
+            balance = BigDecimal("100.00"),
+        )
+
+        checkout.applySecondary(token, BigDecimal("10.00"))
+        checkout.setPrimary(checkout.primaryMethods.single())
+        assertTrue(checkout.isPaymentFulfilled.value)
+        assertEquals(younited.id, checkout.amountSplit.value.last().source.id)
+
+        // Re-taking replaces the slice: 479 left, above younited's 475.
+        checkout.applySecondary(token, BigDecimal("1.00"))
+
+        val suspended = checkout.paymentMethods.value.single { it.id == younited.id }.disabled
+        assertTrue(suspended is DisabledState.MaxAmountExceeded)
+        assertFalse(checkout.isPaymentFulfilled.value)
+        assertEquals(listOf(token.id), checkout.amountSplit.value.map { it.source.id })
+        assertThrows(PurseCheckoutException.PaymentNotFulfilled::class.java) {
+            runBlocking { checkout.submitPayment() }
+        }
+        assertEquals(0, BigDecimal("479.00").compareTo(checkout.remainingAmountToPay.value))
+
+        // Back under the maximum: the code lifts and the method is selectable again.
+        checkout.applySecondary(token, BigDecimal("10.00"))
+        assertNull(checkout.paymentMethods.value.single { it.id == younited.id }.disabled)
+        checkout.setPrimary(checkout.primaryMethods.single())
+        assertTrue(checkout.isPaymentFulfilled.value)
+    }
+
+    @Test
     fun `a suspended or unreachable method never appears in the public list`() {
         val json = """
             {

@@ -1602,6 +1602,15 @@ class PurseHeadlessCheckout private constructor(
         splitter.splits.map { it.source.id }.firstOrNull { fulfilledByMethod[it] == false }
 
     private fun refresh() {
+        // Recomputed first: a primary the rest to pay has just suspended must leave the split before
+        // fulfillment and the split are published.
+        meansOfPayment = MethodAvailability.recompute(
+            meansOfPayment,
+            session.isInformationRequest,
+            splitter.remaining,
+            splitter.splits.map { it.source },
+        )
+        releaseSuspendedPrimary()
         _remainingAmountToPay.value = splitter.remaining
         val fulfilled = splitter.fulfilled && unfulfilledItemId() == null
         if (fulfilled != _isPaymentFulfilled.value) {
@@ -1612,16 +1621,25 @@ class PurseHeadlessCheckout private constructor(
         }
         _isPaymentFulfilled.value = fulfilled
         _amountSplit.value = splitter.splits
-        meansOfPayment = MethodAvailability.recompute(
-            meansOfPayment,
-            session.isInformationRequest,
-            splitter.remaining,
-            splitter.splits.map { it.source },
-        )
         _paymentMethods.value = visibleMethods()
         _paymentTokens.value = visibleTokens()
         _savedSecondaryTokens.value = visibleSavedSecondaryTokens()
         notifyAmountUpdate()
+    }
+
+    /**
+     * A suspended primary stops being payable — web's `mop.disabled` subscription (SDK-12349).
+     * [requireSelectable] refuses a coded item, but one already engaged that then gets a code
+     * requiring its UI cleared (`MAX_AMOUNT_EXCEEDED` once the rest to pay outgrows its maximum,
+     * `MIN_AMOUNT_NOT_MET`, `PAYMENT_FULFILLED`) is taken out of the split here, so
+     * [isPaymentFulfilled] falls back to `false` and [submitPayment] refuses instead of sending
+     * `/validate` out of bounds. Unlike [clearPrimarySplit], no event: the shopper did not ask.
+     * The primary's slice is the rest to pay, so clearing it moves no amount and needs no recompute.
+     */
+    private fun releaseSuspendedPrimary() {
+        val primaryId = splitter.primaryMethod?.id ?: return
+        val live = meansOfPayment.firstOrNull { it.id == primaryId } ?: return
+        if (live.disabled?.requiresUiClear == true) splitter.setPrimary(null)
     }
 
     /**
