@@ -88,7 +88,6 @@ adds or removes a divergence.
 | Redirect WebView | page navigation | `https`-only navigation, file/content access off, return intent checked against the app's own scheme | US-08 / US-09 |
 | Process death during a redirect | n/a | recreation reports a *return* (check the session), never a cancel | US-27 |
 | Saved gift cards | listed in `mops` | `savedSecondaryTokens` flow, balances re-`/init`ed sequentially | `InitGuard` would coalesce parallel `/init`s of one issuer |
-| Loan simulation total | `(n − 1) × recurring + initial + final`, and the drop-in draws `n + 1` lines | `initial + (n − 2) × recurring + final`, `n` lines | `instalment_number` is the total count; web counts one instalment twice (bug to report on web) |
 | Monitoring envelope | `wrapper`, `env`, … | same plus `platform: "android"` | matches the native vault SDKs |
 | `HEADLESS_CHECKOUT_CREATE` payload | `user_agent`, `screen` | same plus `device` (OS version, API level, manufacturer, model) | what RUN parses out of a web user agent (SDK-12189) |
 | Amounts in telemetry | `SET_SESSION.amount`, `SECONDARY_TOKEN_TAKE.amount` | never — `nb_methods`, `partial` | SDK-12220 AC: no raw amount in any event |
