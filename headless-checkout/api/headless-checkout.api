@@ -2271,6 +2271,7 @@ public final class eu/purse/partnerui/PluginEvent$Redirect : eu/purse/partnerui/
 
 public abstract interface class eu/purse/partnerui/PluginHost : eu/purse/partnerui/redirect/RedirectionDelegate {
 	public abstract fun buildContext ()Leu/purse/partnerui/PartnerUiContext;
+	public abstract fun getAmount ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getEnvironment ()Leu/purse/core/environment/PurseEnvironment;
 	public abstract fun getRedirectionReturnUrl ()Ljava/lang/String;
 	public abstract fun setAsPrimary ()V

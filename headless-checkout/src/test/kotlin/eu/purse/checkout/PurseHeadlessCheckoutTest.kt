@@ -498,6 +498,26 @@ class PurseHeadlessCheckoutTest {
         assertTrue(checkout.amountSplit.value.isEmpty())
     }
 
+    @Test
+    fun `a host's amount follows the split when a gift card is applied after the wallet prepared`() {
+        // SDK-12567: Google Pay / Klarna re-prepare on this flow, so their sheet / /init carry 3.80, not 4.80.
+        val checkout = checkout()
+        val googlePay = checkout.primaryMethods.single { it.method == Method.GooglePay }
+        val host = checkout.host(googlePay)
+        assertEquals(0, BigDecimal("4.80").compareTo(host.amount.value))
+
+        val giftCard = checkout.secondaryMethods.single()
+        checkout.applySecondary(
+            SecondaryToken(
+                id = "illicado-giftcard-7890", partner = giftCard.partner, method = giftCard.method,
+                pan = "9250004781234567890", cvv = "123", name = "gift", balance = BigDecimal("1.00"),
+            ),
+        )
+
+        assertEquals(0, BigDecimal("3.80").compareTo(host.amount.value))
+        assertEquals(0, host.amount.value.compareTo(host.buildContext().amount))
+    }
+
     // --- saved cards (wallet) ---------------------------------------------------------------------
 
     @Test

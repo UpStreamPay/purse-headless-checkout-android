@@ -7,6 +7,8 @@ package eu.purse.partnerui
 import eu.purse.core.environment.PurseEnvironment
 import eu.purse.core.payload.ValidationResult
 import eu.purse.partnerui.redirect.RedirectionDelegate
+import java.math.BigDecimal
+import kotlinx.coroutines.flow.StateFlow
 
 /**
  * Everything a coordinator needs from the checkout for one payment item. One shape for every
@@ -21,6 +23,13 @@ interface PluginHost : RedirectionDelegate {
      * redirect so the in-app WebView recognizes reaching it as completion. Never auto-followed.
      */
     val redirectionReturnUrl: String?
+
+    /**
+     * The amount this item must cover (`PartnerUiContext.amount`), moving exactly when plugins get
+     * web's `onAmountUpdate`. A coordinator that bakes the amount into what it prepared (a Google Pay
+     * sheet request, a Klarna `/init` client token) prepares again when it moves.
+     */
+    val amount: StateFlow<BigDecimal>
 
     /** The [PartnerUiContext] for this item against the current split. */
     fun buildContext(): PartnerUiContext
