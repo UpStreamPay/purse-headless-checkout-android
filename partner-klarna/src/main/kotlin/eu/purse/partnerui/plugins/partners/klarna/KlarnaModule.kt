@@ -8,6 +8,8 @@ import android.widget.FrameLayout
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
@@ -44,8 +46,10 @@ class KlarnaModule : PartnerModule {
         val coordinator = rememberKlarnaCoordinator(request.listener)
         val returnUrl = request.appReturnUrl ?: "${LocalContext.current.packageName}.klarna://return"
         val containerAttached: MutableState<Boolean> = remember(request.key) { mutableStateOf(false) }
+        // The /init client token carries the amount — prepare again when it moves (web's onAmountUpdate).
+        val amount by request.host.amount.collectAsState()
         // Klarna inflates into a real ViewGroup — prepare once the AndroidView container exists.
-        LaunchedEffect(coordinator, containerAttached.value) {
+        LaunchedEffect(coordinator, containerAttached.value, amount) {
             if (containerAttached.value) coordinator.prepare(request.host, returnUrl)
         }
         return remember(coordinator) {

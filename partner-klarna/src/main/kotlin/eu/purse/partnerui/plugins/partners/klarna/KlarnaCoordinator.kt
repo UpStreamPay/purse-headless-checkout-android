@@ -20,7 +20,9 @@ import java.util.Base64
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
 import kotlinx.coroutines.CancellableContinuation
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -30,7 +32,9 @@ import org.json.JSONObject
  * Klarna's interactive half: [prepare] runs `/init` and inflates the native widget into
  * [container]; [submit] runs `/validate`, and [KlarnaPlugin.postValidation] then calls the widget's
  * `authorize()` through the callback stashed in `PartnerUiContext.collected`. One submit therefore
- * both pays and opens Klarna's step. Obtain one with `rememberKlarnaCoordinator`.
+ * both pays and opens Klarna's step. The `/init` client token carries the amount, so the surface
+ * calls [prepare] again whenever `PluginHost.amount` moves (web's `onAmountUpdate`). Obtain one
+ * with `rememberKlarnaCoordinator`.
  */
 class KlarnaCoordinator internal constructor(
     private val activity: ComponentActivity,
@@ -44,6 +48,9 @@ class KlarnaCoordinator internal constructor(
 
     private var view: KlarnaPaymentView? = null
 
+    /** The in-flight [prepare]; a newer one cancels it so a stale `/init` never lands last. */
+    private var preparing: Job? = null
+
     /** Resolved by `onAuthorized` / `onFinalized` / `onErrorOccurred` while `authorize()` is in flight. */
     private var pendingAuthorize: CancellableContinuation<Boolean>? = null
 
@@ -54,7 +61,8 @@ class KlarnaCoordinator internal constructor(
 
         /** The "ready" signal: the widget rendered whatever Klarna's session offers. */
         override fun onLoaded(view: KlarnaPaymentView) {
-            listener.onReady(true)
+            // A widget a later prepare() replaced may still finish loading; only the mounted one counts.
+            if (view === this@KlarnaCoordinator.view) listener.onReady(true)
         }
 
         override fun onLoadPaymentReview(view: KlarnaPaymentView, showForm: Boolean) = Unit
@@ -100,10 +108,17 @@ class KlarnaCoordinator internal constructor(
     /**
      * @param returnUrl the deep link `KlarnaPaymentView.returnURL` carries back into the Activity
      * hosting the widget (`"{packageName}.klarna://return"`), declared by the host app's manifest.
+     * Calling it again replaces the widget with one built on a fresh `/init`.
      */
     fun prepare(host: PluginHost, returnUrl: String) {
         attach(host)
-        activity.lifecycleScope.launch {
+        preparing?.cancel()
+        // The mounted widget's step_id is about to go stale — no submit on it until the new one loads.
+        if (view != null) {
+            view = null
+            listener.onReady(false)
+        }
+        preparing = activity.lifecycleScope.launch {
             try {
                 val context = host.buildContext()
                 val request = withContext(Dispatchers.IO) { KlarnaPlugin(context.partner).buildRequest(context) }
@@ -124,6 +139,8 @@ class KlarnaCoordinator internal constructor(
                     ),
                 )
                 paymentView.initialize(request.clientToken)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 dispatch(PluginEvent.InitFailed(e.message))
                 fail(e)
