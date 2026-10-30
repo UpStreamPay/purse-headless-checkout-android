@@ -1,7 +1,6 @@
 // Web: packages/headless-checkout `mapPluginResultToSimulation`
-// Same: field names; counts and amounts only (no per-instalment dates on web either).
-// Differs: `totalAmount` = initial + (n − 2) recurring + final. Web adds (n − 1) recurring on top of
-//          initial and final, which counts one instalment twice when `instalment_number` is the total.
+// Same: field names, `totalAmount` = initial + (n − 1) recurring + final; counts and amounts only
+//       (no per-instalment dates on web either).
 package eu.purse.core.payment
 
 import java.math.BigDecimal
@@ -41,7 +40,10 @@ data class LoanSimulation(
     val finalInstallmentAmount: BigDecimal,
     /** Each recurring instalment in between — `instalment_amount`. */
     val installmentAmount: BigDecimal,
-    /** Number of instalments — `instalment_number`. */
+    /**
+     * Number of instalments after the first — `instalment_number`. A 3× schedule has a count of 2:
+     * the shopper pays `installmentCount + 1` times.
+     */
     val installmentCount: Int,
     /** Cost of the loan, excluding the financed amount — `total_cost`. */
     val totalCost: BigDecimal,
@@ -70,12 +72,12 @@ data class LoanSimulation(
             val final = result.decimal("final_instalment_amount")
             val recurring = result.decimal("instalment_amount")
             val count = result.optInt("instalment_number", 0)
-            // `instalment_number` counts every instalment: the initial one, the recurring ones and
-            // the final one. A single instalment is just the initial amount.
-            val total = when {
-                count <= 1 -> initial
-                else -> initial.add(recurring.multiply(BigDecimal(count - 2))).add(final)
-            }.setScale(2, RoundingMode.HALF_UP)
+            // `instalment_number` counts the instalments that follow the initial one, the final one
+            // included, so `count - 1` of them are recurring.
+            val total = initial
+                .add(recurring.multiply(BigDecimal((count - 1).coerceAtLeast(0))))
+                .add(final)
+                .setScale(2, RoundingMode.HALF_UP)
             return LoanSimulation(
                 initialInstallmentAmount = initial,
                 finalInstallmentAmount = final,

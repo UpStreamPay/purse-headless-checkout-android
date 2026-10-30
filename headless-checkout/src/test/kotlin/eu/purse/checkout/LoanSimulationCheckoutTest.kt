@@ -97,7 +97,7 @@ class LoanSimulationCheckoutTest {
     @Test
     fun `simulateLoan calls the entity-scoped endpoint and maps the schedule`() {
         responseBody = """{"plugin_result": {"initial_instalment_amount": 1.60, "instalment_amount": 1.60,
-            "final_instalment_amount": 1.60, "instalment_number": 3, "total_cost": 0}}"""
+            "final_instalment_amount": 1.60, "instalment_number": 2, "total_cost": 0}}"""
         val checkout = checkout()
         val paypal = checkout.primaryMethods.single { it.partner == Partner.Paypal }
         val events = mutableListOf<CheckoutEventCode>()
@@ -111,7 +111,7 @@ class LoanSimulationCheckoutTest {
 
         assertEquals("/payment/v1/simulation/entity-1/paypal/wallet", lastPath)
         assertEquals("EUR", JSONObject(lastBody!!).getString("currency_code"))
-        assertEquals(3, simulation.installmentCount)
+        assertEquals(2, simulation.installmentCount)
         // Three instalments of 1.60 — the 4.80 financed, no cost.
         assertEquals(BigDecimal("4.80"), simulation.totalAmount)
         assertTrue(events.contains(CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_LOAN_SIM))
