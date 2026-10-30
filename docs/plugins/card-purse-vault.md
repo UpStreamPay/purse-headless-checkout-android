@@ -65,14 +65,14 @@ sequenceDiagram
     App->>Co: submit()  (Pay tapped)
     Co->>SF: submit(SubmitOptions(selectedNetwork))
     SF-->>Co: SubmitResult.Success - vaultFormToken + card.bin
-    Co->>Ck: setCollected(token, bin, selected_network)
+    Co->>Ck: setCollected(token, bin, selected_network, browser)
     Co->>Ck: submitPayment()
     Ck->>Pl: validateUi(context)
     Pl-->>Ck: true (a vault token exists)
     Ck->>Pl: preValidation(context)
     Pl->>Api: POST /init (vault_vendor purse)
     Api-->>Pl: step_id
-    Pl-->>Ck: item payload - vault_vendor_token_id + card.bin + step_id
+    Pl-->>Ck: item payload - vault_vendor_token_id + card.bin + step_id + partner_data.browser
     Ck->>Api: POST /validate (all splits)
     Api-->>Ck: results + redirection + global_status
     Ck-->>Co: ValidationResult
@@ -95,7 +95,12 @@ sequenceDiagram
    for the `step_id`, then the `/validate` payload — because nothing about rendering depends on
    `/init`'s response (unlike Google Pay's gateway config or Klarna's client token). Same two calls in
    the same order, just later. There is consequently **no `buildRequest`** on this plugin.
-2. **Form completeness gates the payment** — the Kotlin analog of web's `fulfilled` event. Web builds
+2. **`partner_data.browser` on `/validate`**, fresh card and saved token alike — web's hostedfields
+   `getBrowserData`. The coordinator reads it at submit with
+   `RedirectionMapper.browserData`, so it describes the in-app WebView a 3-D Secure challenge opens
+   in. Without it dalenys refuses a token (`Missing parameter`) and centralpay or axepta never open a
+   challenge (SDK-12569).
+3. **Form completeness gates the payment** — the Kotlin analog of web's `fulfilled` event. Web builds
    a `final-form` model whose managed (iframe) fields hold sentinel values (`'valid'`/`'required'`/
    `'format'`), subscribes to `state.valid`, and dispatches `fulfilled { isFulfilled }`; its
    `PaymentElement` mirrors that, and `setAsPrimarySource` throws `ELEMENT_NOT_FULFILLED` without it.
@@ -105,13 +110,13 @@ sequenceDiagram
    invalid form. `PurseHeadlessCheckout` folds that per-item flag into `isPaymentFulfilled` and
    `submitPayment` (which throws `ItemNotFulfilled`). See
    [consumer-api §6](../integration/consumer-api.md#form-completeness-gates-the-payment).
-3. **`submit()` on an invalid form is a no-op, never an error.** SecureFields is already showing its
+4. **`submit()` on an invalid form is a no-op, never an error.** SecureFields is already showing its
    own per-field errors; the coordinator just logs, re-reports `onReady(false)` so a host that let its
    button through corrects itself, and returns. An unfilled form is not a failed payment.
-4. **`validateUi` is the last line of defence**: no collected vault token means the form was never
+5. **`validateUi` is the last line of defence**: no collected vault token means the form was never
    successfully submitted, so `PaymentValidator` raises `ValidateFailed` before `preValidation` can
    build a payload.
-5. **Compose-first, and the `host` must be `remember`ed.** `rememberCardCoordinator` keys its
+6. **Compose-first, and the `host` must be `remember`ed.** `rememberCardCoordinator` keys its
    SecureFields instance on the `host` object, so building the host inline recreates the form — and
    loses whatever's been typed — on every recomposition:
    ```kotlin
@@ -119,20 +124,20 @@ sequenceDiagram
    val coordinator = rememberCardCoordinator(host, listener)
    ```
    `rememberSecureFields` destroys the SDK on disposal; `rememberPaymentElement` does the `remember` for you.
-6. **Three brand vocabularies, converted twice.** The session's `CardBrand`
+7. **Three brand vocabularies, converted twice.** The session's `CardBrand`
    (`vault.supported_brands`) → SecureFields' own `Brand` (its BIN-lookup vocabulary) → the Payment
    API's gateway scheme string for `payment_data.card.selected_network` (e.g. `CB` → `"CARTE_BANCAIRE"`).
    `CardCoordinator.toGatewayScheme()` mirrors SecureFields Android's own internal, non-public
    `schemeFor()`.
-7. **Co-badged selection is listener-driven.** The default is the first brand SecureFields' BIN lookup
+8. **Co-badged selection is listener-driven.** The default is the first brand SecureFields' BIN lookup
    matches (`onBrandDetected`); `onBrandUserSelection` is wired for a host that renders its own brand
    picker calling `sdk.setBrandSelection` — none ships here, so that path is future-proofing.
-8. **`vault_vendor_token_id` is top-level, not nested under `card`.** `payment_data` carries
+9. **`vault_vendor_token_id` is top-level, not nested under `card`.** `payment_data` carries
    `vault_vendor_token_id` + `vault_vendor` at the top, and only the non-sensitive `card.bin` /
    `card.selected_network` inside — exactly web's `submitForResult` shape.
-9. **Two separate environment enums.** `PurseEnvironment` (Payment API) maps to SecureFields'
+10. **Two separate environment enums.** `PurseEnvironment` (Payment API) maps to SecureFields'
    `VaultEnvironment`; `DEVELOPMENT` maps to `SANDBOX`, since the vault has no development target.
-10. **A saved card runs through the same coordinator, in one of two token modes.** `host(token)`
+11. **A saved card runs through the same coordinator, in one of two token modes.** `host(token)`
     hands the coordinator the `PaymentToken` as `PartnerUiContext.token` (web's `token` attribute),
     and `CardCoordinator.Mode.of(token)` decides the shape — the port of web's `isNoCVV` +
     `cvvOnly` hosted fields:
