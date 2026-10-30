@@ -76,7 +76,6 @@ adds or removes a divergence.
 | Interactive step | plugin renders into the DOM and owns its client | a `PaymentCoordinator` subclass owns the native SDK; the base owns `/validate`, redirects and the return; the plugin stays pure protocol | Activity lifecycle and result contracts have no web analogue |
 | Plugin ↔ checkout access | plugin holds the checkout context | one `PluginHost` interface, implemented by `PurseHeadlessCheckout.host(item)` | keeps `eu.purse.partnerui` from depending on `eu.purse.checkout` |
 | Fulfilment | `setAsPrimarySource` refuses an unfulfilled element | reactive `isPaymentFulfilled`, selectable before the form is filled | fits `StateFlow` UIs |
-| Card `/init` timing | at `onSessionSet` | inside `preValidation` | nothing about rendering depends on it on Android |
 | PayPal `/init` timing | at render | on button tap | avoids orphan PayPal orders |
 | PayPal `redirection.url` in `/validate` | never followed | explicitly dropped when it is a PayPal approval URL | it is the web popup URL echoed back; following it re-opens PayPal |
 | Klarna return | page URL | host app must declare a `singleTask` deep link | `KlarnaPaymentView` resumes the same Activity |
