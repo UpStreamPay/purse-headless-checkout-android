@@ -1,5 +1,5 @@
 // Web: packages/partner-ui/src/plugins/vaults/purse/creditcard + generics/hostedfields
-// Same: fresh card / token with CVV (`cvvOnly`) / token without CVV; tokenize, then /init + /validate.
+// Same: fresh card / token with CVV (`cvvOnly`) / token without CVV; tokenize, then /validate.
 // Differs: SecureFields Android (Compose) instead of iframes; the form's validity is pushed into
 //          the checkout through `PluginHost.setFulfilled` rather than refused at `setAsPrimarySource`.
 package eu.purse.partnerui.plugins.vaults.purse.creditcard
@@ -48,7 +48,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * Creates and remembers the card flow's interactive half: a [SecureFieldsAndroid] instance plus the
- * [CardCoordinator] that tokenizes on submit and runs `/init` + `/validate` through [host]. The host's
+ * [CardCoordinator] that tokenizes on submit and runs `/validate` through [host]. The host's
  * token (and its `requiresCvv`) selects the [CardCoordinator.Mode]. Render the form with
  * [PurseCardForm]; mounting it reports the item unfulfilled until SecureFields says every field is valid.
  */
@@ -197,8 +197,8 @@ class CardCoordinator internal constructor(
     internal var selectedBrand: Brand? by mutableStateOf(null)
 
     /**
-     * Tokenize (the full card, or just the CVV of a saved one), then `/init` + `/validate`. A saved
-     * card that needs no CVV skips straight to `/init` + `/validate`. No-op while the form is invalid:
+     * Tokenize (the full card, or just the CVV of a saved one), then `/validate`. A saved card
+     * that needs no CVV skips straight to `/validate`. No-op while the form is invalid:
      * SecureFields is already showing the errors, and an unfilled form is not a failed payment.
      */
     fun submit() {

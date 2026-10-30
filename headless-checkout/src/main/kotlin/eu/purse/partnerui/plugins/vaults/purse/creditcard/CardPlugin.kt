@@ -1,6 +1,7 @@
 // Web: packages/partner-ui/src/plugins/vaults/purse/creditcard + generics/hostedfields
-// Same: token from the vault into /validate with `partner_data.browser`; saved token + CVV-only token side by side.
-// Differs: /init runs inside `preValidation`, not at `onSessionSet`.
+// Same: token from the vault into /validate with `partner_data.browser`; saved token + CVV-only token side by side;
+// no /init (the bridge's `skipInit`), so /validate carries no step.
+// Differs: no `vaultExtras.skipInit: false` opt-back-in (only Cybersource uses it on web).
 package eu.purse.partnerui.plugins.vaults.purse.creditcard
 
 import eu.purse.core.payload.ItemPayload
@@ -14,10 +15,11 @@ import org.json.JSONObject
 
 /**
  * The `purse`-vendor vault-backed card [PartnerUiPlugin] — the protocol half (pure, no
- * SecureFields types). Unlike Google Pay/Klarna, `/init` gates nothing about rendering (SecureFields
- * tokenizes independently of it), so [preValidation] does both steps itself: `POST /init` for a
- * `step_id`, then builds the `/validate` payload from the vault token [CardCoordinator] already
- * collected via `PartnerUiContext.collected`.
+ * SecureFields types). There is no `/init`: SecureFields tokenizes without it and the Payment API
+ * accepts a vault card's `/validate` without a step, so [preValidation] only builds the `/validate`
+ * payload from the vault token [CardCoordinator] already collected via `PartnerUiContext.collected`.
+ * This mirrors web's purse vault bridge `skipInit` (headless-checkout 3.73.0) — some PSPs refuse the
+ * `/init` outright (Worldpay: "Session data doesn't meet the partner's requirements", SDK-12570).
  *
  * The interactive half (the SecureFields form, tokenization) lives in [CardCoordinator].
  */
@@ -38,8 +40,8 @@ class CardPlugin(override val partner: Partner) : PartnerUiPlugin {
         context.token?.requiresCvv == false || context.collected[COLLECTED_TOKEN] is String
 
     /**
-     * `partner_data.browser` ([COLLECTED_BROWSER]) rides on `/init` and `/validate`, fresh card and
-     * saved token alike — web's hostedfields `getItemBasePayloadFromFields`. Without it dalenys
+     * `partner_data.browser` ([COLLECTED_BROWSER]) rides on `/validate`, fresh card and saved token
+     * alike — web's hostedfields `getItemBasePayloadFromFields`. Without it dalenys
      * refuses a token (`Missing parameter`) and a 3-D Secure PSP never opens its challenge. A saved
      * token paid with no [CardCoordinator] collected nothing, so it gets
      * [RedirectionMapper.fallbackBrowserData] instead.
@@ -47,9 +49,6 @@ class CardPlugin(override val partner: Partner) : PartnerUiPlugin {
     override suspend fun preValidation(context: PartnerUiContext): ValidateItemPayload {
         val browser = context.collected[COLLECTED_BROWSER] as? JSONObject
             ?: RedirectionMapper.fallbackBrowserData(context.options.locale)
-        val stepId = CardMapper.parseInit(
-            context.api.init(CardMapper.buildInitPayload(context.amount, partner.wireValue, browser)),
-        )
 
         // Saved token (card-on-file): the opaque token value plus the card metadata travels straight
         // into payment_data (web's patchItemPayloadWithToken). When the token still needs its CVV,
@@ -66,7 +65,6 @@ class CardPlugin(override val partner: Partner) : PartnerUiPlugin {
                 partner = partner,
                 method = method,
                 amount = context.amount,
-                stepId = stepId,
                 paymentData = CardMapper.buildTokenPaymentData(token, cvvVaultToken),
                 partnerData = RedirectionMapper.partnerDataFor(browser),
             )
@@ -81,7 +79,6 @@ class CardPlugin(override val partner: Partner) : PartnerUiPlugin {
             partner = partner,
             method = method,
             amount = context.amount,
-            stepId = stepId,
             paymentData = CardMapper.buildValidatePaymentData(vaultVendorTokenId, bin, selectedNetwork),
             partnerData = RedirectionMapper.partnerDataFor(browser),
         )

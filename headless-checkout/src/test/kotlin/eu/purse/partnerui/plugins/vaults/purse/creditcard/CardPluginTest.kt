@@ -1,7 +1,6 @@
 package eu.purse.partnerui.plugins.vaults.purse.creditcard
 
 import eu.purse.checkout.FakePaymentApi
-import eu.purse.core.api.InitGuard
 import eu.purse.core.api.PaymentApiClient
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
@@ -13,9 +12,9 @@ import java.math.BigDecimal
 import java.time.Instant
 import kotlinx.coroutines.runBlocking
 import org.json.JSONObject
-import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -50,9 +49,6 @@ class CardPluginTest {
 
     private val browser = JSONObject().put("user_agent", "ua").put("accept_header", "text/html")
 
-    @After
-    fun resetInitGuard() = InitGuard.reset()
-
     @Test
     fun `validateUi refuses an item whose form never produced a vault token`() = runBlocking {
         val plugin = CardPlugin(Partner.Purse)
@@ -81,7 +77,7 @@ class CardPluginTest {
     // SDK-12569: dalenys refuses a token, and 3-D Secure PSPs open no challenge, without it.
     @Test
     fun `a fresh card sends partner_data browser on validate`() = runBlocking {
-        FakePaymentApi().respond("init", """{"status":{"state":"SUCCESS"}}""").use { api ->
+        FakePaymentApi().use { api ->
             val collected = mapOf(CardPlugin.COLLECTED_TOKEN to "vft-1", CardPlugin.COLLECTED_BROWSER to browser)
 
             val item = CardPlugin(Partner.Purse).preValidation(context(collected, apiRoot = api.apiRoot))
@@ -94,7 +90,7 @@ class CardPluginTest {
 
     @Test
     fun `a saved token sends partner_data browser on validate`() = runBlocking {
-        FakePaymentApi().respond("init", """{"status":{"state":"SUCCESS"}}""").use { api ->
+        FakePaymentApi().use { api ->
             val noCvv = PayToken(value = "tok-1", requiresCvv = false)
 
             val item = CardPlugin(Partner.Purse).preValidation(
@@ -106,21 +102,46 @@ class CardPluginTest {
         }
     }
 
+    // SDK-12570: Worldpay refuses the vault card's /init ("Session data doesn't meet the partner's
+    // requirements"); web skips it since headless-checkout 3.73.0, and so must we.
     @Test
-    fun `the card init carries the collected browser block too`() = runBlocking {
-        FakePaymentApi().respond("init", """{"status":{"state":"SUCCESS"}}""").use { api ->
-            val collected = mapOf(CardPlugin.COLLECTED_TOKEN to "vft-1", CardPlugin.COLLECTED_BROWSER to browser)
+    fun `a fresh card validates straight away, with no init and no step`() = runBlocking {
+        FakePaymentApi().use { api ->
+            val collected = mapOf(CardPlugin.COLLECTED_TOKEN to "vft-1", CardPlugin.COLLECTED_BIN to "411111")
 
-            CardPlugin(Partner.Purse).preValidation(context(collected, apiRoot = api.apiRoot))
+            val item = CardPlugin(Partner.Other("worldpay")).preValidation(context(collected, apiRoot = api.apiRoot)).toJson()
 
-            val init = api.initRequests().single().json
-            assertEquals("ua", init.getJSONObject("partner_data").getJSONObject("browser").getString("user_agent"))
+            assertTrue("no /init for a purse vault card", api.requests.isEmpty())
+            assertFalse(item.has("step_id"))
+            assertEquals("worldpay", item.getString("partner"))
+            assertEquals("vft-1", item.getJSONObject("payment_data").getString("vault_vendor_token_id"))
+        }
+    }
+
+    @Test
+    fun `a saved card validates straight away too, CVV token or not`() = runBlocking {
+        FakePaymentApi().use { api ->
+            val plugin = CardPlugin(Partner.Other("worldpay"))
+            val needsCvv = PayToken(value = "tok-1", requiresCvv = true)
+            val noCvv = PayToken(value = "tok-2", requiresCvv = false)
+
+            val withCvv = plugin.preValidation(
+                context(mapOf(CardPlugin.COLLECTED_TOKEN to "cvv-vft"), token = needsCvv, apiRoot = api.apiRoot),
+            )
+            val withoutCvv = plugin.preValidation(context(emptyMap(), token = noCvv, apiRoot = api.apiRoot))
+
+            assertTrue("no /init for a saved purse vault card", api.requests.isEmpty())
+            assertNull(withCvv.stepId)
+            assertNull(withoutCvv.stepId)
+            assertEquals("tok-1", withCvv.paymentData.getString("token"))
+            assertEquals("cvv-vft", withCvv.paymentData.getString("vault_vendor_token_id"))
+            assertEquals("tok-2", withoutCvv.paymentData.getString("token"))
         }
     }
 
     @Test
     fun `a saved token paid without the card coordinator still sends a browser block`() = runBlocking {
-        FakePaymentApi().respond("init", """{"status":{"state":"SUCCESS"}}""").use { api ->
+        FakePaymentApi().use { api ->
             val noCvv = PayToken(value = "tok-1", requiresCvv = false)
             val ctx = context(emptyMap(), token = noCvv, apiRoot = api.apiRoot)
                 .copy(options = PluginOptions(locale = "fr-FR"))
