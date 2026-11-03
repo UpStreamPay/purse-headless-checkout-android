@@ -467,7 +467,7 @@ coordinator yourself instead of going through `rememberPaymentElement`.
 | `redirectionReturnUrl: String?` | The session's own return URL, threaded into a genuine 3-D Secure redirect so the in-app WebView recognizes reaching it as completion. Never auto-followed. |
 | `buildContext(): PartnerUiContext` | — |
 | `setCollected(data: Map<String, Any?>)` | — |
-| `setAsPrimary()` | Commit the item as the split's primary. Self-submitting flows call it on approval (web's `validationRequested`); a cancelled sheet leaves the split untouched. |
+| `setAsPrimary()` | Commit the item as the split's primary. Self-submitting flows call it on approval (web's `validationRequested`); a cancelled sheet leaves the split untouched. Throws `MethodDisabled` when the current session no longer offers the item, so a stale host never charges the primary already engaged. |
 | `setFulfilled(fulfilled: Boolean)` | The form's completeness, forwarded to `PurseHeadlessCheckout.setFulfilled(item, …)` — the card coordinator calls it, you don't. |
 | `suspend submitPayment(): ValidationResult` | Run the plugin-driven `/validate` pipeline over the current split. |
 | `suspend delegateRedirection(action): Boolean` | Your `onRedirection` hook, when set (`RedirectionDelegate`). |

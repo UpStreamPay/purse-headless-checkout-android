@@ -174,20 +174,43 @@ class MethodAvailabilityTest {
         assertNull("a recoverable state is recomputable and clears when the amount allows", recomputed[1].disabled)
     }
 
-    // --- in-split exemption (web's `isInSplits`) --------------------------------------------------
+    // --- in-split exemption (web's `isSparedAsEngaged`) --------------------------------------------
 
     @Test
-    fun `a method already in the split is not disabled by the coverage it provides`() {
-        val method = primary("purse-creditcard", config(min = BigDecimal("10.00")))
+    fun `a secondary already in the split is not disabled by the coverage it provides`() {
+        val giftCard = secondary("illicado-giftcard", config(labels = listOf("secondary"), min = BigDecimal("10.00")))
 
         val recomputed = MethodAvailability.recompute(
+            listOf(giftCard),
+            isInformationRequest = false,
+            primaryReach = BigDecimal.ZERO,
+            splitSources = listOf(giftCard),
+        )
+
+        assertNull(recomputed.single().disabled)
+    }
+
+    @Test
+    fun `an engaged primary is judged on the rest to pay like any other primary`() {
+        // SDK-12349: the exemption is the secondaries' — an engaged primary that falls out of
+        // bounds takes its code, so the checkout can take it out of the split.
+        val method = primary("purse-creditcard", config(min = BigDecimal("10.00")))
+
+        val fulfilled = MethodAvailability.recompute(
             listOf(method),
             isInformationRequest = false,
             primaryReach = BigDecimal.ZERO,
             splitSources = listOf(method),
         )
+        val belowMin = MethodAvailability.recompute(
+            listOf(method),
+            isInformationRequest = false,
+            primaryReach = BigDecimal("5.00"),
+            splitSources = listOf(method),
+        )
 
-        assertNull(recomputed.single().disabled)
+        assertEquals(DisabledState.PaymentFulfilled, fulfilled.single().disabled)
+        assertTrue(belowMin.single().disabled is DisabledState.MinAmountNotMet)
     }
 
     @Test
