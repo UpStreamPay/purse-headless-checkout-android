@@ -106,9 +106,10 @@ private fun Schedule(simulation: LoanSimulation, currency: String) {
         label = stringResource(R.string.simulation_instalment, 1) + " · " + stringResource(R.string.simulation_today),
         amount = format.format(simulation.initialInstallmentAmount),
     )
-    // `installmentCount` includes the first instalment above; the last line is the final amount.
-    for (number in 2..simulation.installmentCount) {
-        val isLast = number == simulation.installmentCount
+    // `installmentCount` counts the instalments after the first one above; the last is the final amount.
+    val lastNumber = simulation.installmentCount + 1
+    for (number in 2..lastNumber) {
+        val isLast = number == lastNumber
         ScheduleLine(
             label = stringResource(R.string.simulation_instalment, number),
             amount = format.format(if (isLast) simulation.finalInstallmentAmount else simulation.installmentAmount),

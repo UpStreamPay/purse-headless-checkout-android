@@ -369,11 +369,11 @@ data class LoanSimulation(
 ```
 
 `totalCost` is the price of the credit (excluding the financed amount); `totalAmount` is what the
-shopper pays in all — `initial + (count - 2) × installmentAmount + final`, rounded to two decimals.
-`installmentCount` counts every instalment, the first and the last included, so a 3× schedule is
-three lines: initial, one recurring, final. (Web's `mapPluginResultToSimulation` adds `count - 1`
-recurring instalments on top of initial and final and so over-counts one; do not copy it.) Like web,
-the schedule carries **counts and amounts only**: the API returns no per-instalment dates.
+shopper pays in all — `initial + (count - 1) × installmentAmount + final`, rounded to two decimals,
+as web's `mapPluginResultToSimulation` computes it. `installmentCount` is the API's
+`instalment_number`: the instalments that follow the first one, so a 3× schedule has a count of 2 and
+three lines: initial, one recurring, final. Like web, the schedule carries **counts and amounts
+only**: the API returns no per-instalment dates.
 
 **Throws:**
 - `PurseCheckoutException.MethodNotSimulable` (`METHOD_IS_NOT_SIMULABLE`) — the method has no
@@ -467,7 +467,7 @@ coordinator yourself instead of going through `rememberPaymentElement`.
 | `redirectionReturnUrl: String?` | The session's own return URL, threaded into a genuine 3-D Secure redirect so the in-app WebView recognizes reaching it as completion. Never auto-followed. |
 | `buildContext(): PartnerUiContext` | — |
 | `setCollected(data: Map<String, Any?>)` | — |
-| `setAsPrimary()` | Commit the item as the split's primary. Self-submitting flows call it on approval (web's `validationRequested`); a cancelled sheet leaves the split untouched. |
+| `setAsPrimary()` | Commit the item as the split's primary. Self-submitting flows call it on approval (web's `validationRequested`); a cancelled sheet leaves the split untouched. Throws `MethodDisabled` when the current session no longer offers the item, so a stale host never charges the primary already engaged. |
 | `setFulfilled(fulfilled: Boolean)` | The form's completeness, forwarded to `PurseHeadlessCheckout.setFulfilled(item, …)` — the card coordinator calls it, you don't. |
 | `suspend submitPayment(): ValidationResult` | Run the plugin-driven `/validate` pipeline over the current split. |
 | `suspend delegateRedirection(action): Boolean` | Your `onRedirection` hook, when set (`RedirectionDelegate`). |

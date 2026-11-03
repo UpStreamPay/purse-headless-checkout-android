@@ -17,7 +17,8 @@
 -keep class * implements eu.purse.partnerui.PartnerModule { <init>(); }
 -keepnames class * implements eu.purse.partnerui.PartnerModule
 
-# ── Return Activity ──────────────────────────────────────────────────────────
-# Declared in this AAR's manifest and instantiated by the framework — AGP's manifest rules keep it,
+# ── Return Activities ───────────────────────────────────────────────────────
+# Declared in this AAR's manifest and instantiated by the framework — AGP's manifest rules keep them,
 # this is defence-in-depth for hosts that post-process the merged manifest.
 -keep class eu.purse.partnerui.redirect.RedirectionCheckoutActivity { <init>(...); }
+-keep class eu.purse.partnerui.redirect.RedirectReturnActivity { <init>(...); }

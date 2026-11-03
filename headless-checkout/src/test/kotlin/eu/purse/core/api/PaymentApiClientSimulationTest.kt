@@ -58,7 +58,7 @@ class PaymentApiClientSimulationTest {
     @Test
     fun `getSimulation posts the product to the entity-scoped simulation path`() {
         responseBody = """{"plugin_result": {"initial_instalment_amount": 70.34, "instalment_amount": 66.67,
-            "final_instalment_amount": 66.66, "instalment_number": 3, "total_cost": 3.67}}"""
+            "final_instalment_amount": 66.66, "instalment_number": 2, "total_cost": 3.67}}"""
 
         val simulation = client().getSimulation(Partner.Other("oney"), Method.Installments, product)
 
@@ -68,7 +68,7 @@ class PaymentApiClientSimulationTest {
         val body = JSONObject(lastBody!!)
         assertEquals("EUR", body.getString("currency_code"))
         assertEquals(0, BigDecimal("200").compareTo(BigDecimal(body.get("amount").toString())))
-        assertEquals(3, simulation.installmentCount)
+        assertEquals(2, simulation.installmentCount)
         assertEquals(BigDecimal("203.67"), simulation.totalAmount)
     }
 

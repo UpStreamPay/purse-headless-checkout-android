@@ -347,7 +347,8 @@ val schedule = checkout.simulateLoan(bnpl, LoanProduct(checkout.remainingAmountT
 val all = checkout.simulateLoans(bnpl, product)          // every schedule the partner offers (3×, 4×, …)
 ```
 
-`installmentCount` includes the first and the last instalment. `LoanSimulationFailed` means the
+`installmentCount` counts the instalments after the first one, so the shopper pays
+`installmentCount + 1` times (a 3× schedule has a count of 2). `LoanSimulationFailed` means the
 partner refused the amount; `MethodNotSimulable` cannot happen behind the `simulable` flag. The
 demo's `SimulationPreview.kt` is a complete rendering.
 

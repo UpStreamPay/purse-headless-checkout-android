@@ -52,10 +52,11 @@ object MethodAvailability {
      * The amount-driven disabled reason for one method against [primaryReach]; `null` when
      * selectable. An [isInformationRequest] session never disables on amount.
      *
-     * [isInSplit] mirrors web's `isInSplits` exemption: a method already participating in the split
-     * is never disabled as fulfilled or below-minimum by the very split it belongs to — otherwise
-     * covering the amount would disable the covering method. The max-amount rule is *not* exempted
-     * (matching web).
+     * [isInSplit] mirrors web's `isSparedAsEngaged` exemption: a *secondary* already drawn on by the
+     * split is never disabled as fulfilled or below-minimum by the very split it belongs to — its
+     * reach includes its own slice, not just the rest to pay. A primary is judged on the rest to pay
+     * whether engaged or not, so an engaged one that falls out of bounds gets its code and is taken
+     * out of the split (SDK-12349). The max-amount rule is never exempted (matching web).
      */
     fun disabledFor(
         configuration: MethodConfiguration,
@@ -67,10 +68,11 @@ object MethodAvailability {
 
         val minAmount = configuration.settings.paymentMinAmount
         val maxAmount = configuration.settings.paymentMaxAmount
+        val isSparedAsEngaged = isInSplit && configuration.isSecondary
 
         return when {
-            !isInSplit && primaryReach.signum() == 0 -> DisabledState.PaymentFulfilled
-            !isInSplit && minAmount != null && primaryReach < minAmount ->
+            !isSparedAsEngaged && primaryReach.signum() == 0 -> DisabledState.PaymentFulfilled
+            !isSparedAsEngaged && minAmount != null && primaryReach < minAmount ->
                 DisabledState.MinAmountNotMet(minAmount, primaryReach)
             // A secondary is never disabled for exceeding max — a gift card can legitimately hold
             // more balance than the amount owed; it just can't draw down more than what's left.
@@ -85,7 +87,7 @@ object MethodAvailability {
      * Items whose current state is not [DisabledState.isRecomputable] are kept untouched — web
      * `updateMopDisabledState` returns early for those ("keep existing disabled state for other
      * reasons"). [splitSources] are the sources currently drawn on by the split, used for the
-     * in-split exemption (matched on partner+method, like web).
+     * secondaries' in-split exemption (matched on partner+method, like web).
      */
     fun recompute(
         methods: List<PaymentItem>,
