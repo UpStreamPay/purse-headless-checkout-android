@@ -84,6 +84,13 @@ class RedirectionPluginTest {
     }
 
     @Test
+    fun `the default browser language stays within the 8 characters EMV 3DS allows`() {
+        assertEquals("zh-TW", RedirectionMapper.defaultLanguageTag(java.util.Locale.forLanguageTag("zh-Hant-TW")))
+        assertEquals("en-US", RedirectionMapper.defaultLanguageTag(java.util.Locale.forLanguageTag("en-US-u-mu-celsius")))
+        assertEquals("fr", RedirectionMapper.defaultLanguageTag(java.util.Locale.forLanguageTag("fr")))
+    }
+
+    @Test
     fun `extractStepId reads the top-level step_id, or null`() {
         assertEquals(7, RedirectionMapper.extractStepId(JSONObject().put("step_id", 7)))
         assertNull(RedirectionMapper.extractStepId(JSONObject()))

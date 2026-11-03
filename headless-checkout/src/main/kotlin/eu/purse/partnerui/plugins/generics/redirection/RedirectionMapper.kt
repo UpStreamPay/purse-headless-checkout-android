@@ -4,6 +4,8 @@
 package eu.purse.partnerui.plugins.generics.redirection
 
 import android.content.Context
+import android.content.res.Resources
+import android.util.DisplayMetrics
 import android.webkit.WebSettings
 import eu.purse.core.api.PaymentApiException
 import java.math.BigDecimal
@@ -92,26 +94,53 @@ object RedirectionMapper {
      * | `utc_time_zone` | `getTimezoneOffset()` | same sign convention: **UTC − local**, in minutes |
      */
     fun browserData(context: Context, locale: String?): JSONObject {
-        val metrics = context.resources.displayMetrics
         val userAgent = try {
             WebSettings.getDefaultUserAgent(context)
         } catch (e: Exception) {
             // getDefaultUserAgent loads the WebView provider and can throw if it's missing/updating.
             // Web falls back to 'DESKTOP' when navigator is unavailable — same idea, Android-flavored.
-            "MOBILE"
+            FALLBACK_USER_AGENT
         }
-        return JSONObject()
+        return browserBlock(userAgent, locale, context.resources.displayMetrics)
             .put("referrer", "android-app://${context.packageName}")
+    }
+
+    /**
+     * [browserData] for a caller with no Android [Context] — a saved card paid through
+     * `submitPayment()` with no card coordinator mounted, which iOS covers in `preValidation`. The
+     * screen comes from the system resources (as `CheckoutMonitoring.screen()` reads it), the user
+     * agent is iOS's `"MOBILE"`, and `referrer` is left out: there is no package name to put in it.
+     */
+    fun fallbackBrowserData(locale: String?): JSONObject =
+        browserBlock(
+            FALLBACK_USER_AGENT,
+            locale,
+            runCatching { Resources.getSystem().displayMetrics }.getOrNull(),
+        )
+
+    private fun browserBlock(userAgent: String, locale: String?, metrics: DisplayMetrics?): JSONObject =
+        JSONObject()
             .put("user_agent", userAgent)
             .put("accept_header", "text/html")
             .put("color_depth", COLOR_DEPTH)
             .put("java_enabled", false)
             .put("javascript_enabled", true)
-            .put("locale", locale?.takeIf { it.isNotBlank() } ?: Locale.getDefault().toLanguageTag())
-            .put("screen_height", metrics.heightPixels)
-            .put("screen_width", metrics.widthPixels)
+            .put("locale", locale?.takeIf { it.isNotBlank() } ?: defaultLanguageTag())
+            .apply {
+                if (metrics != null) {
+                    put("screen_height", metrics.heightPixels)
+                    put("screen_width", metrics.widthPixels)
+                }
+            }
             .put("utc_time_zone", utcTimeZoneOffsetMinutes())
-    }
+
+    /**
+     * The device locale as language-region only (`zh-TW`, not `zh-Hant-TW` or
+     * `en-US-u-mu-celsius`): EMV 3-D Secure caps `browserLanguage` at 8 characters, and Android's
+     * full tag can carry a script and regional-preference extensions past that.
+     */
+    internal fun defaultLanguageTag(locale: Locale = Locale.getDefault()): String =
+        listOf(locale.language, locale.country).filter { it.isNotEmpty() }.joinToString("-").ifEmpty { "und" }
 
     /**
      * JavaScript's `Date.getTimezoneOffset()` convention — **UTC minus local**, in minutes, so a zone
@@ -125,4 +154,7 @@ object RedirectionMapper {
 
     /** Android composites in `RGBA_8888`; there is no per-display colour-depth API to read. */
     private const val COLOR_DEPTH = 32
+
+    /** What iOS sends, and what [browserData] falls back to without a WebView provider. */
+    private const val FALLBACK_USER_AGENT = "MOBILE"
 }
