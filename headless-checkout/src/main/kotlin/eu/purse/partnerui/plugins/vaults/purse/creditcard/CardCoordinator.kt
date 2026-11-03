@@ -205,7 +205,14 @@ class CardCoordinator internal constructor(
         if (submitting) return
         if (mode == Mode.TOKEN_NO_CVV) {
             submitting = true
-            collectAndCapture(tokenized = null, selectedNetwork = payToken?.selectedNetwork)
+            // Runs on the caller's click, not in a launched `try`: building the context throws once
+            // the checkout is torn down, and that must reach onSubmitFailed, not the app.
+            try {
+                collectAndCapture(tokenized = null, selectedNetwork = payToken?.selectedNetwork)
+            } catch (e: Exception) {
+                submitting = false
+                fail(e)
+            }
             return
         }
         if (!formValid) {
