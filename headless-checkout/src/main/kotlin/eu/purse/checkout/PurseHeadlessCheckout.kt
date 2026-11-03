@@ -400,12 +400,17 @@ class PurseHeadlessCheckout private constructor(
     /**
      * Refuse to put a disabled item in the split — web's `setAsPrimarySource` (`METHOD_DISABLED`).
      * Checked against the live list, so a stale instance from an earlier emission is judged on the
-     * current state; the submit lock counts too.
+     * current state, and the live instance is returned for the caller to engage; the submit lock
+     * counts too. An item the current session no longer offers is refused as
+     * [DisabledState.PartnerUiFatalError], like iOS, rather than entering the split from a
+     * previous session.
      */
-    private fun requireSelectable(item: PaymentItem) {
-        val live = meansOfPayment.firstOrNull { it.id == item.id } ?: item
+    private fun requireSelectable(item: PaymentItem): PaymentItem {
+        val live = meansOfPayment.firstOrNull { it.id == item.id }
+            ?: throw PurseCheckoutException.MethodDisabled(item.id, DisabledState.PartnerUiFatalError(NOT_IN_SESSION))
         val disabled = live.disabled ?: if (submitting) DisabledState.Submitting else null
         if (disabled != null) throw PurseCheckoutException.MethodDisabled(item.id, disabled)
+        return live
     }
 
     /**
@@ -602,19 +607,22 @@ class PurseHeadlessCheckout private constructor(
      * Choose (or clear, with `null`) the primary method that covers the remaining amount.
      *
      * @throws PurseCheckoutException.MethodDisabled when [method] is disabled (its `disabled` state,
-     * or a submit in flight) — web's `METHOD_DISABLED`.
+     * or a submit in flight) — web's `METHOD_DISABLED` — or the current session no longer offers it
+     * (a stale instance from before [setSession]).
      */
     fun setPrimary(method: PrimaryMethod?) {
-        if (method != null) {
-            requireSelectable(method)
+        val live = if (method != null) {
+            val live = requireSelectable(method) as PrimaryMethod
             bus.post(
                 CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_SET_PRIMARY,
                 payload = monitoringPayload("partner" to method.partner.wireValue, "method" to method.method.wireValue),
             )
+            live
         } else {
             bus.post(CheckoutEventCode.HEADLESS_CHECKOUT_CLEAR_PRIMARY_SPLIT)
+            null
         }
-        splitter.setPrimary(method)
+        splitter.setPrimary(live)
         refresh()
     }
 
@@ -635,18 +643,19 @@ class PurseHeadlessCheckout private constructor(
      * a token with no card form behind it at all (a saved PayPal: [PaymentToken.isVaultedCard]
      * `false`), for which no CVV exists.
      *
-     * @throws PurseCheckoutException.MethodDisabled when [token] is disabled — web's `METHOD_DISABLED`.
+     * @throws PurseCheckoutException.MethodDisabled when [token] is disabled — web's `METHOD_DISABLED` —
+     * or the current session no longer offers it.
      */
     fun setPrimaryToken(token: PaymentToken) {
-        requireSelectable(token)
+        val live = requireSelectable(token) as PaymentToken
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_PRIMARY_TOKEN_SET_AS_PRIMARY,
             payload = monitoringPayload("partner" to token.partner.wireValue, "method" to token.method.wireValue),
         )
         // Armed at selection rather than at form mount so a host that never renders the CVV form
         // cannot submit a token the PSP wants a CVV for; a mounted form then owns the flag.
-        if (token.requiresCvv) fulfilledByMethod.putIfAbsent(token.id, false)
-        splitter.setPrimary(token)
+        if (live.requiresCvv) fulfilledByMethod.putIfAbsent(live.id, false)
+        splitter.setPrimary(live)
         refresh()
     }
 
@@ -1357,13 +1366,13 @@ class PurseHeadlessCheckout private constructor(
      * PayPal order chooses its own method; the merchant never pre-selects it).
      *
      * A host outlives the item it was built for across [setSession], so the live item is engaged,
-     * not [item]; one the new session no longer offers is left out, and the submit that follows
-     * fails on an unfulfilled payment (web `getEngageableMop`, SDK-12349).
+     * not [item] (web `getEngageableMop`, SDK-12349). One the new session no longer offers throws
+     * [PurseCheckoutException.MethodDisabled], like iOS: a silent return would let the submit that
+     * follows charge whichever primary is already engaged instead of the one the shopper approved.
      */
     private fun makePrimary(item: PaymentItem) {
-        val live = meansOfPayment.firstOrNull { it.id == item.id } ?: return
-        val source = live as? PrimarySource ?: return
-        requireSelectable(live)
+        val source = requireSelectable(item) as? PrimarySource
+            ?: throw PurseCheckoutException.MethodDisabled(item.id, DisabledState.PartnerUiFatalError(NOT_IN_SESSION))
         bus.post(
             CheckoutEventCode.HEADLESS_CHECKOUT_METHOD_SET_PRIMARY,
             payload = monitoringPayload("partner" to item.partner.wireValue, "method" to item.method.wireValue),
@@ -1638,7 +1647,8 @@ class PurseHeadlessCheckout private constructor(
      * requiring its UI cleared (`MAX_AMOUNT_EXCEEDED` once the rest to pay outgrows its maximum,
      * `MIN_AMOUNT_NOT_MET`, `PAYMENT_FULFILLED`) is taken out of the split here, so
      * [isPaymentFulfilled] falls back to `false` and [submitPayment] refuses instead of sending
-     * `/validate` out of bounds. Unlike [clearPrimarySplit], no event: the shopper did not ask.
+     * `/validate` out of bounds. Unlike [clearPrimarySplit], no event: the shopper did not ask, and
+     * web's monitoring only wraps the public `clearPrimarySplit`, not this internal `clearSplit`.
      * The primary's slice is the rest to pay, so clearing it moves no amount and needs no recompute.
      */
     private fun releaseSuspendedPrimary() {
@@ -1719,6 +1729,9 @@ class PurseHeadlessCheckout private constructor(
     }
 
     companion object {
+        /** [DisabledState.PartnerUiFatalError] reason for an item the current session no longer offers. */
+        private const val NOT_IN_SESSION = "not in the current session"
+
         /**
          * @param widgetData the base64-encoded `widget.data` string from the merchant backend's
          * Client Session response (the "V2" params).

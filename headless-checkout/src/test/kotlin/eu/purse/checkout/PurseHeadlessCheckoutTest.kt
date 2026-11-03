@@ -471,6 +471,33 @@ class PurseHeadlessCheckoutTest {
         assertEquals(googlePay.id, checkout.amountSplit.value.single().source.id)
     }
 
+    @Test
+    fun `a stale host whose method left the session refuses setAsPrimary and keeps the engaged primary`() = runBlocking {
+        val checkout = checkout()
+        val googlePay = checkout.primaryMethods.single { it.method == Method.GooglePay }
+        val host = checkout.host(googlePay)
+        val card = checkout.primaryMethods.single { it.method == Method.CreditCard }
+        checkout.setPrimary(card)
+        checkout.setCollected(card, mapOf("cardVaultToken" to "vault-1"))
+        checkout.setSession(CheckoutTestSessions.widgetData(refreshedSessionJson())) // drops Google Pay
+        val splitBefore = checkout.amountSplit.value
+
+        val error = assertThrows(PurseCheckoutException.MethodDisabled::class.java) { host.setAsPrimary() }
+
+        assertTrue(error.disabled is DisabledState.PartnerUiFatalError)
+        assertEquals("the card the shopper did not approve stays as it was", splitBefore, checkout.amountSplit.value)
+    }
+
+    @Test
+    fun `setPrimary refuses a stale method the current session no longer offers`() = runBlocking {
+        val checkout = checkout()
+        val googlePay = checkout.primaryMethods.single { it.method == Method.GooglePay }
+        checkout.setSession(CheckoutTestSessions.widgetData(refreshedSessionJson())) // drops Google Pay
+
+        assertThrows(PurseCheckoutException.MethodDisabled::class.java) { checkout.setPrimary(googlePay) }
+        assertTrue(checkout.amountSplit.value.isEmpty())
+    }
+
     // --- saved cards (wallet) ---------------------------------------------------------------------
 
     @Test
