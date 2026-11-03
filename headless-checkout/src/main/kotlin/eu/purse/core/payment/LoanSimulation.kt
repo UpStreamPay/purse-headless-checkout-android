@@ -1,6 +1,7 @@
 // Web: packages/headless-checkout `mapPluginResultToSimulation`
 // Same: field names, `totalAmount` = initial + (n − 1) recurring + final; counts and amounts only
 //       (no per-instalment dates on web either).
+// Differs: (n − 1) is floored at zero, where web would subtract one recurring instalment for n = 0.
 package eu.purse.core.payment
 
 import java.math.BigDecimal
