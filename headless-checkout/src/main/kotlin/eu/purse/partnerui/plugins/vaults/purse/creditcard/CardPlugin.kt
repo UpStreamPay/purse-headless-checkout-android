@@ -38,15 +38,18 @@ class CardPlugin(override val partner: Partner) : PartnerUiPlugin {
         context.token?.requiresCvv == false || context.collected[COLLECTED_TOKEN] is String
 
     /**
-     * `partner_data.browser` ([COLLECTED_BROWSER]) rides on `/validate`, fresh card and saved token
-     * alike — web's hostedfields `getItemBasePayloadFromFields`. Without it dalenys refuses a token
-     * (`Missing parameter`) and a 3-D Secure PSP never opens its challenge.
+     * `partner_data.browser` ([COLLECTED_BROWSER]) rides on `/init` and `/validate`, fresh card and
+     * saved token alike — web's hostedfields `getItemBasePayloadFromFields`. Without it dalenys
+     * refuses a token (`Missing parameter`) and a 3-D Secure PSP never opens its challenge. A saved
+     * token paid with no [CardCoordinator] collected nothing, so it gets
+     * [RedirectionMapper.fallbackBrowserData] instead.
      */
     override suspend fun preValidation(context: PartnerUiContext): ValidateItemPayload {
-        val stepId = CardMapper.parseInit(
-            context.api.init(CardMapper.buildInitPayload(context.amount, partner.wireValue)),
-        )
         val browser = context.collected[COLLECTED_BROWSER] as? JSONObject
+            ?: RedirectionMapper.fallbackBrowserData(context.options.locale)
+        val stepId = CardMapper.parseInit(
+            context.api.init(CardMapper.buildInitPayload(context.amount, partner.wireValue, browser)),
+        )
 
         // Saved token (card-on-file): the opaque token value plus the card metadata travels straight
         // into payment_data (web's patchItemPayloadWithToken). When the token still needs its CVV,

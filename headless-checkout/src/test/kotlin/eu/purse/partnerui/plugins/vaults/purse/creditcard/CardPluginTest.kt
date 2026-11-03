@@ -7,6 +7,7 @@ import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
 import eu.purse.core.session.LegacyPaymentSession
 import eu.purse.partnerui.PartnerUiContext
+import eu.purse.partnerui.PluginOptions
 import eu.purse.partnerui.PayToken
 import java.math.BigDecimal
 import java.time.Instant
@@ -102,6 +103,34 @@ class CardPluginTest {
 
             assertEquals("tok-1", item.paymentData.getString("token"))
             assertEquals("ua", item.toJson().getJSONObject("partner_data").getJSONObject("browser").getString("user_agent"))
+        }
+    }
+
+    @Test
+    fun `the card init carries the collected browser block too`() = runBlocking {
+        FakePaymentApi().respond("init", """{"status":{"state":"SUCCESS"}}""").use { api ->
+            val collected = mapOf(CardPlugin.COLLECTED_TOKEN to "vft-1", CardPlugin.COLLECTED_BROWSER to browser)
+
+            CardPlugin(Partner.Purse).preValidation(context(collected, apiRoot = api.apiRoot))
+
+            val init = api.initRequests().single().json
+            assertEquals("ua", init.getJSONObject("partner_data").getJSONObject("browser").getString("user_agent"))
+        }
+    }
+
+    @Test
+    fun `a saved token paid without the card coordinator still sends a browser block`() = runBlocking {
+        FakePaymentApi().respond("init", """{"status":{"state":"SUCCESS"}}""").use { api ->
+            val noCvv = PayToken(value = "tok-1", requiresCvv = false)
+            val ctx = context(emptyMap(), token = noCvv, apiRoot = api.apiRoot)
+                .copy(options = PluginOptions(locale = "fr-FR"))
+
+            val item = CardPlugin(Partner.Purse).preValidation(ctx)
+
+            val sent = item.toJson().getJSONObject("partner_data").getJSONObject("browser")
+            assertEquals("MOBILE", sent.getString("user_agent"))
+            assertEquals("fr-FR", sent.getString("locale"))
+            assertFalse("no Context, so no package name to refer from", sent.has("referrer"))
         }
     }
 }
