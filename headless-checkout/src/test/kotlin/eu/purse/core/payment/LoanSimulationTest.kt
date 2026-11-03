@@ -8,14 +8,16 @@ import org.junit.Test
 
 class LoanSimulationTest {
 
+    // Real `POST /simulation/{entity}/oney/cb3x` answer (SANDBOX, 480 € order), plus a legal text and
+    // a rate so every field is mapped.
     private val pluginResult = JSONObject(
         """
         {
-          "initial_instalment_amount": 70.34,
-          "instalment_amount": 66.67,
-          "final_instalment_amount": 66.66,
-          "instalment_number": 3,
-          "total_cost": 3.67,
+          "instalment_number": 2,
+          "initial_instalment_amount": 167.63,
+          "instalment_amount": 160.00,
+          "final_instalment_amount": 160.00,
+          "total_cost": 7.63,
           "effective_annual_percentage_rate": 21.9,
           "legal_text": "Un crédit vous engage",
           "preferred": 1
@@ -24,18 +26,26 @@ class LoanSimulationTest {
     )
 
     @Test
-    fun `maps plugin_result and sums the schedule once`() {
+    fun `maps plugin_result and sums every instalment`() {
         val simulation = LoanSimulation.fromResponse(JSONObject().put("plugin_result", pluginResult))!!
 
-        assertEquals(BigDecimal("70.34"), simulation.initialInstallmentAmount)
-        assertEquals(BigDecimal("66.67"), simulation.installmentAmount)
-        assertEquals(BigDecimal("66.66"), simulation.finalInstallmentAmount)
-        assertEquals(3, simulation.installmentCount)
-        assertEquals(BigDecimal("3.67"), simulation.totalCost)
-        // 70.34 + 66.67 + 66.66 = 203.67: three instalments, i.e. the 200 financed + 3.67 of cost.
-        assertEquals(BigDecimal("203.67"), simulation.totalAmount)
+        assertEquals(BigDecimal("167.63"), simulation.initialInstallmentAmount)
+        assertEquals(BigDecimal("160.00"), simulation.installmentAmount)
+        assertEquals(BigDecimal("160.00"), simulation.finalInstallmentAmount)
+        assertEquals(2, simulation.installmentCount)
+        assertEquals(BigDecimal("7.63"), simulation.totalCost)
+        // 167.63 + 160.00 + 160.00 = 487.63: three instalments, i.e. the 480 financed + 7.63 of cost.
+        assertEquals(BigDecimal("487.63"), simulation.totalAmount)
         assertEquals("Un crédit vous engage", simulation.legalText)
         assertEquals(BigDecimal("21.9"), simulation.aprc)
+    }
+
+    @Test
+    fun `a longer schedule adds one recurring instalment per count beyond the final one`() {
+        val result = JSONObject(pluginResult.toString()).put("instalment_number", 3)
+
+        // 4×: 167.63 + 2 × 160.00 + 160.00.
+        assertEquals(BigDecimal("647.63"), LoanSimulation.fromPluginResult(result).totalAmount)
     }
 
     @Test
