@@ -70,7 +70,7 @@ sequenceDiagram
     Ck->>Pl: validateUi(context)
     Pl-->>Ck: true (a vault token exists)
     Ck->>Pl: preValidation(context)
-    Pl->>Api: POST /init (vault_vendor purse)
+    Pl->>Api: POST /init (vault_vendor purse + partner_data.browser)
     Api-->>Pl: step_id
     Pl-->>Ck: item payload - vault_vendor_token_id + card.bin + step_id + partner_data.browser
     Ck->>Api: POST /validate (all splits)
@@ -95,11 +95,14 @@ sequenceDiagram
    for the `step_id`, then the `/validate` payload — because nothing about rendering depends on
    `/init`'s response (unlike Google Pay's gateway config or Klarna's client token). Same two calls in
    the same order, just later. There is consequently **no `buildRequest`** on this plugin.
-2. **`partner_data.browser` on `/validate`**, fresh card and saved token alike — web's hostedfields
-   `getBrowserData`. The coordinator reads it at submit with
+2. **`partner_data.browser` on `/init` and `/validate`**, fresh card and saved token alike — web's
+   hostedfields `getBrowserData`. The coordinator reads it at submit with
    `RedirectionMapper.browserData`, so it describes the in-app WebView a 3-D Secure challenge opens
    in. Without it dalenys refuses a token (`Missing parameter`) and centralpay or axepta never open a
-   challenge (SDK-12569).
+   challenge (SDK-12569). A saved token paid through `submitPayment()` with no coordinator mounted
+   gets `RedirectionMapper.fallbackBrowserData` instead: system screen size, `"MOBILE"` as the user
+   agent (as on iOS), `options.locale`, and no `referrer`. With no `options.locale`, the device
+   locale is sent as language-region only (`zh-TW`), within EMV 3-D Secure's 8 characters.
 3. **Form completeness gates the payment** — the Kotlin analog of web's `fulfilled` event. Web builds
    a `final-form` model whose managed (iframe) fields hold sentinel values (`'valid'`/`'required'`/
    `'format'`), subscribes to `state.valid`, and dispatches `fulfilled { isFulfilled }`; its
