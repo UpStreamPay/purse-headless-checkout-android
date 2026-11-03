@@ -1739,7 +1739,8 @@ class PurseHeadlessCheckout private constructor(
          * never listed on [paymentMethods] (their saved instruments included), scoped to this checkout.
          * @param lockedEnvironment when non-null, overrides whatever [widgetData] declares — a
          * release build should always pass [PurseEnvironment.PRODUCTION] rather than trusting a
-         * session-declared environment.
+         * session-declared environment. It locks the tier's host, not the API version: the session's
+         * `api_url` is kept when it sits on that host, else the tier's `…/payment/v1` root is used.
          * @throws eu.purse.core.session.PurseSessionException.SessionMalformed if [widgetData]
          * can't be decoded, or the session is missing `id` / `expiration_date`.
          */
@@ -1852,10 +1853,10 @@ class PurseHeadlessCheckout private constructor(
             } else {
                 decoded
             }
-            // A build-locked (release) environment trusts its own known root and ignores the
-            // session-declared `api_url`; otherwise use `api_url`, falling back to the env root.
+            // A build-locked (release) environment keeps the session's `api_url` only on its own
+            // tier's host; otherwise use `api_url`, falling back to the env root.
             val apiRoot = if (lockedEnvironment != null) {
-                params.environment.paymentApiRoot
+                lockedEnvironment.lockedPaymentApiRoot(params.apiUrl)
             } else {
                 params.apiUrl.ifBlank { params.environment.paymentApiRoot }
             }

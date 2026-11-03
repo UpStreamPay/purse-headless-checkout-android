@@ -47,7 +47,7 @@ fun init(
 | Param | Meaning |
 |---|---|
 | `widgetData` | The base64-encoded `widget.data` string from the merchant backend's Client Session response. |
-| `lockedEnvironment` | Overrides whatever `widgetData` declares. **A release build must always pass `PurseEnvironment.PRODUCTION`** rather than trusting a session-declared environment. |
+| `lockedEnvironment` | Overrides whatever `widgetData` declares. **A release build must always pass `PurseEnvironment.PRODUCTION`** rather than trusting a session-declared environment. The lock pins the tier's **host**, not the API version: a session `api_url` on that host (e.g. an orchestration session's `…/payment/v2`) is kept; one on any other host, or not `https`, is replaced by the tier's `…/payment/v1` root. |
 | `hooks` | Merchant hooks around "create payment" — see [`PurseCheckoutHooks`](#pursecheckouthooks) below. |
 | `options` | Presentation preferences forwarded to every plugin (locale, theme, card-form texts). |
 | `disabledMethods` | `(partner, method)` pairs this app build opts out of: never listed on `paymentMethods`, their saved instruments included, whatever the session offers. Scoped to this checkout and re-applied by `setSession`. |
