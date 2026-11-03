@@ -4,6 +4,7 @@
 package eu.purse.partnerui.plugins.vaults.purse.creditcard
 
 import eu.purse.core.api.PaymentApiException
+import eu.purse.partnerui.plugins.generics.redirection.RedirectionMapper
 import java.math.BigDecimal
 import org.json.JSONObject
 
@@ -28,14 +29,15 @@ object CardMapper {
     /**
      * `/init` body — mirrors web's `onSessionSet` call: no card data yet, just enough to register
      * the method and get back a `step_id`. `payment_data.vault_vendor` mirrors
-     * `purseCreditCardBridge`'s `additionalInitData`.
+     * `purseCreditCardBridge`'s `additionalInitData`. `partner_data.browser` goes out here too, as
+     * on web, in case the PSP reads its 3-D Secure device data from `/init`.
      */
-    fun buildInitPayload(amount: BigDecimal, partnerWireValue: String): JSONObject =
+    fun buildInitPayload(amount: BigDecimal, partnerWireValue: String, browser: JSONObject? = null): JSONObject =
         JSONObject()
             .put("partner", partnerWireValue)
             .put("method", METHOD)
             .put("amount", amount)
-            .put("partner_data", JSONObject())
+            .put("partner_data", RedirectionMapper.partnerDataFor(browser))
             .put("payment_data", JSONObject().put("vault_vendor", VAULT_VENDOR))
             .put("payment_preferences", JSONObject())
 

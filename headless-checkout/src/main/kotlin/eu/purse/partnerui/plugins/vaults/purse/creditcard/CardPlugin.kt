@@ -1,5 +1,5 @@
 // Web: packages/partner-ui/src/plugins/vaults/purse/creditcard + generics/hostedfields
-// Same: token from the vault into /validate; saved token + CVV-only token side by side.
+// Same: token from the vault into /validate with `partner_data.browser`; saved token + CVV-only token side by side.
 // Differs: /init runs inside `preValidation`, not at `onSessionSet`.
 package eu.purse.partnerui.plugins.vaults.purse.creditcard
 
@@ -9,6 +9,8 @@ import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
 import eu.purse.partnerui.PartnerUiContext
 import eu.purse.partnerui.PartnerUiPlugin
+import eu.purse.partnerui.plugins.generics.redirection.RedirectionMapper
+import org.json.JSONObject
 
 /**
  * The `purse`-vendor vault-backed card [PartnerUiPlugin] — the protocol half (pure, no
@@ -35,9 +37,18 @@ class CardPlugin(override val partner: Partner) : PartnerUiPlugin {
     override suspend fun validateUi(context: PartnerUiContext): Boolean =
         context.token?.requiresCvv == false || context.collected[COLLECTED_TOKEN] is String
 
+    /**
+     * `partner_data.browser` ([COLLECTED_BROWSER]) rides on `/init` and `/validate`, fresh card and
+     * saved token alike — web's hostedfields `getItemBasePayloadFromFields`. Without it dalenys
+     * refuses a token (`Missing parameter`) and a 3-D Secure PSP never opens its challenge. A saved
+     * token paid with no [CardCoordinator] collected nothing, so it gets
+     * [RedirectionMapper.fallbackBrowserData] instead.
+     */
     override suspend fun preValidation(context: PartnerUiContext): ValidateItemPayload {
+        val browser = context.collected[COLLECTED_BROWSER] as? JSONObject
+            ?: RedirectionMapper.fallbackBrowserData(context.options.locale)
         val stepId = CardMapper.parseInit(
-            context.api.init(CardMapper.buildInitPayload(context.amount, partner.wireValue)),
+            context.api.init(CardMapper.buildInitPayload(context.amount, partner.wireValue, browser)),
         )
 
         // Saved token (card-on-file): the opaque token value plus the card metadata travels straight
@@ -57,6 +68,7 @@ class CardPlugin(override val partner: Partner) : PartnerUiPlugin {
                 amount = context.amount,
                 stepId = stepId,
                 paymentData = CardMapper.buildTokenPaymentData(token, cvvVaultToken),
+                partnerData = RedirectionMapper.partnerDataFor(browser),
             )
         }
 
@@ -71,6 +83,7 @@ class CardPlugin(override val partner: Partner) : PartnerUiPlugin {
             amount = context.amount,
             stepId = stepId,
             paymentData = CardMapper.buildValidatePaymentData(vaultVendorTokenId, bin, selectedNetwork),
+            partnerData = RedirectionMapper.partnerDataFor(browser),
         )
     }
 
@@ -79,5 +92,6 @@ class CardPlugin(override val partner: Partner) : PartnerUiPlugin {
         const val COLLECTED_TOKEN = "cardVaultToken"
         const val COLLECTED_BIN = "cardBin"
         const val COLLECTED_NETWORK = "selected_network"
+        const val COLLECTED_BROWSER = "cardBrowser"
     }
 }

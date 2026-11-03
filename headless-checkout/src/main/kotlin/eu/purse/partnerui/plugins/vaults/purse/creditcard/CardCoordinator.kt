@@ -4,6 +4,7 @@
 //          the checkout through `PluginHost.setFulfilled` rather than refused at `setAsPrimarySource`.
 package eu.purse.partnerui.plugins.vaults.purse.creditcard
 
+import android.content.Context
 import android.util.Log
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.runtime.Composable
@@ -13,6 +14,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.stringResource
 import eu.purse.checkout.R
 import eu.purse.core.environment.PurseEnvironment
@@ -23,6 +25,7 @@ import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.PluginHost
 import eu.purse.partnerui.PurseTheme
+import eu.purse.partnerui.plugins.generics.redirection.RedirectionMapper
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.securefields.SecureFieldsAndroid
 import eu.purse.securefields.SecureFieldsListener
@@ -52,6 +55,7 @@ import kotlinx.coroutines.withContext
 @Composable
 fun rememberCardCoordinator(host: PluginHost, listener: PaymentElementListener): CardCoordinator {
     val scope = rememberCoroutineScope()
+    val androidContext = LocalContext.current
     val context = remember(host) { host.buildContext() }
     val payToken = context.token
     val mode = remember(payToken) { CardCoordinator.Mode.of(payToken) }
@@ -101,7 +105,7 @@ fun rememberCardCoordinator(host: PluginHost, listener: PaymentElementListener):
     )
 
     val coordinator = remember(sdk, host) {
-        CardCoordinator(sdk, host, mode, payToken, theme, texts, scope, listener)
+        CardCoordinator(sdk, host, androidContext, mode, payToken, theme, texts, scope, listener)
     }
     val redirectLauncher = rememberLauncherForActivityResult(RedirectionCheckoutContract()) { coordinator.onRedirectReturn(it) }
     coordinator.launchRedirect = { action -> redirectLauncher.launch(action) }
@@ -145,6 +149,8 @@ fun rememberCardCoordinator(host: PluginHost, listener: PaymentElementListener):
 class CardCoordinator internal constructor(
     val sdk: SecureFieldsAndroid,
     private val cardHost: PluginHost,
+    /** Reads the device for `partner_data.browser` ([RedirectionMapper.browserData]). */
+    private val androidContext: Context,
     /** Which of the three card flows this coordinator drives — decided by the host's token. */
     val mode: Mode,
     private val payToken: PayToken?,
@@ -199,7 +205,14 @@ class CardCoordinator internal constructor(
         if (submitting) return
         if (mode == Mode.TOKEN_NO_CVV) {
             submitting = true
-            collectAndCapture(tokenized = null, selectedNetwork = payToken?.selectedNetwork)
+            // Runs on the caller's click, not in a launched `try`: building the context throws once
+            // the checkout is torn down, and that must reach onSubmitFailed, not the app.
+            try {
+                collectAndCapture(tokenized = null, selectedNetwork = payToken?.selectedNetwork)
+            } catch (e: Exception) {
+                submitting = false
+                fail(e)
+            }
             return
         }
         if (!formValid) {
@@ -237,16 +250,23 @@ class CardCoordinator internal constructor(
         }
     }
 
+    /**
+     * Hands `preValidation` what it needs, then `/validate`. The browser block is read at submit, in
+     * every [Mode]: a 3-D Secure challenge renders in [RedirectionCheckoutContract]'s WebView, the
+     * same surface the redirection template describes.
+     */
     private fun collectAndCapture(tokenized: SubmitResult.Success?, selectedNetwork: String?) {
-        if (tokenized != null) {
-            cardHost.setCollected(
-                mapOf(
-                    CardPlugin.COLLECTED_TOKEN to tokenized.vaultFormToken,
-                    CardPlugin.COLLECTED_BIN to tokenized.card?.bin,
-                    CardPlugin.COLLECTED_NETWORK to selectedNetwork,
-                ),
-            )
-        }
+        val browser = RedirectionMapper.browserData(androidContext, cardHost.buildContext().options.locale)
+        cardHost.setCollected(
+            buildMap {
+                put(CardPlugin.COLLECTED_BROWSER, browser)
+                if (tokenized != null) {
+                    put(CardPlugin.COLLECTED_TOKEN, tokenized.vaultFormToken)
+                    put(CardPlugin.COLLECTED_BIN, tokenized.card?.bin)
+                    put(CardPlugin.COLLECTED_NETWORK, selectedNetwork)
+                }
+            },
+        )
         capture(cardHost)
     }
 }
