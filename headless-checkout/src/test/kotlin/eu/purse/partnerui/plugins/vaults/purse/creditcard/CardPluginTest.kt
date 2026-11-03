@@ -7,8 +7,8 @@ import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
 import eu.purse.core.session.LegacyPaymentSession
 import eu.purse.partnerui.PartnerUiContext
-import eu.purse.partnerui.PluginOptions
 import eu.purse.partnerui.PayToken
+import eu.purse.partnerui.PluginOptions
 import java.math.BigDecimal
 import java.time.Instant
 import kotlinx.coroutines.runBlocking
