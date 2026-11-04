@@ -10,7 +10,7 @@ for full control.
 val element = rememberPaymentElement(checkout, cardMethod, listener)
 LaunchedEffect(cardMethod.id) { checkout.setPrimary(cardMethod) }
 PaymentElementUi(element, Modifier.fillMaxWidth())   // label, field, helper text and error per field, drawn by the SDK
-Button(onClick = { element.submit() }, enabled = element.ready) { Text("Pay") }   // tokenize → /init → /validate → 3-D Secure
+Button(onClick = { element.submit() }, enabled = element.ready) { Text("Pay") }   // tokenize → /validate → 3-D Secure
 ```
 
 You get `element.ready` (enable your Pay button) and one `PaymentOutcome` per attempt, through the
@@ -49,7 +49,7 @@ VaultField(card.sdk.cardNumber, Modifier.fillMaxWidth().height(52.dp).testTag(ca
 card.errorMessage(cardNumber)?.let { Text(it, color = MaterialTheme.colorScheme.error) }
 ```
 
-Unlike iOS, paying is **one** call: `card.submit()` tokenizes, runs `/init` + `/validate` through
+Unlike iOS, paying is **one** call: `card.submit()` tokenizes, runs `/validate` through
 the host and follows a 3-D Secure redirect, reporting the `PaymentOutcome` on the listener. It is a
 no-op while the form is not valid.
 
