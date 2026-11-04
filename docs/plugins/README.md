@@ -144,14 +144,17 @@ Every coordinator reports `RedirectionCheckoutResult.Approved` as
 `PaymentOutcome.ReturnedFromRedirect` and **does not chase the real outcome**. This is a confirmed
 backend pain point, not laziness: a real 3-D Secure challenge's final redirect is constructed
 server-side by the bank/PSP and can land on a Purse API gateway URL that `401`s on the session's own
-client-facing `api_key`. Re-check status independently instead — `checkout.sessionTransactions()`, or
-the demo's own alfred-backed "Get transactions" tool, whose answer is what settles its result screen.
-See [decisions/pain-points-recap.md](../decisions/pain-points-recap.md).
+client-facing `api_key`. The merchant's backend confirms the outcome instead, with its own
+credentials — like the demo's alfred-backed "Get transactions" tool, whose answer is what settles its
+result screen. The SDK's `sessionTransactions()` / `paymentStatus()` / `awaitPaymentOutcome()` read
+the same session with the client key, get the same `401`, and are deprecated (next major removes
+them). See [recipe 9](../integration/recipes.md#9-confirm-after-a-redirect-ask-your-backend) and
+[decisions/pain-points-recap.md](../decisions/pain-points-recap.md).
 
-### Reading `sessionTransactions()` — operations, not payments
+### Reading the session's transactions — operations, not payments
 
-`GET /{entity}/sessions/{session}` (behind `checkout.sessionTransactions()` and the demo's "Get
-transactions") lists **operations**, so a row count is not a payment count. A single auto-captured
+`GET /{entity}/sessions/{session}` (read by your backend, as the demo's "Get transactions" does
+through alfred) lists **operations**, so a row count is not a payment count. A single auto-captured
 payment legitimately shows two rows:
 
 | `action` | `id` | `parent_transaction_id` | `partner_reference` |

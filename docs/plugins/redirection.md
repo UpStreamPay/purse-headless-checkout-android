@@ -131,7 +131,7 @@ sequenceDiagram
         Rd->>PSP: GET / POST-form / injected HTML
         PSP-->>Rd: shopper completes, returns
         Rd-->>Co: Approved / Canceled / Failed
-        Co-->>App: onOutcome(ReturnedFromRedirect) — confirm against the session
+        Co-->>App: onOutcome(ReturnedFromRedirect) — confirm from your backend
     else no redirect returned
         Co-->>App: onOutcome(Completed(result)) + Log.w "no redirect to follow"
     end
@@ -190,7 +190,7 @@ item, listener)` does exactly this, with `hasUi = false`.
 |---|---|
 | `onReady(ready)` | `/init` returned — there's no form, so the shopper can submit immediately |
 | `onOutcome(PaymentOutcome.Completed)` | Terminal, no redirect pending — `status` is the API's verdict (`SUCCESS`, or a refusal) |
-| `onOutcome(PaymentOutcome.ReturnedFromRedirect)` | The shopper came back from a redirect — not an outcome, confirm with `awaitPaymentOutcome()` |
+| `onOutcome(PaymentOutcome.ReturnedFromRedirect)` | The shopper came back from a redirect — not an outcome, confirm from your backend ([recipe 9](../integration/recipes.md#9-confirm-after-a-redirect-ask-your-backend)) |
 | `onRequiresAction()` | The PSP's hosted page is being opened |
 | `onPaymentId(id)` | Informational `payment_id` off the confirmation-page JWT |
 | `onOutcome(PaymentOutcome.Canceled)` | The shopper dismissed the page without completing | |

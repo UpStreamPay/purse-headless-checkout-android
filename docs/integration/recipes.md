@@ -16,7 +16,7 @@ Google Pay, PayPal and Klarna live in their own artifacts (`eu.purse:headless-ch
 6. [Redirection methods](#6-redirection-methods)
 7. [Gift cards and co-payment](#7-gift-cards-and-co-payment)
 8. [Saved cards and saved PayPal accounts](#8-saved-cards-and-saved-paypal-accounts)
-9. [Confirm after a redirect](#9-confirm-after-a-redirect)
+9. [Confirm after a redirect: ask your backend](#9-confirm-after-a-redirect-ask-your-backend)
 10. [Hooks](#10-hooks)
 11. [Events and monitoring](#11-events-and-monitoring)
 12. [Errors](#12-errors)
@@ -207,19 +207,25 @@ checkout.deleteAllTokens()
 // without a wallet session: WalletOperationFailed(MISSING_WALLET_SESSION)
 ```
 
-## 9. Confirm after a redirect
+## 9. Confirm after a redirect: ask your backend
 
-`PaymentOutcome.ReturnedFromRedirect` means the shopper came back, nothing more.
+`PaymentOutcome.ReturnedFromRedirect` means the shopper came back, nothing more: a 3-D Secure or PSP
+page's final redirect is built server-side and the app cannot read it. The verdict lives in the
+session's transactions, and only **your backend** can read them — with its own merchant credentials.
+The Payment API answers `401` to the client key the app holds. Web works the same way: it concludes
+on `/validate`, the redirection return and the success/failure URLs, and the merchant confirms on its
+server.
 
 ```kotlin
 override fun onOutcome(outcome: PaymentOutcome) {
     when (outcome) {
         is PaymentOutcome.Completed -> render(outcome.status)                // SUCCESS or a decline
         PaymentOutcome.ReturnedFromRedirect -> scope.launch {
-            when (val status = checkout.awaitPaymentOutcome(timeoutMs = 60_000, pollIntervalMs = 3_000)) {
-                is PaymentSessionStatus.Confirmed -> showSuccess()
-                is PaymentSessionStatus.Failed -> showFailure()
-                is PaymentSessionStatus.Pending -> showStillProcessing(status.operations)
+            showConfirming()
+            when (myBackend.paymentVerdict(orderId)) {                      // your own endpoint
+                Verdict.PAID -> showSuccess()
+                Verdict.REFUSED -> showFailure()
+                Verdict.PENDING -> showStillProcessing()                     // retry a few times, then let the order page settle it
             }
         }
         PaymentOutcome.Canceled -> Unit
@@ -228,13 +234,21 @@ override fun onOutcome(outcome: PaymentOutcome) {
 }
 ```
 
-`checkout.paymentStatus()` is the one-shot version; `sessionTransactions()` the raw JSON. The
-response lists operations, not payments: one captured payment is an `AUTHORIZE` and a `CAPTURE` row.
+Your backend reads the session (or the PSP notification it already receives) and answers. The
+session's rows are operations, not payments: one captured payment is an `AUTHORIZE` and a `CAPTURE`
+row (see [plugins/README.md](../plugins/README.md#reading-the-sessions-transactions--operations-not-payments)).
+If your backend relays those rows as they are, `PaymentSessionStatus.from(rows)` classifies them on
+the device.
 
-The same check covers a submit that was interrupted: a `ValidateFailed` whose `outcomeUnknown` is
-`true` (the request left, nothing answered) means the payment may exist — poll before showing an
-error. A return from the redirect WebView after the app was killed lands here too, never on
-`Canceled`.
+The same call covers a submit that was interrupted: a `ValidateFailed` whose `outcomeUnknown` is
+`true` (the request left, nothing answered) means the payment may exist — ask your backend before
+showing an error. A return from the redirect WebView after the app was killed lands here too, never
+on `Canceled`.
+
+`checkout.sessionTransactions()`, `paymentStatus()` and `awaitPaymentOutcome()` read that same route
+with the client key, so they cannot confirm anything: they are **deprecated** and go at the next
+major. Don't poll them. The demo app shows the flow above: its result screen asks the alfred backend
+for the session's transactions.
 
 ## 10. Hooks
 
@@ -387,7 +401,7 @@ save decisions, and what the native steps collected. What does not: a card form'
 saved, by design) and `hooks` / `options` (they hold code — pass the same ones to `restore`).
 
 If a submit had already left the device, the restored `sessionState` is `SUBMITTED` and
-`submitPayment` refuses: confirm the outcome with `awaitPaymentOutcome()` (recipe 9) instead of
+`submitPayment` refuses: confirm the outcome from your backend (recipe 9) instead of
 letting the shopper pay twice. The return from the redirect Activity after the process was killed
 lands on the recreated payment element's listener as `PaymentOutcome.ReturnedFromRedirect`, which
 leads to the same check.

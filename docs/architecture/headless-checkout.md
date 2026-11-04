@@ -310,7 +310,8 @@ fulfilment gate, registration, live plugin and — beyond web — its place as p
 torn down and gets a new `itemGenerations` generation so `rememberPaymentElement` rebuilds it;
 applied gift cards are dropped; the watchdog restarts; `paymentSession` emits the swap); CDN method
 icons (`PurseAssets`); typed
-payment confirmation (`paymentStatus()` / `awaitPaymentOutcome()` over `sessionTransactions()`);
+payment confirmation (`paymentStatus()` / `awaitPaymentOutcome()` over `sessionTransactions()`, since
+deprecated: the session read answers `401` to the client key, the merchant's backend confirms — SDK-12574);
 and a hardened redirect WebView (progress, first-page watchdog, network-failure surfacing); BNPL
 loan simulation (`PrimaryMethod.simulable` off the `simulable` label,
 `simulateLoan` / `simulateLoans` over the entity-scoped `POST /simulation/…` endpoints, `LoanProduct` /

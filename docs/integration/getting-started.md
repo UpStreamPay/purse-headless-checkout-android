@@ -162,7 +162,7 @@ redirection methods creation runs a `POST /init`.
 ```kotlin
 override fun onOutcome(outcome: PaymentOutcome) = when (outcome) {
     is PaymentOutcome.Completed -> if (outcome.isSuccess) showSuccess() else showDeclined(outcome.status)
-    PaymentOutcome.ReturnedFromRedirect -> confirmWithSession()          // below
+    PaymentOutcome.ReturnedFromRedirect -> confirmWithBackend()          // below
     PaymentOutcome.Canceled -> Unit                                      // the shopper backed out, nothing changed
     is PaymentOutcome.Failed -> showError(outcome.error)                 // a PurseException with a stable code
 }
@@ -171,15 +171,10 @@ override fun onOutcome(outcome: PaymentOutcome) = when (outcome) {
 - `Completed` — `/validate` answered directly. `status` is the API's verdict: `PaymentStatus.SUCCESS`
   is a payment, anything else a declined payment.
 - `ReturnedFromRedirect` — the shopper came back from a redirect (3-D Secure, PayPal, a PSP page).
-  That is **not** an outcome. Ask the session:
-
-```kotlin
-when (checkout.awaitPaymentOutcome()) {              // polls the session's transactions, 60 s max
-    is PaymentSessionStatus.Confirmed -> showSuccess()
-    is PaymentSessionStatus.Failed -> showFailure()
-    is PaymentSessionStatus.Pending -> showStillProcessing()
-}
-```
+  That is **not** an outcome. Ask your backend: it reads the session with its merchant credentials,
+  which the app cannot (the Payment API answers `401` to the client key). See
+  [recipe 9](recipes.md#9-confirm-after-a-redirect-ask-your-backend). `paymentStatus()` /
+  `awaitPaymentOutcome()` are deprecated for that reason.
 
 A `Failed` before any submit (a widget that failed to load) is not a failed payment: leave the
 shopper on the screen with a message; the method is disabled on `paymentMethods` accordingly.
