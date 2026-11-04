@@ -1,5 +1,5 @@
 // Web: packages/partner-ui/src/plugins/vaults/purse/creditcard + generics/hostedfields
-// Same: fresh card / token with CVV (`cvvOnly`) / token without CVV; tokenize, then /init + /validate.
+// Same: fresh card / token with CVV (`cvvOnly`) / token without CVV; tokenize, then /validate.
 // Differs: SecureFields Android (Compose) instead of iframes; the form's validity is pushed into
 //          the checkout through `PluginHost.setFulfilled` rather than refused at `setAsPrimarySource`.
 package eu.purse.partnerui.plugins.vaults.purse.creditcard
@@ -23,6 +23,7 @@ import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.PluginHost
 import eu.purse.partnerui.PurseTheme
+import eu.purse.partnerui.ThemeValues
 import eu.purse.partnerui.plugins.generics.redirection.RedirectionMapper
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.securefields.SecureFieldsAndroid
@@ -47,7 +48,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * Creates and remembers the card flow's interactive half: a [SecureFieldsAndroid] instance plus the
- * [CardCoordinator] that tokenizes on submit and runs `/init` + `/validate` through [host]. The host's
+ * [CardCoordinator] that tokenizes on submit and runs `/validate` through [host]. The host's
  * token (and its `requiresCvv`) selects the [CardCoordinator.Mode]. Render the form with
  * [PurseCardForm]; mounting it reports the item unfulfilled until SecureFields says every field is valid.
  */
@@ -218,8 +219,8 @@ class CardCoordinator internal constructor(
     internal var selectedBrand: Brand? by mutableStateOf(null)
 
     /**
-     * Tokenize (the full card, or just the CVV of a saved one), then `/init` + `/validate`. A saved
-     * card that needs no CVV skips straight to `/init` + `/validate`. No-op while the form is invalid:
+     * Tokenize (the full card, or just the CVV of a saved one), then `/validate`. A saved card
+     * that needs no CVV skips straight to `/validate`. No-op while the form is invalid:
      * SecureFields is already showing the errors, and an unfilled form is not a failed payment.
      */
     fun submit() {
@@ -317,8 +318,12 @@ private fun ResolvedFieldTexts.vaultFieldConfig() = VaultFieldConfig(
     contentDescription = label?.takeIf { it.isNotBlank() },
 )
 
-/** The resolved `input` scope and its variants → SecureFields' [VaultStyles]; keys without an analog don't travel. */
-private fun PurseTheme.Resolved.toVaultStyles(): VaultStyles = input.toVaultStyles(
+/**
+ * The resolved `input` scope and its variants → SecureFields' [VaultStyles]; keys without an analog
+ * don't travel. Colours go through [ThemeValues.parseColorArgb]: SecureFields reads them with
+ * `Color.parseColor`, which turns the default theme's `transparent` into opaque black.
+ */
+internal fun PurseTheme.Resolved.toVaultStyles(): VaultStyles = input.toVaultStyles(
     focus = inputFocus.toVaultStyles(),
     invalid = inputInvalid.toVaultStyles(),
     valid = inputValid.toVaultStyles(),
@@ -333,9 +338,9 @@ private fun PurseTheme.FieldStyle.toVaultStyles(
     fontSize = fontSize,
     lineHeight = lineHeight,
     fontWeight = fontWeight,
-    color = color,
-    placeholderColor = placeholderColor,
-    backgroundColor = backgroundColor,
+    color = ThemeValues.parseColorArgb(color),
+    placeholderColor = ThemeValues.parseColorArgb(placeholderColor),
+    backgroundColor = ThemeValues.parseColorArgb(backgroundColor),
     focus = focus,
     invalid = invalid,
     valid = valid,

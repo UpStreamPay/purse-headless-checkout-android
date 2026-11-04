@@ -1,8 +1,10 @@
 // Web: packages/sdk/src/API/payment-api.ts
-// Same: `{root}/{entityId}/sessions/{sessionId}/init|validate`, GET session, /simulation endpoints.
+// Same: `{root}/{entityId}/sessions/{sessionId}/init|validate`, /simulation endpoints.
+// Differs: a deprecated GET session (web has none; it answers 401 to the client key).
 // Differs: blocking HttpURLConnection; callers hop to Dispatchers.IO.
 package eu.purse.core.api
 
+import eu.purse.checkout.confirmation.SESSION_READ_DEPRECATED
 import eu.purse.core.payload.ValidateItemPayload
 import eu.purse.core.payload.ValidationResult
 import eu.purse.core.payment.LoanProduct
@@ -62,12 +64,12 @@ class PaymentApiClient(
 
     /**
      * `GET /{entityId}/sessions/{sessionId}` — every transaction (`/init`/`/validate` call) made
-     * so far against this session, each with its own `status`. This is the source of truth to
-     * re-query after a capture rather than trusting a locally-held `/validate` result alone —
-     * confirmed against Purse's own published spec/tutorial (see
-     * https://docs.purse.tech/docs/integrate/purse-api/tutorials/simple-payment and
-     * docs/architecture/headless-checkout.md).
+     * so far against this session, each with its own `status`.
+     *
+     * **Deprecated**: the Payment API answers `401` to the client key this client sends, so only the
+     * merchant's backend, with its own credentials, can read it. Removed in the next major.
      */
+    @Deprecated(SESSION_READ_DEPRECATED)
     fun getSession(): JSONArray {
         val responseBody = execute("GET", path = "", body = null)
         return try {

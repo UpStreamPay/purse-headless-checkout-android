@@ -74,7 +74,7 @@ class PurseCheckoutHooks(
 |---|---|---|
 | `onBeforeValidate` | After the item payloads are built, right before `POST /validate`. Skipped when a plugin auto-submits (web's `xpay` trigger). | The submit is **aborted before anything is sent**: `submitPayment` throws `PurseCheckoutException.HookFailed` (code `ON_BEFORE_VALIDATE_HOOK_FAILED`, your exception as `cause`), `sessionState` returns to `READY`, split and collected data untouched. |
 | `onAfterValidate` | After `/validate` answers, before plugin `postValidation` (so before any redirect). | Swallowed, like web — reported as a `HEADLESS_CHECKOUT_CLIENT_HOOK_ERROR` monitoring event. |
-| `onRedirection` | `/validate` asked for a redirect, resolved to a `RedirectAction` (`Get` / `PostForm` / `PostHtml`), before the SDK opens its in-app WebView. Return `true` to take it over (the SDK opens nothing; confirm the outcome yourself with `paymentStatus()`), `false` to let the SDK proceed. Consulted by every coordinator that can redirect. | **Nothing is opened**; the failure reaches the payment element's `onError` as `"onRedirection hook failed: …"` (typed internally as `HookFailed`, code `POST_VALIDATE_FAILED` — web has no dedicated code, its handler runs inside `postValidation`), the split stays intact and the shopper can submit again. |
+| `onRedirection` | `/validate` asked for a redirect, resolved to a `RedirectAction` (`Get` / `PostForm` / `PostHtml`), before the SDK opens its in-app WebView. Return `true` to take it over (the SDK opens nothing; confirm the outcome from your backend on return), `false` to let the SDK proceed. Consulted by every coordinator that can redirect. | **Nothing is opened**; the failure reaches the payment element's `onError` as `"onRedirection hook failed: …"` (typed internally as `HookFailed`, code `POST_VALIDATE_FAILED` — web has no dedicated code, its handler runs inside `postValidation`), the split stays intact and the shopper can submit again. |
 
 ---
 
@@ -141,7 +141,7 @@ whether a submit has left the device. **No card data**, ever. Throws `CheckoutTo
 `restore` decodes the session again and replays the snapshot. Anything the new session no longer
 offers, or a slice it cannot honour, is skipped with a warning. When `CheckoutSavedState.submitted`
 is `true` the restored session is spent — `sessionState` is `SUBMITTED`, `submitPayment` throws
-`SubmitBlocked` — and the merchant confirms the outcome with `awaitPaymentOutcome()`. `hooks` and
+`SubmitBlocked` — and the merchant confirms the outcome from its backend. `hooks` and
 `options` are not saved: pass the same ones as at `init`. A snapshot from a newer SDK is refused
 (`IllegalArgumentException` from `CheckoutSavedState.fromJson`).
 
@@ -512,16 +512,16 @@ sealed class PaymentOutcome {
 | Outcome | Meaning |
 |---|---|
 | `Completed(result)` | `/validate` answered without a redirect. `result.status` is the API's verdict (`PaymentStatus.SUCCESS`, `FAILED`, `ERROR`, `UNCERTAIN`, `WAITING`; `UNKNOWN` for a value this SDK doesn't know, the raw string stays on `result.globalStatus`). A non-`SUCCESS` status is a declined payment, not an error. |
-| `ReturnedFromRedirect` | The shopper came back into the app — **not** that the payment succeeded. Don't render it as either success or failure; re-check with `paymentStatus()` / `awaitPaymentOutcome()`. |
+| `ReturnedFromRedirect` | The shopper came back into the app — **not** that the payment succeeded. Don't render it as either success or failure; ask your backend ([recipe 9](recipes.md#9-confirm-after-a-redirect-ask-your-backend)). |
 | `Canceled` | The shopper backed out (sheet dismissed, approval abandoned, redirect page closed, Klarna declined to authorize). The split is untouched; they may try again. |
-| `Failed(error)` | The attempt produced no payment. `error` is typed: the checkout's own exceptions (`PurseCheckoutException.*`, `PaymentApiException`) as they are, a partner SDK failure as `PartnerUiException` (code `PARTNER_UI_ERROR`, the partner's exception as `cause`). A `ValidateFailed` whose `outcomeUnknown` is `true` must be confirmed against the session before showing a failure. |
+| `Failed(error)` | The attempt produced no payment. `error` is typed: the checkout's own exceptions (`PurseCheckoutException.*`, `PaymentApiException`) as they are, a partner SDK failure as `PartnerUiException` (code `PARTNER_UI_ERROR`, the partner's exception as `cause`). A `ValidateFailed` whose `outcomeUnknown` is `true` must be confirmed from your backend before showing a failure. |
 
 The demo's three-way mapping (`DemoResult.of`) is the shape to copy:
 
 ```kotlin
 when (outcome) {
     is PaymentOutcome.Completed -> if (outcome.isSuccess) Authorized else Declined(outcome.status)
-    PaymentOutcome.ReturnedFromRedirect -> Unconfirmed        // go and check the session
+    PaymentOutcome.ReturnedFromRedirect -> Unconfirmed        // ask your backend
     PaymentOutcome.Canceled -> BackToMethods
     is PaymentOutcome.Failed -> if (outcome.error is ValidateFailed && outcome.error.outcomeUnknown) Unconfirmed else Failed(outcome.error)
 }
@@ -619,7 +619,7 @@ theme, so a partial theme never leaves a hole. See [recipes §13](recipes.md#13-
 | `formValid` | `var formValid: Boolean` (Compose state) | `false` until every configured field is valid (always `true` in `TOKEN_NO_CVV`). Drive your "Pay" button off this, or off `isPaymentFulfilled`, which the coordinator keeps in step for you. |
 | `fieldStates` | `val fieldStates: Map<CardField, CardFieldState>` (Compose state) | Per field: `isValid`, `isFocused`, `hasContent`, `wasBlurred` (set the first time the field loses focus, never cleared). Refreshed on every SecureFields change, focus and blur, with `PurseCardForm` or your own `VaultField` layout. A field nothing has happened to yet is absent. |
 | `errorMessage` | `fun errorMessage(field: CardField): String?` | The error `PurseCardForm` shows under `field` right now, or `null`: `formatError` once the field is left with rejected content, `requiredError` once an empty field is left, never while the shopper is typing in it. For a host that draws its own messages. |
-| `submit` | `fun submit()` | Tokenizes via SecureFields (the card, or just the CVV), then `/init` + `/validate` through the host; in `TOKEN_NO_CVV` it skips tokenization. A no-op (never an error) while the form isn't complete and valid. |
+| `submit` | `fun submit()` | Tokenizes via SecureFields (the card, or just the CVV), then `/validate` through the host (no `/init`); in `TOKEN_NO_CVV` it skips tokenization. A no-op (never an error) while the form isn't complete and valid. |
 
 One trap worth naming: `rememberCardCoordinator` keys its SecureFields instance on the `host` object,
 so build the host with `remember(...)` rather than inline —
@@ -765,24 +765,32 @@ While in flight, every item reads `DisabledState.Submitting`; the lock lifts whe
 - `PurseCheckoutException.NoPluginRegistered` — no plugin registered for the chosen primary's
   `(partner, method)`. For Google Pay, Klarna or PayPal this means the optional artifact is missing;
   `PartnerArtifacts.missingPluginMessage(partner, method)` (and the warning `init` logs) name it.
+  Nothing was sent; the method is disabled with `PARTNER_UI_FATAL_ERROR` and out of the split for
+  the rest of the session, as web does, so the shopper picks another one.
 - `PurseCheckoutException.ValidateFailed` — `/validate` failed. **Check `outcomeUnknown`**: `true`
   means the request left the device and no answer came back, so the payment may exist server-side —
-  reconcile with `awaitPaymentOutcome()` instead of telling the shopper it failed.
+  ask your backend for the outcome instead of telling the shopper it failed.
 
 Most callers reach `submitPayment` indirectly, through `PluginHost.submitPayment`, which coordinators
 call for you; the element's `PaymentOutcome.Failed` carries the same exception.
 
-### Re-checking status after a redirect or an unknown outcome
+### Confirming the outcome after a redirect or an unknown outcome — from your backend
+
+Take the outcome from `submitPayment` / the element's `onOutcome`. When that is
+`ReturnedFromRedirect`, or a `ValidateFailed` whose `outcomeUnknown` is `true`, ask your backend: it
+reads the session's transactions with its merchant credentials. See
+[recipe 9](recipes.md#9-confirm-after-a-redirect-ask-your-backend).
 
 ```kotlin
-suspend fun sessionTransactions(): JSONArray
-suspend fun paymentStatus(): PaymentSessionStatus
-suspend fun awaitPaymentOutcome(timeoutMs: Long = 60_000, pollIntervalMs: Long = 3_000): PaymentSessionStatus
+@Deprecated suspend fun sessionTransactions(): JSONArray
+@Deprecated suspend fun paymentStatus(): PaymentSessionStatus
+@Deprecated suspend fun awaitPaymentOutcome(timeoutMs: Long = 60_000, pollIntervalMs: Long = 3_000): PaymentSessionStatus
 ```
 
-`GET /{entityId}/sessions/{sessionId}` — the source of truth to check after a redirect/3-D Secure
-return, or after a `ValidateFailed` whose `outcomeUnknown` is `true`, rather than trusting a
-locally-held result. Runs on `Dispatchers.IO`.
+**Deprecated** (warning), removed in the next major. They read
+`GET /{entityId}/sessions/{sessionId}`, which the Payment API answers with `401` to the client key,
+so they cannot confirm a payment from the app. `PaymentApiClient.getSession()` is deprecated with
+them. `PaymentSessionStatus.from(rows)` stays: it classifies rows your backend relays.
 
 ---
 
@@ -804,7 +812,7 @@ post-validation step still needs.
 
 ```kotlin
 sealed interface RedirectionCheckoutResult {
-    data object Approved      // shopper returned via the deep link — re-check status
+    data object Approved      // shopper returned via the deep link — confirm from your backend
     data object Canceled      // shopper dismissed the Custom Tab/WebView without returning
     data class Failed(val message: String?)
 }
@@ -822,8 +830,8 @@ interactive plugin.
 |---|---|---|
 | `PurseCheckoutException.PaymentNotFulfilled` | `submitPayment` | Split doesn't cover the amount / no primary set. |
 | `PurseCheckoutException.ItemNotFulfilled` | `submitPayment` | An item in the split has an incomplete or invalid form (web's `ELEMENT_NOT_FULFILLED`). |
-| `PurseCheckoutException.NoPluginRegistered` | `submitPayment` | No `eu.purse.partnerui` plugin for the chosen `(partner, method)`. |
-| `PurseCheckoutException.ValidateFailed` | `submitPayment` | `/validate` failed. `outcomeUnknown == true` means the request left and nothing answered: reconcile with `awaitPaymentOutcome()`. |
+| `PurseCheckoutException.NoPluginRegistered` | `submitPayment` | No `eu.purse.partnerui` plugin for the chosen `(partner, method)`; the method is retired (`PARTNER_UI_FATAL_ERROR`) for the session. |
+| `PurseCheckoutException.ValidateFailed` | `submitPayment` | `/validate` failed. `outcomeUnknown == true` means the request left and nothing answered: ask your backend for the outcome. |
 | `PurseCheckoutException.SessionExpired` | `submitPayment`, `setSession` | The session (or the new one) is expired (`EXPIRED_SESSION`). |
 | `PurseCheckoutException.SubmitBlocked` | `submitPayment`, `setSession` | A submit is in flight, or the session's one validation is spent (`SUBMIT_BLOCKED`). |
 | `PurseCheckoutException.CheckoutTornDown` | everything after `teardown()` | The checkout was released (`CHECKOUT_TORN_DOWN`). |

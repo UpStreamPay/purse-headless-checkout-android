@@ -7,6 +7,7 @@
 package eu.purse.checkout.element
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.State
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -84,9 +85,11 @@ fun PaymentElementUi(element: PaymentElement, modifier: Modifier = Modifier) = e
  * method whose configuration changed, so that element rebuilds while an unchanged one keeps its
  * coordinator and whatever the shopper typed.
  *
- * A method whose plugin comes from an optional partner artifact (`headless-checkout-googlepay`,
- * `-klarna`, `-paypal`) renders only when that artifact is on the classpath; otherwise the element
- * has no UI and [PaymentElement.submit] reports it on `onError`.
+ * An item no plugin serves — its partner artifact (`headless-checkout-googlepay`, `-klarna`,
+ * `-paypal`) is not on the classpath, or the session names a `configurations.template` nothing
+ * registers outside redirection mode — gets an element with no UI whose [PaymentElement.submit]
+ * reports it on `onError`, and the item itself is retired as on web: `PARTNER_UI_FATAL_ERROR`, out
+ * of the split, refused for the rest of the session.
  *
  * @param klarnaReturnUrl Klarna's app-return URL; defaults to `"{packageName}.klarna://return"`,
  * which must match the intent-filter your manifest declares.
@@ -134,20 +137,24 @@ fun rememberPaymentElement(
             }
         }
 
-        else -> remember(elementKey) {
-            PaymentElement(item, hasUi = false, selfSubmitting = false, readyState, onSubmit = {
-                wrapped.onOutcome(
-                    PaymentOutcome.Failed(
-                        PurseCheckoutException.NoPluginRegistered(
-                            if (plugin == null) {
-                                PartnerArtifacts.missingPluginMessage(item.partner, item.method)
-                            } else {
-                                "no installed PartnerModule renders ${item.id}"
-                            },
+        else -> {
+            // Web's partner-ui dies `not supported` on mount. Deferred: a composition must not publish.
+            if (plugin == null) LaunchedEffect(elementKey) { checkout.retireUnserved(item) }
+            remember(elementKey) {
+                PaymentElement(item, hasUi = false, selfSubmitting = false, readyState, onSubmit = {
+                    wrapped.onOutcome(
+                        PaymentOutcome.Failed(
+                            PurseCheckoutException.NoPluginRegistered(
+                                if (plugin == null) {
+                                    PartnerArtifacts.missingPluginMessage(item.partner, item.method)
+                                } else {
+                                    "no installed PartnerModule renders ${item.id}"
+                                },
+                            ),
                         ),
-                    ),
-                )
-            }) { }
+                    )
+                }) { }
+            }
         }
     }
 }

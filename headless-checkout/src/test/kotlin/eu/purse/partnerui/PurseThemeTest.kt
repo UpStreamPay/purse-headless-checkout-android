@@ -86,6 +86,19 @@ class PurseThemeTest {
     }
 
     @Test
+    fun `colours for SecureFields are spelled the way parseColor reads them`() {
+        // parseColor knows neither `transparent` nor #rgb, and reads 8 digits as #AARRGGBB.
+        assertEquals("#00000000", ThemeValues.parseColorArgb("transparent"))
+        assertEquals("#00000000", ThemeValues.parseColorArgb(" Transparent "))
+        assertEquals("#FFFFFFFF", ThemeValues.parseColorArgb("#fff"))
+        assertEquals("#FF1F2933", ThemeValues.parseColorArgb("#1f2933"))
+        assertEquals("#80112233", ThemeValues.parseColorArgb("#11223380")) // CSS #rrggbbaa → #AARRGGBB
+        assertEquals("#00112233", ThemeValues.parseColorArgb("#11223300")) // zero alpha keeps every digit
+        assertEquals("red", ThemeValues.parseColorArgb("red")) // unreadable here → left to parseColor
+        assertNull(ThemeValues.parseColorArgb(null))
+    }
+
+    @Test
     fun `size and weight readers`() {
         assertEquals(14f, ThemeValues.sizeSp("14px"))
         assertEquals(16f, ThemeValues.sizeSp("16sp"))

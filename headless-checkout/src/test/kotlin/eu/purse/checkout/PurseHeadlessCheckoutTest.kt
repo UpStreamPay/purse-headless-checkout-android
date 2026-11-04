@@ -19,6 +19,7 @@ import eu.purse.core.payment.MethodKey
 import eu.purse.core.payment.Partner
 import eu.purse.core.payment.SaveTokenMode
 import eu.purse.partnerui.PluginEvent
+import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.redirect.RedirectAction
 import java.math.BigDecimal
 import kotlinx.coroutines.Dispatchers
@@ -34,6 +35,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
+// One class per public entry point; splitting it would scatter the shared fixtures. // ponytail: split by feature when it gets in the way
+@Suppress("LargeClass")
 class PurseHeadlessCheckoutTest {
 
     /** A checker that never syncs (no network) and trusts the local clock. */
@@ -726,7 +729,7 @@ class PurseHeadlessCheckoutTest {
     }
 
     @Test
-    fun `submitPayment fails while no plugin is registered for the primary`() {
+    fun `submitPayment refuses and retires a primary no plugin serves`() {
         // A partner/method pair no shipped plugin claims: no vault, no template, no fallback.
         val json = JSONObject(CheckoutTestSessions.samplePaymentSessionJson)
         json.getJSONObject("protocols").put(
@@ -740,11 +743,57 @@ class PurseHeadlessCheckoutTest {
             ),
         )
         val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(json.toString()))
-        checkout.setPrimary(checkout.primaryMethods.single { it.partner == Partner.Other("acme") })
+        val acme = checkout.primaryMethods.single { it.partner == Partner.Other("acme") }
+        checkout.setPrimary(acme)
 
         assertThrows(PurseCheckoutException.NoPluginRegistered::class.java) {
             runBlocking { checkout.submitPayment() }
         }
+        // Retired for the session, as on web (SDK-12575), rather than left selectable; nothing was
+        // sent, so the checkout stays submittable with another method.
+        assertEquals(
+            DisabledState.Code.PARTNER_UI_FATAL_ERROR,
+            checkout.primaryMethods.single { it.id == acme.id }.disabled?.code,
+        )
+        assertTrue(checkout.amountSplit.value.isEmpty())
+        assertEquals(SessionState.READY, checkout.sessionState.value)
+    }
+
+    @Test
+    fun `a method whose template no plugin serves is retired when engaged, for the session`() {
+        // SDK-12575, QA's case: axepta wero with `template: 'axepta_wero'`, which nothing registers,
+        // outside redirection mode. Web's partner-ui dies `not supported` on mount: fatal code, out
+        // of the split, refused for the session. Built here as `rememberPaymentElement` does.
+        val json = JSONObject(CheckoutTestSessions.samplePaymentSessionJson)
+        json.getJSONObject("protocols").put(
+            "axepta",
+            JSONObject().put(
+                "wero",
+                JSONObject().put(
+                    "configurations",
+                    JSONObject(
+                        """{"stable": true, "template": "axepta_wero", "labels": ["axepta", "wero", "primary"], "position": 9, "settings": {}}""",
+                    ),
+                ),
+            ),
+        )
+        val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(json.toString()))
+        val wero = checkout.primaryMethods.single { it.partner == Partner.Other("axepta") }
+        assertNull(PluginRegistry.getPlugin(wero.partner, wero.method, checkout.session.source))
+        checkout.setPrimary(wero)
+
+        checkout.retireUnserved(wero)
+
+        val retired = checkout.primaryMethods.single { it.id == wero.id }
+        assertEquals(DisabledState.Code.PARTNER_UI_FATAL_ERROR, retired.disabled?.code)
+        assertTrue(checkout.amountSplit.value.isEmpty())
+        assertThrows(PurseCheckoutException.MethodDisabled::class.java) { checkout.setPrimary(retired) }
+        // Not recomputable: an amount change does not bring it back.
+        checkout.setPrimary(checkout.primaryMethods.first { it.method == Method.CreditCard })
+        assertEquals(
+            DisabledState.Code.PARTNER_UI_FATAL_ERROR,
+            checkout.primaryMethods.single { it.id == wero.id }.disabled?.code,
+        )
     }
 
     @Test
@@ -834,6 +883,97 @@ class PurseHeadlessCheckoutTest {
 
         assertTrue(restored.amountSplit.value.isEmpty())
         assertEquals(0, restored.session.amount.compareTo(restored.remainingAmountToPay.value))
+    }
+
+    // --- PayPal bnpl eligibility probe (SDK-12576) -------------------------------------------------
+
+    /** The fixture plus a PayPal bnpl primary in redirection mode, against [apiRoot]. */
+    private fun paypalBnplWidgetData(apiRoot: String): String {
+        val session = JSONObject(CheckoutTestSessions.samplePaymentSessionJson)
+        session.getJSONObject("protocols").getJSONObject("paypal").put(
+            "bnpl",
+            JSONObject(
+                """
+                { "configurations": {
+                    "stable": true, "labels": ["paypal", "bnpl", "primary"], "position": 4,
+                    "settings": {
+                      "registration_mode": "OFF_SESSION",
+                      "merchant_specifics": { "integration_mode": "redirection", "client_id": "paypal-client-abc" }
+                    } } }
+                """,
+            ),
+        )
+        return CheckoutTestSessions.widgetData(session.toString(), apiRoot)
+    }
+
+    private fun PurseHeadlessCheckout.hasBnpl() = primaryMethods.any { it.partner == Partner.Paypal && it.method == Method.Bnpl }
+
+    private fun PurseHeadlessCheckout.awaitBnplWithdrawn() {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (hasBnpl() && System.currentTimeMillis() < deadline) Thread.sleep(20)
+    }
+
+    @Test
+    fun `an ineligible PayPal bnpl is withdrawn from the list once its probe init answers NOT_ELIGIBLE`() {
+        FakePaymentApi().use { api ->
+            api.respond("init", """{ "status": { "state": "ERROR" }, "plugin_result": { "status": "NOT_ELIGIBLE" } }""")
+            val checkout = checkout(paypalBnplWidgetData(api.apiRoot))
+
+            val init = api.awaitRequests("init").single().json
+            assertEquals("bnpl", init.getString("method"))
+            checkout.awaitBnplWithdrawn()
+
+            assertFalse("PLUGIN_INCOMPATIBLE is a filtered code", checkout.hasBnpl())
+            assertTrue(checkout.primaryMethods.any { it.partner == Partner.Paypal && it.method == Method.Wallet })
+        }
+    }
+
+    @Test
+    fun `an eligible PayPal bnpl stays listed`() {
+        FakePaymentApi().use { api ->
+            api.respond("init", """{ "status": { "state": "SUCCESS" }, "step_id": 3, "plugin_result": { "status": "SUCCESS" } }""")
+            val checkout = checkout(paypalBnplWidgetData(api.apiRoot))
+
+            assertEquals(1, api.awaitRequests("init").size)
+            Thread.sleep(200)
+
+            assertTrue(checkout.hasBnpl())
+            assertNull(checkout.primaryMethods.single { it.method == Method.Bnpl }.disabled)
+        }
+    }
+
+    @Test
+    fun `a restored session whose payment already left is never probed`() {
+        FakePaymentApi().use { api ->
+            api.respond("init", """{ "status": { "state": "SUCCESS" }, "plugin_result": { "status": "SUCCESS" } }""")
+            val json = JSONObject(checkout(paypalBnplWidgetData(api.apiRoot)).saveState().toJson()).put("submitted", true).toString()
+            api.awaitRequests("init")
+            api.requests.clear()
+
+            val restored = PurseHeadlessCheckout.restore(CheckoutSavedState.fromJson(json), datetimeChecker = offlineChecker())
+            Thread.sleep(300)
+
+            assertEquals(SessionState.SUBMITTED, restored.sessionState.value)
+            assertTrue("no /init on a spent session (SDK-12461)", api.initRequests().isEmpty())
+        }
+    }
+
+    @Test
+    fun `a restored session not yet submitted is probed again`() {
+        FakePaymentApi().use { api ->
+            api.respond("init", """{ "status": { "state": "ERROR" }, "plugin_result": { "status": "NOT_ELIGIBLE" } }""")
+            val first = checkout(paypalBnplWidgetData(api.apiRoot))
+            val state = first.saveState()
+            // Settled, so the restore's probe is a new call rather than coalesced into this one by InitGuard.
+            first.awaitBnplWithdrawn()
+            api.requests.clear()
+
+            val restored = PurseHeadlessCheckout.restore(state, datetimeChecker = offlineChecker())
+
+            assertEquals(1, api.awaitRequests("init").size)
+            restored.awaitBnplWithdrawn()
+            assertFalse(restored.hasBnpl())
+        }
     }
 
     @Test
@@ -1393,6 +1533,8 @@ class PurseHeadlessCheckoutTest {
         assertFalse(checkout.isPaymentFulfilled.value)
     }
 
+    // paymentStatus() is deprecated (GET session 401s to the client key) but still shipped, so still covered.
+    @Suppress("DEPRECATION")
     @Test
     fun `after teardown every operation fails with CHECKOUT_TORN_DOWN`() {
         val checkout = checkout()

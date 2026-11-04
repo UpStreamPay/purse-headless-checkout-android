@@ -113,6 +113,8 @@ class PaymentApiClientSimulationTest {
         assertEquals(listOf(4, 10), simulations.map { it.installmentCount })
     }
 
+    // getSession() is deprecated (401 to the client key) but still shipped, so its URL stays pinned.
+    @Suppress("DEPRECATION")
     @Test
     fun `session-scoped calls still live under sessions`() {
         responseBody = "[]"
