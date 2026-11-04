@@ -42,6 +42,7 @@ import eu.purse.checkout.wallet.WalletTokens
 import eu.purse.core.SdkVersion
 import eu.purse.core.api.PaymentApiClient
 import eu.purse.core.api.PaymentApiException
+import eu.purse.core.api.ValidateGuard
 import eu.purse.core.api.WalletApiClient
 import eu.purse.core.assets.PurseAssets
 import eu.purse.core.datetime.DatetimeApiClient
@@ -197,7 +198,9 @@ class PurseHeadlessCheckout private constructor(
     /**
      * Web's `#validationConsumed`: the API answered `/validate` about the payment (any
      * `global_status`), so the session's single validation is spent — a declined payment included.
-     * Only a `/validate` the API *refused* leaves the session submittable again.
+     * A `/validate` whose answer was lost after it left the device spends it too (SDK-12621), as
+     * does one answered before a plugin's `postValidation` failed. Only a `/validate` the API
+     * *refused*, or one that never left the device, leaves the session submittable again.
      */
     @Volatile private var validationConsumed = false
 
@@ -912,7 +915,8 @@ class PurseHeadlessCheckout private constructor(
             )
             .put(
                 CheckoutSavedState.SUBMITTED,
-                validationConsumed || _sessionState.value == SessionState.SUBMITTING || _sessionState.value == SessionState.SUBMITTED,
+                validationConsumed || ValidateGuard.isSpent(session.id) ||
+                    _sessionState.value == SessionState.SUBMITTING || _sessionState.value == SessionState.SUBMITTED,
             )
             .put(CheckoutSavedState.SAVED_AT, System.currentTimeMillis())
         return CheckoutSavedState(json)
@@ -1488,7 +1492,10 @@ class PurseHeadlessCheckout private constructor(
      * @throws PurseCheckoutException.SubmitBlocked if a submit is in flight or the session is spent.
      * @throws PurseCheckoutException.CheckoutTornDown after [teardown].
      * @throws PurseCheckoutException.ValidateFailed if `/validate` failed — when its `outcomeUnknown`
-     * is `true` the request left the device and the payment may exist: check [paymentStatus].
+     * is `true` the request left the device and the payment may exist: the outcome is unknown, so
+     * confirm it from your backend (server-side session read) and, if it did not go through, start a
+     * new session. Such a session is spent: a later submit is refused rather than sending a second
+     * `/validate`.
      * @throws PurseCheckoutException.NoPluginRegistered while no `:partner-ui` plugins exist yet.
      */
     suspend fun submitPayment(skipOnBeforeValidate: Boolean = false): ValidationResult {
@@ -1563,6 +1570,9 @@ class PurseHeadlessCheckout private constructor(
             }
             result
         } catch (e: Throwable) {
+            // The /validate left the device and the server may have accepted it — its answer was lost,
+            // or a plugin's postValidation failed after it: never send another (SDK-12621).
+            if (ValidateGuard.isSpent(session.id)) validationConsumed = true
             _sessionState.value = when {
                 e.sessionTerminal() -> SessionState.TERMINATED
                 // A merchant onBeforeValidate hook aborted the submit before anything was sent:
@@ -1582,14 +1592,16 @@ class PurseHeadlessCheckout private constructor(
      * Web's re-entrancy latch, throwing: re-evaluate expiry now (not only at init and on the
      * watchdog's tick), then move `READY`/`ERROR` to `SUBMITTING` atomically so two racing calls
      * cannot both pass. `ERROR` stays submittable only while the API never answered about the
-     * payment ([validationConsumed] false) — a declined payment is a spent session too.
+     * payment ([validationConsumed] false) — a declined payment is a spent session too. The
+     * process-wide [ValidateGuard] also blocks a session another checkout instance already sent or
+     * is sending (a checkout rebuilt for the same session).
      */
     private fun acquireSubmitLock() {
         if (_sessionState.value == SessionState.READY && datetimeChecker.isExpiredForServer(session.expirationDate)) expire()
         val from = _sessionState.value
         if (from == SessionState.EXPIRED) throw PurseCheckoutException.SessionExpired(session.id)
         val blocked = from == SessionState.SUBMITTING || from == SessionState.SUBMITTED ||
-            from == SessionState.TERMINATED || validationConsumed ||
+            from == SessionState.TERMINATED || validationConsumed || ValidateGuard.blocks(session.id) ||
             !_sessionState.compareAndSet(from, SessionState.SUBMITTING)
         if (blocked) {
             bus.post(

@@ -47,8 +47,13 @@ class PaymentApiClient(
      * `POST /validate` — the validate call takes a JSON *array* of items (one per method being
      * submitted), mirroring web's `FetchPaymentAPI.validate`. Returns the `{results, redirection,
      * global_status}` object. See docs/architecture/headless-checkout.md#init-and-validate.
+     *
+     * Sent at most once per session, process-wide ([ValidateGuard]): never retried, never replayed
+     * by the HTTP stack, and refused (`errorCode == VALIDATE_ALREADY_SENT`, nothing sent) while
+     * another `/validate` for the session is in flight or after one the server may have accepted.
      */
-    fun validate(payload: JSONArray): JSONObject = post("/validate", payload.toString())
+    fun validate(payload: JSONArray): JSONObject =
+        ValidateGuard.run(sessionId) { post("/validate", payload.toString()) }
 
     /**
      * Typed `POST /validate` — serializes each [ValidateItemPayload] and parses the response into a
@@ -144,18 +149,31 @@ class PaymentApiClient(
         eu.purse.core.monitoring.ApiCallMonitor.time(method, path) { executeUnmonitored(method, path, body, url) }
 
     private fun executeUnmonitored(method: String, path: String, body: String?, url: String): String {
+        val bytes = body?.toByteArray()
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 15_000
             readTimeout = 15_000
             setRequestProperty("x-api-key", apiKey)
-            if (body != null) {
+            if (bytes != null) {
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
+                // Streamed, not buffered: `HttpURLConnection` silently re-sends a buffered body once
+                // when the answer is lost after the request went out (Android's OkHttp-based
+                // implementation and the JDK's alike). For `/validate` that replay reaches the server
+                // as a second submit, answered `400 SESSION_ALREADY_SUBMITTED_ERROR` and hiding the
+                // first, accepted one (SDK-12621). A streamed body cannot be replayed: the failure
+                // surfaces as an outcome-unknown error instead.
+                setFixedLengthStreamingMode(bytes.size)
             }
         }
+        // Until the body is handed to the socket, the server cannot have seen the request.
+        var requestSent = bytes == null
         return try {
-            body?.let { payload -> connection.outputStream.use { it.write(payload.toByteArray()) } }
+            bytes?.let { payload ->
+                connection.outputStream.use { it.write(payload) }
+                requestSent = true
+            }
             // Web's FetchPaymentAPI treats status < 400 as success.
             val code = connection.responseCode
             val stream = if (code < 400) connection.inputStream else connection.errorStream
@@ -173,7 +191,12 @@ class PaymentApiClient(
             }
             responseBody
         } catch (e: IOException) {
-            throw PaymentApiException("Payment API $method $path failed: ${e.message}", e, path = path)
+            throw PaymentApiException(
+                "Payment API $method $path failed: ${e.message}",
+                e,
+                path = path,
+                requestSent = requestSent,
+            )
         } finally {
             connection.disconnect()
         }

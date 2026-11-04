@@ -9,7 +9,8 @@ import org.json.JSONObject
  * A tiny in-process Payment API for the JVM tests — the SDK's clients are plain
  * `HttpURLConnection`, so a loopback `HttpServer` (bundled with the JDK, no dependency) is enough
  * to script `/init` / `/validate` answers and to capture what was sent. Route handlers are keyed by
- * path suffix (`"/init"`, `"/validate"`, `""` for the session GET); an unrouted path answers 404.
+ * path suffix (`"/init"`, `"/validate"`, `""` for the session GET); an unrouted path answers 404,
+ * and a handler returning [DROP] hangs up without answering.
  *
  * `apiRoot` plugs straight into `CheckoutTestSessions.widgetData(apiUrl = …)` or a
  * `PaymentApiClient`. Always [close] it (or use [use]).
@@ -35,6 +36,8 @@ internal class FakePaymentApi : AutoCloseable {
             val request = Request(exchange.requestMethod, path, body)
             requests += request
             val (status, answer) = routes[routeOf(path)]?.invoke(request) ?: (404 to """{"error":"NOT_FOUND"}""")
+            // The request was received in full; the server hangs up before answering.
+            if (status == DROP) throw java.io.IOException("FakePaymentApi dropped the connection")
             val bytes = answer.toByteArray()
             exchange.responseHeaders.add("Content-Type", "application/json")
             exchange.sendResponseHeaders(status, bytes.size.toLong())
@@ -71,6 +74,12 @@ internal class FakePaymentApi : AutoCloseable {
     override fun close() = server.stop(0)
 
     companion object {
+        /**
+         * A route status meaning "receive the request, then close the connection without answering"
+         * — the server got the call (and may have acted on it), the device never sees the answer.
+         */
+        const val DROP = -1
+
         /** A successful generic-card `/init` answer with [balance] — the shape `parseCardToken` reads. */
         fun successfulCardInit(balance: String, maskedCard: String = "925000••••7890", expiry: String = "2027-12"): String =
             """

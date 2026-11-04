@@ -1106,11 +1106,12 @@ public final class eu/purse/core/api/PaymentApiClient$Companion {
 public final class eu/purse/core/api/PaymentApiException : eu/purse/core/error/PurseException {
 	public static final field $stable I
 	public static final field Companion Leu/purse/core/api/PaymentApiException$Companion;
-	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Ljava/lang/Integer;Ljava/lang/String;Ljava/lang/String;)V
-	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Ljava/lang/Integer;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Ljava/lang/Integer;Ljava/lang/String;Ljava/lang/String;Z)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Ljava/lang/Integer;Ljava/lang/String;Ljava/lang/String;ZILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getErrorCode ()Ljava/lang/String;
 	public final fun getOutcomeUnknown ()Z
 	public final fun getPath ()Ljava/lang/String;
+	public final fun getRequestSent ()Z
 	public final fun getStatus ()Ljava/lang/Integer;
 	public final fun isRetryable ()Z
 	public final fun isSessionTerminal ()Z

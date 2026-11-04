@@ -36,6 +36,7 @@ class CheckoutTelemetryTest {
 
     @Before
     fun record() {
+        eu.purse.core.api.ValidateGuard.reset() // process-wide; every test here submits the same session id
         unsubscribe = CheckoutEventBus.getInstance().subscribe(CheckoutEventBus.Scope.ALL) { events.add(it) }
     }
 
