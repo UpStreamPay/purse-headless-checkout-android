@@ -168,8 +168,10 @@ session (checked in `getPlugin` against `protocols`) is the real gate on whether
 offered — that's already decided server-side, so no app-side setup call is required for a built-in
 plugin to work. `PurseHeadlessCheckout.init(disabledMethods = …)` opts a method out of one checkout (scoped
 to the instance, not the process); `register`/`registerFallback`/`registerGeneric` (or a whole `PartnerModule` via
-`PluginRegistry.install`) remain for a plugin that isn't one of Purse's own. A `(partner, method)` with no plugin at all (e.g. a non-Purse-vaulted card/CB)
-still makes `submitPayment` throw `PurseCheckoutException.NoPluginRegistered`.
+`PluginRegistry.install`) remain for a plugin that isn't one of Purse's own. A `(partner, method)` with no plugin at all (e.g. a non-Purse-vaulted card/CB,
+or a `configurations.template` nothing registers outside redirection mode) is retired when engaged,
+as on web: its payment element, or a `submitPayment` that finds it in the split, disables it with
+`PARTNER_UI_FATAL_ERROR` for the session, and the submit throws `PurseCheckoutException.NoPluginRegistered`.
 
 Each shipped plugin has its own reference page — `/init` contract, sequence diagram, quirks, failure
 modes, host integration: **[docs/plugins](../plugins/README.md)**. What follows is only the shape of

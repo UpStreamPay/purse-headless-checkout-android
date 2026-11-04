@@ -19,6 +19,7 @@ import eu.purse.core.payment.MethodKey
 import eu.purse.core.payment.Partner
 import eu.purse.core.payment.SaveTokenMode
 import eu.purse.partnerui.PluginEvent
+import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.redirect.RedirectAction
 import java.math.BigDecimal
 import kotlinx.coroutines.Dispatchers
@@ -726,7 +727,7 @@ class PurseHeadlessCheckoutTest {
     }
 
     @Test
-    fun `submitPayment fails while no plugin is registered for the primary`() {
+    fun `submitPayment refuses and retires a primary no plugin serves`() {
         // A partner/method pair no shipped plugin claims: no vault, no template, no fallback.
         val json = JSONObject(CheckoutTestSessions.samplePaymentSessionJson)
         json.getJSONObject("protocols").put(
@@ -740,11 +741,57 @@ class PurseHeadlessCheckoutTest {
             ),
         )
         val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(json.toString()))
-        checkout.setPrimary(checkout.primaryMethods.single { it.partner == Partner.Other("acme") })
+        val acme = checkout.primaryMethods.single { it.partner == Partner.Other("acme") }
+        checkout.setPrimary(acme)
 
         assertThrows(PurseCheckoutException.NoPluginRegistered::class.java) {
             runBlocking { checkout.submitPayment() }
         }
+        // Retired for the session, as on web (SDK-12575), rather than left selectable; nothing was
+        // sent, so the checkout stays submittable with another method.
+        assertEquals(
+            DisabledState.Code.PARTNER_UI_FATAL_ERROR,
+            checkout.primaryMethods.single { it.id == acme.id }.disabled?.code,
+        )
+        assertTrue(checkout.amountSplit.value.isEmpty())
+        assertEquals(SessionState.READY, checkout.sessionState.value)
+    }
+
+    @Test
+    fun `a method whose template no plugin serves is retired when engaged, for the session`() {
+        // SDK-12575, QA's case: axepta wero with `template: 'axepta_wero'`, which nothing registers,
+        // outside redirection mode. Web's partner-ui dies `not supported` on mount: fatal code, out
+        // of the split, refused for the session. Built here as `rememberPaymentElement` does.
+        val json = JSONObject(CheckoutTestSessions.samplePaymentSessionJson)
+        json.getJSONObject("protocols").put(
+            "axepta",
+            JSONObject().put(
+                "wero",
+                JSONObject().put(
+                    "configurations",
+                    JSONObject(
+                        """{"stable": true, "template": "axepta_wero", "labels": ["axepta", "wero", "primary"], "position": 9, "settings": {}}""",
+                    ),
+                ),
+            ),
+        )
+        val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(json.toString()))
+        val wero = checkout.primaryMethods.single { it.partner == Partner.Other("axepta") }
+        assertNull(PluginRegistry.getPlugin(wero.partner, wero.method, checkout.session.source))
+        checkout.setPrimary(wero)
+
+        checkout.retireUnserved(wero)
+
+        val retired = checkout.primaryMethods.single { it.id == wero.id }
+        assertEquals(DisabledState.Code.PARTNER_UI_FATAL_ERROR, retired.disabled?.code)
+        assertTrue(checkout.amountSplit.value.isEmpty())
+        assertThrows(PurseCheckoutException.MethodDisabled::class.java) { checkout.setPrimary(retired) }
+        // Not recomputable: an amount change does not bring it back.
+        checkout.setPrimary(checkout.primaryMethods.first { it.method == Method.CreditCard })
+        assertEquals(
+            DisabledState.Code.PARTNER_UI_FATAL_ERROR,
+            checkout.primaryMethods.single { it.id == wero.id }.disabled?.code,
+        )
     }
 
     @Test

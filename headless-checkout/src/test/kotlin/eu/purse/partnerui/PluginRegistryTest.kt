@@ -126,6 +126,39 @@ class PluginRegistryTest {
         }
     }
 
+    // SDK-12575: a template nothing registers does not stop the walk, as on web — `getGenericPlugin`
+    // answers null and `getPartnerPlugin` carries on (web pins `'stripe_googlepay'` reaching Stripe's
+    // partner plugin). An item left with nothing is the checkout's to retire at engagement.
+    private val axepta = Partner.Other("axepta")
+    private val wero = Method.Other("wero")
+
+    @Test
+    fun `an unknown template outside redirection mode resolves to nothing`() {
+        // QA's axepta wero: no generic, no pair, no fallback — the checkout retires it.
+        val session = sessionWith(axepta, wero, template = "axepta_wero")
+        assertNull(PluginRegistry.getPlugin(axepta, wero, session))
+    }
+
+    @Test
+    fun `an unknown template in redirection mode still reaches the redirection generic`() {
+        // Web's getPartnerPlugin checks integration_mode after an unmatched template, so the merchant's
+        // redirection configuration is served, not refused.
+        val session = sessionWith(axepta, wero, template = "axepta_wero", integrationMode = IntegrationMode.REDIRECTION)
+        assertTrue(PluginRegistry.getPlugin(axepta, wero, session) is RedirectionPlugin)
+    }
+
+    @Test
+    fun `an unknown template does not hide an exact pair or a method fallback`() {
+        // Web's `'stripe_googlepay'` case: a template only the partner plugin understands. On Android
+        // Google Pay sits in the method fallback, whatever template the session names.
+        PluginRegistry.install(AcmeModule)
+
+        val exactSession = sessionWith(AcmeModule.acme, AcmeModule.wallet, template = "acme_wallet")
+        assertTrue(PluginRegistry.getPlugin(AcmeModule.acme, AcmeModule.wallet, exactSession) is AcmePlugin)
+        val fallbackSession = sessionWith(fintecture, AcmeModule.anyPartnerMethod, template = "googlepay")
+        assertTrue(PluginRegistry.getPlugin(fintecture, AcmeModule.anyPartnerMethod, fallbackSession) is AcmePlugin)
+    }
+
     @Test
     fun `a vault vendor outranks a redirection template`() {
         val session = sessionWith(

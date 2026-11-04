@@ -73,6 +73,7 @@ adds or removes a divergence.
 |---|---|---|---|
 | Plugin activation | static lookup table | `PluginRegistry` with all built-ins registered in `init` | same effect; registry kept for `Partner.Other` and host-registered plugins |
 | Google Pay resolution | template `googlepay` | pair `(ingenico, googlepay)` + method fallback | historical; harmless for today's sessions |
+| Item no plugin serves (unknown template outside redirection mode, missing artifact) | partner-ui dies `not supported` on mount → `PARTNER_UI_FATAL_ERROR`, `clearSplit`, `deactivateMop` | same state when its payment element is built (`PurseHeadlessCheckout.retireUnserved`), and when `submitPayment` finds it in the split (throws `NoPluginRegistered`, nothing sent) | no DOM mount to die in; a split can be built with `setPrimary` alone (SDK-12575) |
 | Interactive step | plugin renders into the DOM and owns its client | a `PaymentCoordinator` subclass owns the native SDK; the base owns `/validate`, redirects and the return; the plugin stays pure protocol | Activity lifecycle and result contracts have no web analogue |
 | Plugin ↔ checkout access | plugin holds the checkout context | one `PluginHost` interface, implemented by `PurseHeadlessCheckout.host(item)` | keeps `eu.purse.partnerui` from depending on `eu.purse.checkout` |
 | Fulfilment | `setAsPrimarySource` refuses an unfulfilled element | reactive `isPaymentFulfilled`, selectable before the form is filled | fits `StateFlow` UIs |
