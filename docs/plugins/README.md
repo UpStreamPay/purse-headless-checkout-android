@@ -184,7 +184,7 @@ The single biggest per-PSP difference, and the reason these pages exist:
 
 ```
 Google Pay   sheet ──▶ token ──▶ /validate                  (native step BEFORE)
-Card         form ──▶ vault token ──▶ /init ──▶ /validate   (native step BEFORE)
+Card         form ──▶ vault token ──▶ /validate             (native step BEFORE)
 PayPal       /init ──▶ order ──▶ approve out-of-app ──▶ /validate  (native step BEFORE)
 Klarna       /validate ──▶ authorize() (in postValidation)  (native step AFTER, inside submitPayment)
 Redirection  /init ──▶ /validate ──▶ hosted page            (NO native step — the redirect IS the step)

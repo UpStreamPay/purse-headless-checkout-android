@@ -608,7 +608,7 @@ theme, so a partial theme never leaves a hole. See [recipes §13](recipes.md#13-
 | `theme` | `val theme: PurseTheme.Resolved` | The merchant's `PluginOptions.theme` resolved over web's defaults. |
 | `mode` | `val mode: CardCoordinator.Mode` | See above; `mode.rendersForm` is `false` only for `TOKEN_NO_CVV`. |
 | `formValid` | `var formValid: Boolean` (Compose state) | `false` until every configured field is valid (always `true` in `TOKEN_NO_CVV`). Drive your "Pay" button off this, or off `isPaymentFulfilled`, which the coordinator keeps in step for you. |
-| `submit` | `fun submit()` | Tokenizes via SecureFields (the card, or just the CVV), then `/init` + `/validate` through the host; in `TOKEN_NO_CVV` it skips tokenization. A no-op (never an error) while the form isn't complete and valid. |
+| `submit` | `fun submit()` | Tokenizes via SecureFields (the card, or just the CVV), then `/validate` through the host (no `/init`); in `TOKEN_NO_CVV` it skips tokenization. A no-op (never an error) while the form isn't complete and valid. |
 
 One trap worth naming: `rememberCardCoordinator` keys its SecureFields instance on the `host` object,
 so build the host with `remember(...)` rather than inline —
