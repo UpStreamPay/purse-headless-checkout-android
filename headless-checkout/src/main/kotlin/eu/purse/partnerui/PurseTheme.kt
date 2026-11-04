@@ -23,10 +23,11 @@ package eu.purse.partnerui
  * `global = Text(color = "#123456")` recolours labels, helper texts and inputs at once, while
  * `helperTextInvalid = Text(color = "#B3261E")` only changes the error message colour.
  *
- * Values are CSS-like strings, exactly as web and SecureFields take them: colours `#rgb`,
- * `#rrggbb`, `#rrggbbaa` or `transparent`; sizes `"14px"` / `"14sp"` / `"14"` (all read as sp);
- * weights `"400"`, `"700"`, `"bold"`, `"normal"`; families `sans-serif`, `serif`, `monospace`
- * (anything else falls back to the platform default).
+ * Values are CSS-like strings, as web takes them: colours `#rgb`, `#rrggbb`, `#rrggbbaa` (CSS
+ * order, alpha last) or `transparent` — re-spelled `#AARRGGBB` before they reach SecureFields,
+ * whose `Color.parseColor` reads neither `transparent` nor `#rgb`; sizes `"14px"` / `"14sp"` /
+ * `"14"` (all read as sp); weights `"400"`, `"700"`, `"bold"`, `"normal"`; families `sans-serif`,
+ * `serif`, `monospace` (anything else falls back to the platform default).
  */
 data class PurseTheme(
     /** Base values every scope falls back to (web `global`): colour, font, and the `gap` between fields. */
