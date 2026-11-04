@@ -43,7 +43,8 @@ import eu.purse.securefields.model.VaultFieldName
  *
  * Renders whatever [CardCoordinator.mode] calls for: the four fields of a fresh card, or the lone
  * CVV of a saved card that still needs one. Field copy comes from `PluginOptions.cardFormTexts`
- * ([CardFormTexts]), falling back to the SDK's localized `purse_card_*` resources.
+ * ([CardFormTexts]), falling back to the SDK's `purse_card_*` resources in the checkout's
+ * `PluginOptions.locale` (the device locale when it has none).
  *
  * Error semantics mirror web's `final-form` rules: a field the shopper left **empty after
  * touching it** shows its `requiredError`; content SecureFields rejects shows its `formatError`;

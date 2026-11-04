@@ -603,7 +603,7 @@ with `CardField.testTag` — `purse_card_number`, `purse_card_exp_date`, `purse_
 Copy comes from `PluginOptions.cardFormTexts` (`CardFormTexts`, one `CardFormTexts.FieldTexts` per
 field: `label`, `placeholder`, `helperText`, `requiredError`, `formatError`), every `null` falling
 back to the SDK's localized `purse_card_*` resources — web's `hostedForm` translations, in English and
-French. Styling comes from `PluginOptions.theme` (`PurseTheme`): the `input*` scopes reach
+French — read in the checkout's `PluginOptions.locale`, or the device locale when it is `null`. Styling comes from `PluginOptions.theme` (`PurseTheme`): the `input*` scopes reach
 SecureFields' `VaultStyles`, `label*` and `helperText*` reach the texts around them, `global*` is the
 base every scope falls back to and `gap` the spacing between fields. `PurseTheme.resolve()` applies
 web's `Theme.build()` order — scope variant → scope → global variant → global — over web's default

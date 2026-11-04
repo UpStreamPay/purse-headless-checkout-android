@@ -15,10 +15,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
-import eu.purse.checkout.R
 import eu.purse.core.environment.PurseEnvironment
-import eu.purse.partnerui.CardFormTexts
 import eu.purse.partnerui.PayToken
 import eu.purse.partnerui.PaymentCoordinator
 import eu.purse.partnerui.PaymentElementListener
@@ -72,7 +69,7 @@ fun rememberCardCoordinator(host: PluginHost, listener: PaymentElementListener):
                 .ifEmpty { listOf(Brand.VISA, Brand.MASTERCARD, Brand.CARTE_BANCAIRE) }
         }
     }
-    val texts = rememberCardTexts(context.options.cardFormTexts)
+    val texts = rememberCardTexts(context.options.cardFormTexts, context.options.locale)
     val theme = remember(context.options.theme) { (context.options.theme ?: PurseTheme()).resolve() }
     val config = remember(brands, mode, texts, theme) {
         SecureFieldsConfig(
@@ -295,39 +292,6 @@ private fun ResolvedFieldTexts.vaultFieldConfig() = VaultFieldConfig(
     placeholder = placeholder,
     contentDescription = label?.takeIf { it.isNotBlank() },
 )
-
-/** [CardFormTexts] over the SDK's localized `purse_card_*` resources — merchant override first. */
-@Composable
-private fun rememberCardTexts(texts: CardFormTexts): ResolvedCardTexts {
-    @Composable
-    fun field(
-        t: CardFormTexts.FieldTexts,
-        label: Int, placeholder: Int, helper: Int, required: Int, invalid: Int,
-    ) = ResolvedFieldTexts(
-        label = t.label ?: stringResource(label),
-        placeholder = t.placeholder ?: stringResource(placeholder),
-        helperText = t.helperText ?: stringResource(helper).ifBlank { null },
-        requiredError = t.requiredError ?: stringResource(required),
-        formatError = t.formatError ?: stringResource(invalid),
-    )
-    val cardNumber = field(
-        texts.cardNumber, R.string.purse_card_number_label, R.string.purse_card_number_placeholder,
-        R.string.purse_card_number_helper, R.string.purse_card_number_required, R.string.purse_card_number_invalid,
-    )
-    val expDate = field(
-        texts.expDate, R.string.purse_card_exp_date_label, R.string.purse_card_exp_date_placeholder,
-        R.string.purse_card_exp_date_helper, R.string.purse_card_exp_date_required, R.string.purse_card_exp_date_invalid,
-    )
-    val cvv = field(
-        texts.cvv, R.string.purse_card_cvv_label, R.string.purse_card_cvv_placeholder,
-        R.string.purse_card_cvv_helper, R.string.purse_card_cvv_required, R.string.purse_card_cvv_invalid,
-    )
-    val holderName = field(
-        texts.holderName, R.string.purse_card_holder_name_label, R.string.purse_card_holder_name_placeholder,
-        R.string.purse_card_holder_name_helper, R.string.purse_card_holder_name_required, R.string.purse_card_holder_name_invalid,
-    )
-    return remember(cardNumber, expDate, cvv, holderName) { ResolvedCardTexts(cardNumber, expDate, cvv, holderName) }
-}
 
 /** The resolved `input` scope and its variants → SecureFields' [VaultStyles]; keys without an analog don't travel. */
 private fun PurseTheme.Resolved.toVaultStyles(): VaultStyles = input.toVaultStyles(
