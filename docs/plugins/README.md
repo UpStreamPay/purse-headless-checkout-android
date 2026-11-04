@@ -133,6 +133,9 @@ finishes once the shopper reaches this app's own deep link (`${applicationId}.re
 `returnUrlPrefix` (the session's return URL, attached by the caller as a "known terminal page" hint),
 or a `purse-redirection-data` URL. It is not exported: the deep link lands on `RedirectReturnActivity`,
 which forwards only the URI, so no other app can make the WebView load a page or HTML.
+Its settings are a browser's minus what a PSP page never needs: JavaScript and DOM storage
+(`localStorage` / `sessionStorage`, which iDEAL and other hosted pages rely on) are on; navigation is
+`https` only, and file/content access, popups and mixed content are off.
 
 > **Caveat:** some ACS providers refuse to render inside an embedded WebView (an anti-phishing measure
 > some card networks require). If one partner's challenge breaks there, that partner needs its own
