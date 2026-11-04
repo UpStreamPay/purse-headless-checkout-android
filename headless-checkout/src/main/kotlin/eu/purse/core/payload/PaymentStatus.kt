@@ -14,7 +14,7 @@ enum class PaymentStatus(val wireValue: String) {
     /** The API could not process the request. */
     ERROR("ERROR"),
 
-    /** The outcome is not known yet; confirm against the session. */
+    /** The outcome is not known yet; confirm from your backend. */
     UNCERTAIN("UNCERTAIN"),
 
     /** The payment waits on a later step (an asynchronous partner). */

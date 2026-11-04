@@ -1393,6 +1393,8 @@ class PurseHeadlessCheckoutTest {
         assertFalse(checkout.isPaymentFulfilled.value)
     }
 
+    // paymentStatus() is deprecated (GET session 401s to the client key) but still shipped, so still covered.
+    @Suppress("DEPRECATION")
     @Test
     fun `after teardown every operation fails with CHECKOUT_TORN_DOWN`() {
         val checkout = checkout()

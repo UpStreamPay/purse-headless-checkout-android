@@ -18,7 +18,7 @@ interface RedirectionDelegate {
      * Offer [action] to the merchant.
      *
      * @return `true` when the merchant handled the redirect itself — the SDK then opens **nothing**
-     * and the merchant owns confirming the outcome (e.g. `paymentStatus()` on return); `false` to
+     * and the merchant owns confirming the outcome (from its backend, on return); `false` to
      * let the SDK open its in-app WebView as usual.
      * @throws Exception when the merchant hook failed — the SDK opens nothing and reports the
      * failure to the element listener; the checkout itself stays usable.
