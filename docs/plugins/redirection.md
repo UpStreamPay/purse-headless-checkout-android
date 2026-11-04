@@ -168,7 +168,21 @@ sequenceDiagram
    [`CardPlugin`](card-purse-vault.md) owns anyway.
 6. **`/init` runs on selection, not on screen entry.** It consumes a step against the session, so
    firing one for every offered redirection row would burn several. Call `prepare` when the shopper
-   picks the method.
+   picks the method. The one exception is PayPal bnpl's eligibility probe, below.
+7. **PayPal bnpl is probed at session build.** Web's dedicated `partners/paypal/bnpl` plugin carries
+   an `ensureClientCompatibility` that headless runs for every primary as the session is built
+   (`getEligibilityCheck`, `item-factory/primaries.ts`), whichever plugin later renders it. In
+   `integration_mode = redirection` it POSTs a bare `/init` (envelope only, no browser block) and a
+   `plugin_result.status` of `NOT_ELIGIBLE` withdraws the method. This SDK serves bnpl only in that
+   mode and through this template, so `RedirectionPlugin.ensureClientCompatibility` carries the probe
+   (iOS does the same); every other pair, and bnpl in any other mode, returns without a call. The
+   checkout runs it from `runEligibilityChecks` at `init`, `setSession` and `restore`, and withdraws
+   the method with the filtered `PLUGIN_INCOMPATIBLE` (plus web's `pluginIsIncompatibleWithClient`
+   partner-UI event, WARNING). It **fails closed**, like web's `.catch`: a network or HTTP failure
+   withdraws the method too. No probe runs on a session that is not `READY` or whose `/validate` was
+   consumed — a restored checkout whose payment already left is never re-`/init`ed (SDK-12461).
+   `prepare` still sends its own `/init` on selection, whose `step_id` goes into `/validate`, as web's
+   redirection plugin does in `onSessionSet`.
 
 ## Using it
 
@@ -207,6 +221,7 @@ able to pick another method.
 | `CardPlugin` resolved where you expected this one | A vault vendor outranks the template (see the priority table) |
 | `Completed` with a `Log.w "no redirect to follow"` | `/validate` carried no redirect, or it was suppressed as the widget's own confirmation page — see specificity 1 and `RedirectionResolver`'s doc |
 | `PaymentApiException: redirection init not successful` | Backend refused the `/init` for this item |
+| A PayPal bnpl row disappears shortly after `init` | Its eligibility probe answered `NOT_ELIGIBLE`, or failed — see specificity 7 and the `pluginIsIncompatibleWithClient` partner-UI event |
 | `Failed(PartnerUiException("call prepare() first"))` | `submit()` before `/init` came back |
 | The PSP page refuses to render | Some providers block embedded WebViews — see the caveat in [plugins/README](README.md#shared-redirects-and-3-d-secure) |
 | `PurseCheckoutException.NoPluginRegistered` | The item resolved to no plugin at all — a near-miss `template` value is the usual cause |
@@ -215,7 +230,7 @@ able to pick another method.
 
 | File | Role |
 |---|---|
-| `RedirectionPlugin.kt` | `buildRequest` (`/init`), `preValidation` (`step_id` + browser), `TEMPLATE`, `RedirectionRequest` |
+| `RedirectionPlugin.kt` | `buildRequest` (`/init`), `preValidation` (`step_id` + browser), PayPal bnpl's `ensureClientCompatibility`, `TEMPLATE`, `RedirectionRequest` |
 | `RedirectionMapper.kt` | `/init` body, `browserData`, `step_id` extraction, init-status check |
 | `RedirectionCoordinator.kt` | `/init` on prepare; reports a missing redirect (the shared submit/redirect flow lives in `PaymentCoordinator`) |
 

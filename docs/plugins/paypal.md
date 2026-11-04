@@ -5,8 +5,9 @@
 browser switch of the official
 [PayPal Android SDK](https://developer.paypal.com/docs/checkout/advanced/android/).
 
-Pay-now only. Registration / vaulting and BNPL ("Pay Later") are out of scope — see
-[Not built](#not-built).
+Pay-now only. Registration / vaulting and a dedicated BNPL ("Pay Later") plugin are out of scope —
+see [Not built](#not-built). PayPal bnpl in `integration_mode = redirection` is served by the
+[generic redirection plugin](redirection.md), eligibility probe included.
 
 ## At a glance
 
@@ -250,9 +251,12 @@ Creating such a token — registration / vaulting — is **not** built, see belo
 
 ## Not built
 
-- **BNPL / Pay Later** (`Method.Bnpl`). The SDK has `PayPalWebCheckoutFundingSource.PAY_LATER`, but
-  web's `bnpl` plugin also carries an `ensureClientCompatibility` eligibility gate (`/init` →
-  `NOT_ELIGIBLE`) that would need porting.
+- **A dedicated BNPL / Pay Later plugin** (`Method.Bnpl` in popup mode). The SDK has
+  `PayPalWebCheckoutFundingSource.PAY_LATER`; web's popup path checks eligibility through the JS
+  SDK's `findEligibleMethods`. Bnpl in `integration_mode = redirection` works today through the
+  generic redirection plugin, and web's `ensureClientCompatibility` gate (`/init` → `NOT_ELIGIBLE`
+  withdraws the method) is ported there, in `:headless-checkout`, so it needs no PayPal artifact —
+  see [redirection specificity 7](redirection.md#specificities).
 - **Registration / vaulting.** The SDK's `vault()` / `finishVault()` and a `VaultVendor` on the
   plugin; `payment_preferences.registration` is hardcoded `false`.
 - **PayPal Fraudnet** — see specificity 9.
