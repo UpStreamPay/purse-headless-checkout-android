@@ -1,0 +1,76 @@
+name: Upcoming release
+
+# Publishes the open release PR as <next-version>-SNAPSHOT to GitHub Packages (private, repo access
+# required), so the next release can be tested like a merchant would before it is merged.
+# See docs/contributing/release.md#upcoming-release.
+
+on:
+  push:
+    branches:
+      - release-please--branches--main--components--headless-checkout-android
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: upcoming-release
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # The release PR has already bumped the manifest to the next version. Only a -SNAPSHOT can be
+      # republished on GitHub Packages.
+      - name: Set SDK version
+        id: version
+        run: |
+          VERSION="$(jq -r '."."' .release-please-manifest.json)-SNAPSHOT"
+          [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+-SNAPSHOT$ ]] \
+            || { echo "::error::Refusing to publish '$VERSION'."; exit 1; }
+          echo "SDK_VERSION=$VERSION" >> "$GITHUB_ENV"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Validate Gradle wrapper
+        uses: gradle/actions/wrapper-validation@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - uses: gradle/actions/setup-gradle@8da46b539cd8fe6ab27ca75128919a18d757604c # v6.4.1
+
+      # Unsigned: no signing key in this job.
+      - name: Publish to GitHub Packages
+        env:
+          ORG_GRADLE_PROJECT_GitHubPackagesUsername: ${{ github.actor }}
+          ORG_GRADLE_PROJECT_GitHubPackagesPassword: ${{ github.token }}
+        run: ./gradlew publishAllPublicationsToGitHubPackagesRepository
+
+  notify:
+    needs: publish
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    # Only this job holds the webhook; the packages are already published when it runs.
+    environment: upcoming-release
+    steps:
+      - name: Post to Slack
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+          VERSION: ${{ needs.publish.outputs.version }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          [ -n "$SLACK_WEBHOOK_URL" ] || { echo "::error::SLACK_WEBHOOK_URL missing from the upcoming-release environment."; exit 1; }
+          payload=$(jq -n --arg v "$VERSION" --arg run "$RUN_URL" '{text: (
+            ":package: *Headless Checkout Android* upcoming release `" + $v + "` is ready to test\n"
+            + "```implementation(\"eu.purse:headless-checkout-android:" + $v + "\")```\n"
+            + "Repository: `https://maven.pkg.github.com/UpStreamPay/purse-headless-checkout-android`\n"
+            + "<" + $run + "|Build>")}')
+          curl --fail -sS -X POST -H "Content-type: application/json" --data "$payload" "$SLACK_WEBHOOK_URL"
