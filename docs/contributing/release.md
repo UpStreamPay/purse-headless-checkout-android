@@ -141,6 +141,34 @@ Then check that a project with only `mavenCentral()` resolves
 `eu.purse:headless-checkout-android:<version>` — the external-app rehearsal in
 [ci.md](ci.md#what-is-not-automated).
 
+## Snapshots
+
+Every update of the open release PR runs `snapshot.yml`, which publishes `<next-version>-SNAPSHOT`
+(unsigned) to Central's snapshot repository. To test the next release before merging it:
+
+```kotlin
+repositories {
+    maven("https://central.sonatype.com/repository/maven-snapshots/") {
+        mavenContent { snapshotsOnly() }
+    }
+}
+dependencies {
+    implementation("eu.purse:headless-checkout-android:<next-version>-SNAPSHOT")
+}
+```
+
+Gradle caches a snapshot for 24 hours: pass `--refresh-dependencies` to pick up a newer one.
+Central deletes snapshots after 90 days. They are public.
+
+One-time setup:
+
+- Snapshots enabled on the `eu.purse` namespace (central.sonatype.com → Namespaces).
+- A `staging` environment holding `MAVEN_CENTRAL_USERNAME` / `MAVEN_CENTRAL_PASSWORD` (a Central
+  user token, not the `release` one). Deployment branches: only
+  `release-please--branches--main--components--headless-checkout-android`. No GPG key, since
+  snapshots are not signed. A Central token can also publish releases. What keeps this job to
+  snapshots is the `-SNAPSHOT` check in the workflow and that branch restriction.
+
 ## Local verification
 
 ```bash
