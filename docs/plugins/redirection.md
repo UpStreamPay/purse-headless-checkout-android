@@ -209,7 +209,7 @@ able to pick another method.
 | `PaymentApiException: redirection init not successful` | Backend refused the `/init` for this item |
 | `Failed(PartnerUiException("call prepare() first"))` | `submit()` before `/init` came back |
 | The PSP page refuses to render | Some providers block embedded WebViews — see the caveat in [plugins/README](README.md#shared-redirects-and-3-d-secure) |
-| `PurseCheckoutException.NoPluginRegistered` | The item resolved to no plugin at all — a near-miss `template` value is the usual cause |
+| `PurseCheckoutException.NoPluginRegistered`, then the method disabled with `PARTNER_UI_FATAL_ERROR` | The item resolved to no plugin at all — a near-miss or unknown `template` value outside redirection mode is the usual cause; the checkout retires it for the session, as web does |
 
 ## Files
 

@@ -29,6 +29,11 @@ Note the one structural difference: web keys Google Pay on the `googlepay` **tem
 keys it on the pair plus a method fallback. Same outcome for today's sessions, different if a
 merchant ever sets `template = googlepay` on a non-Google-Pay method.
 
+A template no plugin serves falls through to the next step on both platforms (web's
+`'stripe_googlepay'` reaches Stripe's partner plugin). A method left with no plugin at all — say
+axepta `wero` with `template: 'axepta_wero'` outside redirection mode — is retired when engaged on
+both: `PARTNER_UI_FATAL_ERROR`, out of the split, refused for the session (Android since SDK-12575).
+
 ## Primary methods
 
 ### Cards

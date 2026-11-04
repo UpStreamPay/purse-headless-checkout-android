@@ -754,6 +754,8 @@ While in flight, every item reads `DisabledState.Submitting`; the lock lifts whe
 - `PurseCheckoutException.NoPluginRegistered` — no plugin registered for the chosen primary's
   `(partner, method)`. For Google Pay, Klarna or PayPal this means the optional artifact is missing;
   `PartnerArtifacts.missingPluginMessage(partner, method)` (and the warning `init` logs) name it.
+  Nothing was sent; the method is disabled with `PARTNER_UI_FATAL_ERROR` and out of the split for
+  the rest of the session, as web does, so the shopper picks another one.
 - `PurseCheckoutException.ValidateFailed` — `/validate` failed. **Check `outcomeUnknown`**: `true`
   means the request left the device and no answer came back, so the payment may exist server-side —
   reconcile with `awaitPaymentOutcome()` instead of telling the shopper it failed.
@@ -811,7 +813,7 @@ interactive plugin.
 |---|---|---|
 | `PurseCheckoutException.PaymentNotFulfilled` | `submitPayment` | Split doesn't cover the amount / no primary set. |
 | `PurseCheckoutException.ItemNotFulfilled` | `submitPayment` | An item in the split has an incomplete or invalid form (web's `ELEMENT_NOT_FULFILLED`). |
-| `PurseCheckoutException.NoPluginRegistered` | `submitPayment` | No `eu.purse.partnerui` plugin for the chosen `(partner, method)`. |
+| `PurseCheckoutException.NoPluginRegistered` | `submitPayment` | No `eu.purse.partnerui` plugin for the chosen `(partner, method)`; the method is retired (`PARTNER_UI_FATAL_ERROR`) for the session. |
 | `PurseCheckoutException.ValidateFailed` | `submitPayment` | `/validate` failed. `outcomeUnknown == true` means the request left and nothing answered: reconcile with `awaitPaymentOutcome()`. |
 | `PurseCheckoutException.SessionExpired` | `submitPayment`, `setSession` | The session (or the new one) is expired (`EXPIRED_SESSION`). |
 | `PurseCheckoutException.SubmitBlocked` | `submitPayment`, `setSession` | A submit is in flight, or the session's one validation is spent (`SUBMIT_BLOCKED`). |
