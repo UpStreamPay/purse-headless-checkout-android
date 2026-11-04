@@ -337,6 +337,19 @@ left without an answer. `teardown()` sets `isTornDown` and every later operation
 with file/content access off, accepts a return intent only on the app's own scheme, and reports
 recreation after process death as a *return* to reconcile, never a cancel.
 
+Since then (SDK-12621): **`/validate` leaves the device at most once per session**. Request bodies
+are streamed (`setFixedLengthStreamingMode`), because `HttpURLConnection` silently re-sends a
+buffered POST once when the answer is lost after the request went out — for `/validate` that replay
+reached the API as a second submit, answered `400 SESSION_ALREADY_SUBMITTED_ERROR`, and hid the
+first, accepted one. A process-wide `ValidateGuard` (keyed by session id) refuses a second
+`/validate` while one is in flight or once one may have been accepted — answered, outcome unknown,
+or the API saying the session is finished — whichever checkout instance sends it; a refused call,
+or one that never left the device (`PaymentApiException.requestSent == false`), leaves the session
+open. A `ValidateFailed` with `outcomeUnknown` now spends the session: `submitPayment` refuses with
+`SubmitBlocked` and `saveState()` records it as submitted. A `400 SESSION_ALREADY_SUBMITTED_ERROR`
+is still never read as a success: the outcome is unknown, and the merchant confirms it from its
+backend (server-side session read) — if it did not go through, it starts a new session.
+
 Since then (SDK-12216): **CVV re-entry on a saved card** — `PaymentToken.requiresCvv` (the inverse
 of web's no-CVV gates) arms the per-item fulfillment gate at `setPrimaryToken`, `host(token)`
 puts the card coordinator in `CardCoordinator.Mode.TOKEN_CVV`, which renders a CVV-only

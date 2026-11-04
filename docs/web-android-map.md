@@ -83,6 +83,7 @@ adds or removes a divergence.
 | Payment confirmation after redirect | merchant success page | `paymentStatus()` / `awaitPaymentOutcome()` polling | the app returns to the launching screen |
 | `setSession` survivors | resets the split | keeps an unchanged primary selected | AC of US-24 |
 | Second submit | latch posts `HEADLESS_CHECKOUT_SUBMIT_BLOCKED` and returns silently | same latch, atomic, **throws** `SubmitBlocked` (`SUBMIT_BLOCKED`) and re-checks expiry first | a merchant needs a code to react to, not a silent no-op (SDK-12218) |
+| `/validate` once per session | per-instance `#validationConsumed`; `fetch` never replays a POST | same latch, plus a process-wide `ValidateGuard` per session id, streamed bodies (no `HttpURLConnection` replay), and a lost answer (`outcomeUnknown`) spends the session | a re-created Activity can rebuild the checkout for the same session, and `HttpURLConnection` re-sends a buffered POST whose answer was lost (SDK-12621) |
 | `SUBMITTING` disabled state | declared, never set | overlaid on every selectable item while `submitPayment` runs | US-22 |
 | `teardown()` | unsubscribes the event bus; instance stays usable | releases everything, `isTornDown`, later calls throw `CheckoutTornDown` | US-25 |
 | Redirect WebView | page navigation | `https`-only navigation, file/content access off, return intent checked against the app's own scheme | US-08 / US-09 |
