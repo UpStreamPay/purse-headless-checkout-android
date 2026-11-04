@@ -23,6 +23,13 @@ interface PaymentElementListener {
      * The attempt ended: see [PaymentOutcome]. Branch on the type — `Completed` carries the API's
      * verdict, `ReturnedFromRedirect` must be confirmed against the session, `Canceled` and `Failed`
      * leave the shopper free to try again.
+     *
+     * The only channel for an attempt started by an element's or a coordinator's `submit()` — and a
+     * wallet button's tap: `submit()` returns nothing. Skip it only if another surface relays the
+     * outcome to your screen. `sessionState` and the hooks see only attempts that reached
+     * `submitPayment()`; a cancel, a failure before it (tokenization, a disabled method, a missing
+     * plugin) and the return from a redirect arrive here alone. An empty `PaymentElementListener {}`
+     * loses them.
      */
     fun onOutcome(outcome: PaymentOutcome) {}
 

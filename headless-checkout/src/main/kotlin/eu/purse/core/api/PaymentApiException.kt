@@ -15,6 +15,10 @@ import eu.purse.core.error.PurseException
  * Mirrors web's `ApiError` (usp-widget `packages/sdk/src/API/types.ts`): carries the HTTP [status]
  * (null for a pure transport failure), the backend's body [errorCode] (the `error` field, e.g.
  * `SESSION_EXPIRED`), and the request [path].
+ *
+ * The response body itself is never carried — not here, not in the message, not in monitoring: it
+ * can quote shopper input, and the message reaches telemetry and merchant logs. To read why a call
+ * was refused while debugging, see docs/integration/recipes.md §12 ("Why did the API refuse a call?").
  */
 class PaymentApiException(
     message: String,

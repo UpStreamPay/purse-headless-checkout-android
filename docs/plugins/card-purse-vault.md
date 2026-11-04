@@ -118,7 +118,9 @@ sequenceDiagram
    button through corrects itself, and returns. An unfilled form is not a failed payment.
 5. **`validateUi` is the last line of defence**: no collected vault token means the form was never
    successfully submitted, so `PaymentValidator` raises `ValidateFailed` before `preValidation` can
-   build a payload.
+   build a payload — its message names the missing step (`CardCoordinator.submit()`), the usual cause
+   being a bare `checkout.submitPayment()`. `CardCoordinator.submit()` **pays** (tokenize →
+   `submitPayment()` → 3-D Secure); iOS's only tokenizes and leaves `submitPayment()` to the app.
 6. **Compose-first, and the `host` must be `remember`ed.** `rememberCardCoordinator` keys its
    SecureFields instance on the `host` object, so building the host inline recreates the form — and
    loses whatever's been typed — on every recomposition:

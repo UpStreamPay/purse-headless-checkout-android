@@ -37,8 +37,9 @@ class PaymentApiClient(
 
     /**
      * `POST /init` — see docs/architecture/headless-checkout.md#init-and-validate. Runs under
-     * [InitGuard]: concurrent duplicates coalesce, transient failures retry with backoff, and a
-     * terminal failure fast-rejects immediate repeats of the same call.
+     * [InitGuard]: concurrent duplicates coalesce, a transient failure (no status, a non-JSON
+     * answer, ≥ 500) is sent up to 3 times in all, and a call that failed for good fast-rejects
+     * every repeat of the same call.
      */
     fun init(payload: JSONObject): JSONObject =
         InitGuard.run(InitGuard.keyFor(sessionId, payload)) { post("/init", payload.toString()) }

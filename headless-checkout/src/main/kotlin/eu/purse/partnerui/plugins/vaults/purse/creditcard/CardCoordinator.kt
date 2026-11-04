@@ -197,9 +197,20 @@ class CardCoordinator internal constructor(
     internal var selectedBrand: Brand? by mutableStateOf(null)
 
     /**
-     * Tokenize (the full card, or just the CVV of a saved one), then `/init` + `/validate`. A saved
-     * card that needs no CVV skips straight to `/init` + `/validate`. No-op while the form is invalid:
-     * SecureFields is already showing the errors, and an unfilled form is not a failed payment.
+     * Pays: tokenize (the full card, or just the CVV of a saved one), then the checkout's
+     * `submitPayment()` — `/init` + `/validate` over the whole split — then any 3-D Secure redirect.
+     * A saved card that needs no CVV skips straight to `/init` + `/validate`. The result arrives on
+     * the listener's [PaymentElementListener.onOutcome], never as a return value.
+     *
+     * **Differs from iOS**, where `CardCoordinator.submit()` only tokenizes and the app calls
+     * `submitPayment()` next. Here, do not call `submitPayment()` yourself: before this, it fails
+     * with `ValidateFailed` (no vault token); while or after it pays, with `SubmitBlocked` (one
+     * submit per session).
+     * Make the card the split's primary first (`setPrimary`): `submitPayment()` pays the split, not
+     * this form.
+     *
+     * No-op while the form is invalid: SecureFields is already showing the errors, and an unfilled
+     * form is not a failed payment.
      */
     fun submit() {
         if (submitting) return
