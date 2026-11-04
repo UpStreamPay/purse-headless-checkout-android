@@ -123,7 +123,7 @@ public final class eu/purse/checkout/PurseHeadlessCheckout {
 	public static final field Companion Leu/purse/checkout/PurseHeadlessCheckout$Companion;
 	public static final field VERSION Ljava/lang/String;
 	public static final field WATCHDOG_INTERVAL_MS J
-	public synthetic fun <init> (Ljava/lang/String;Leu/purse/core/session/PurseSessionParams;Leu/purse/checkout/session/PaymentSession;Ljava/lang/String;Leu/purse/checkout/PurseCheckoutHooks;Leu/purse/partnerui/PluginOptions;Leu/purse/core/datetime/ServerDatetimeChecker;JLeu/purse/core/environment/PurseEnvironment;Ljava/util/Set;Leu/purse/checkout/monitoring/MonitoringInstance;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Leu/purse/core/session/PurseSessionParams;Leu/purse/checkout/session/PaymentSession;Ljava/lang/String;Leu/purse/checkout/PurseCheckoutHooks;Leu/purse/partnerui/PluginOptions;Leu/purse/core/datetime/ServerDatetimeChecker;JLeu/purse/core/environment/EnvironmentPolicy;Ljava/util/Set;Leu/purse/checkout/monitoring/MonitoringInstance;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun applySecondary (Leu/purse/checkout/payment/item/SavedSecondaryToken;Ljava/math/BigDecimal;)V
 	public final fun applySecondary (Leu/purse/checkout/payment/secondary/SecondaryToken;Ljava/math/BigDecimal;)V
 	public static synthetic fun applySecondary$default (Leu/purse/checkout/PurseHeadlessCheckout;Leu/purse/checkout/payment/item/SavedSecondaryToken;Ljava/math/BigDecimal;ILjava/lang/Object;)V
@@ -1210,6 +1210,7 @@ public final class eu/purse/core/error/PurseErrorCode : java/lang/Enum {
 	public static final field API_ERROR Leu/purse/core/error/PurseErrorCode;
 	public static final field CHECKOUT_TORN_DOWN Leu/purse/core/error/PurseErrorCode;
 	public static final field ELEMENT_NOT_FULFILLED Leu/purse/core/error/PurseErrorCode;
+	public static final field ENVIRONMENT_NOT_ALLOWED Leu/purse/core/error/PurseErrorCode;
 	public static final field EXPIRED_SESSION Leu/purse/core/error/PurseErrorCode;
 	public static final field FAILED_TO_DELETE_ALL_TOKENS Leu/purse/core/error/PurseErrorCode;
 	public static final field FAILED_TO_INIT_SECONDARY_TOKEN Leu/purse/core/error/PurseErrorCode;
@@ -1790,7 +1791,13 @@ public final class eu/purse/core/session/MethodEntry {
 
 public abstract class eu/purse/core/session/PurseSessionException : eu/purse/core/error/PurseException {
 	public static final field $stable I
-	public synthetic fun <init> (Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Leu/purse/core/error/PurseErrorCode;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public final class eu/purse/core/session/PurseSessionException$EnvironmentNotAllowed : eu/purse/core/session/PurseSessionException {
+	public static final field $stable I
+	public fun <init> (Leu/purse/core/environment/PurseEnvironment;)V
+	public final fun getEnvironment ()Leu/purse/core/environment/PurseEnvironment;
 }
 
 public final class eu/purse/core/session/PurseSessionException$SessionMalformed : eu/purse/core/session/PurseSessionException {

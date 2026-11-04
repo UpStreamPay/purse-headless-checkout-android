@@ -109,15 +109,17 @@ internal object CheckoutTestSessions {
      * @param apiUrl where the checkout's Payment API calls go — point it at a `FakePaymentApi` for
      * tests that exercise `/init` / `/validate`; the default host is never actually reached by the
      * network-free tests.
+     * @param environment the declared tier's wire value.
      */
     fun widgetData(
         paymentSessionJson: String = samplePaymentSessionJson,
         apiUrl: String = "https://api.purse-sandbox.com/payment/v1",
+        environment: String = "sandbox",
     ): String {
         val root = JSONObject()
             .put("api_key", "key-123")
             .put("api_url", apiUrl)
-            .put("environment", "sandbox")
+            .put("environment", environment)
             .put("entity_id", "entity-1")
             .put("payment_session", JSONObject(paymentSessionJson))
         return Base64.getEncoder().encodeToString(root.toString().toByteArray())

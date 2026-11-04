@@ -46,6 +46,8 @@ import eu.purse.core.api.WalletApiClient
 import eu.purse.core.assets.PurseAssets
 import eu.purse.core.datetime.DatetimeApiClient
 import eu.purse.core.datetime.ServerDatetimeChecker
+import eu.purse.core.environment.EnvironmentPolicy
+import eu.purse.core.environment.HostApp
 import eu.purse.core.environment.PurseEnvironment
 import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.payload.ItemPayload
@@ -114,8 +116,8 @@ class PurseHeadlessCheckout private constructor(
     val options: PluginOptions,
     private val datetimeChecker: ServerDatetimeChecker,
     private val watchdogIntervalMs: Long,
-    /** The build-locked environment [init] was given, re-applied by [setSession]. */
-    private val lockedEnvironment: PurseEnvironment?,
+    /** The build-locked environment [init] was given and the TEST / DEVELOPMENT gate, re-applied by [setSession]. */
+    private val environmentPolicy: EnvironmentPolicy,
     /** Methods this app build opts out of — never listed, whatever the session offers; re-applied by [setSession]. */
     val disabledMethods: Set<MethodKey>,
     /** This checkout's monitoring identity — see [instanceId]. */
@@ -487,11 +489,14 @@ class PurseHeadlessCheckout private constructor(
      * @throws PurseCheckoutException.SubmitBlocked while a payment is being submitted.
      * @throws PurseCheckoutException.CheckoutTornDown after [teardown].
      * @throws eu.purse.core.session.PurseSessionException.SessionMalformed if [widgetData] can't be decoded.
+     * @throws eu.purse.core.session.PurseSessionException.EnvironmentNotAllowed `ENVIRONMENT_NOT_ALLOWED`
+     * — the new session is TEST / DEVELOPMENT in a release app, exactly as at [init]; the current
+     * session is kept.
      */
     suspend fun setSession(widgetData: String) {
         requireOpen()
         if (_sessionState.value == SessionState.SUBMITTING) throw PurseCheckoutException.SubmitBlocked(SessionState.SUBMITTING)
-        val (newParams, newSession, newRoot) = resolve(widgetData, lockedEnvironment, disabledMethods)
+        val (newParams, newSession, newRoot) = resolve(widgetData, environmentPolicy, disabledMethods)
         this.widgetData = widgetData
         if (newSession.id == session.id) {
             Log.w("PurseHeadlessCheckout", "setSession: attempting to set the same payment session again, ignoring.")
@@ -887,7 +892,7 @@ class PurseHeadlessCheckout private constructor(
             .put(CheckoutSavedState.KEY_VERSION, CheckoutSavedState.VERSION)
             .put(CheckoutSavedState.WIDGET_DATA, widgetData)
             .put(CheckoutSavedState.INSTANCE_ID, instanceId)
-            .put(CheckoutSavedState.LOCKED_ENVIRONMENT, lockedEnvironment?.wireValue ?: JSONObject.NULL)
+            .put(CheckoutSavedState.LOCKED_ENVIRONMENT, environmentPolicy.locked?.wireValue ?: JSONObject.NULL)
             .put(
                 CheckoutSavedState.DISABLED_METHODS,
                 JSONArray().also { array ->
@@ -1743,6 +1748,11 @@ class PurseHeadlessCheckout private constructor(
          * `api_url` is kept when it sits on that host, else the tier's `…/payment/v1` root is used.
          * @throws eu.purse.core.session.PurseSessionException.SessionMalformed if [widgetData]
          * can't be decoded, or the session is missing `id` / `expiration_date`.
+         * @throws eu.purse.core.session.PurseSessionException.EnvironmentNotAllowed
+         * `ENVIRONMENT_NOT_ALLOWED` — the host app is a release (non-debuggable) build and the
+         * checkout would reach [PurseEnvironment.TEST] or [PurseEnvironment.DEVELOPMENT]: through
+         * [lockedEnvironment], or, unlocked, through the session's `environment` or its `api_url`'s
+         * host. Never swapped for production. Debug builds are unaffected.
          */
         fun init(
             widgetData: String,
@@ -1766,8 +1776,10 @@ class PurseHeadlessCheckout private constructor(
             watchdogIntervalMs: Long = WATCHDOG_INTERVAL_MS,
             disabledMethods: Set<MethodKey> = emptySet(),
             instance: MonitoringInstance = MonitoringInstance(),
+            isDebugHost: Boolean = HostApp.isDebuggable,
         ): PurseHeadlessCheckout {
-            val (params, session, apiRoot) = resolve(widgetData, lockedEnvironment, disabledMethods)
+            val policy = EnvironmentPolicy(lockedEnvironment, isDebugHost)
+            val (params, session, apiRoot) = resolve(widgetData, policy, disabledMethods)
             val checker = datetimeChecker ?: ServerDatetimeChecker(
                 fetchServerTime = {
                     DatetimeApiClient(params.apiKey, params.environment.datetimeApiRoot).datetime()
@@ -1779,7 +1791,7 @@ class PurseHeadlessCheckout private constructor(
                 CheckoutMonitoring.install(params, sessionId = params.paymentSession.id, version = VERSION, instanceId = instance.id)
             }
             return PurseHeadlessCheckout(
-                widgetData, params, session, apiRoot, hooks, options, checker, watchdogIntervalMs, lockedEnvironment, disabledMethods,
+                widgetData, params, session, apiRoot, hooks, options, checker, watchdogIntervalMs, policy, disabledMethods,
                 instance,
             )
         }
@@ -1844,10 +1856,12 @@ class PurseHeadlessCheckout private constructor(
         /** Decoded params, built session and Payment API root for [widgetData] — shared by [init] and [setSession]. */
         private fun resolve(
             widgetData: String,
-            lockedEnvironment: PurseEnvironment?,
+            policy: EnvironmentPolicy,
             disabledMethods: Set<MethodKey>,
         ): Triple<PurseSessionParams, PaymentSession, String> {
             val decoded = SessionCodec.decode(widgetData)
+            policy.requireAllowed(decoded)
+            val lockedEnvironment = policy.locked
             val params = if (lockedEnvironment != null && lockedEnvironment != decoded.environment) {
                 decoded.copy(environment = lockedEnvironment)
             } else {

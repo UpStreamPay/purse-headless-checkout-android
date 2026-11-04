@@ -1,6 +1,6 @@
 // Web: packages/headless-checkout/src/utils/error/error-codes.ts
 // Same: same codes.
-// Differs: SUBMIT_BLOCKED and CHECKOUT_TORN_DOWN are thrown here where web only logs (or has no lifecycle end).
+// Differs: SUBMIT_BLOCKED and CHECKOUT_TORN_DOWN are thrown here where web only logs (or has no lifecycle end); ENVIRONMENT_NOT_ALLOWED is native-only (web is not an installed app), shared with iOS.
 package eu.purse.core.error
 
 /**
@@ -12,7 +12,8 @@ package eu.purse.core.error
  * Three codes are Android-only, because the situations are refused here where web stays silent:
  * [SUBMIT_BLOCKED] (web posts the `HEADLESS_CHECKOUT_SUBMIT_BLOCKED` monitoring event and returns),
  * [CHECKOUT_TORN_DOWN] (web's `teardown` leaves the instance usable) and [PARTNER_UI_ERROR] (a
- * partner SDK failure reaching the payment element's outcome as a typed error).
+ * partner SDK failure reaching the payment element's outcome as a typed error). One more is native
+ * (Android and iOS) only: [ENVIRONMENT_NOT_ALLOWED], since a web page has no release build.
  *
  * Each code links to the shared docs at [documentationLink], like web's `getErrorDocLink`.
  */
@@ -20,6 +21,12 @@ enum class PurseErrorCode {
     // Session
     EXPIRED_SESSION,
     SESSION_MALFORMED,
+
+    /**
+     * A `TEST` / `DEVELOPMENT` session (or an `api_url` on their hosts) in a release, i.e.
+     * non-debuggable, app — iOS's `ENVIRONMENT_NOT_ALLOWED`.
+     */
+    ENVIRONMENT_NOT_ALLOWED,
 
     /** `submitPayment` on a session that is being submitted, already submitted, or terminated. */
     SUBMIT_BLOCKED,
