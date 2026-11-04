@@ -217,7 +217,7 @@ either way.
 |---|---|
 | Pay button never enables | The form isn't valid — SecureFields reports `hasErrors` until every configured field is valid |
 | `PurseCheckoutException.ItemNotFulfilled` | `submitPayment()` called directly while the card form is incomplete — or a saved token that requires a CVV was selected and its CVV field never validated (or was never rendered) |
-| `PurseCheckoutException.ValidateFailed: client-side validation failed…` | No vault token collected — tokenization never succeeded (for a `TOKEN_CVV` saved card: the CVV-only tokenization) |
+| `PurseCheckoutException.ValidateFailed: client-side validation failed for … — the card form was never submitted…` | No vault token collected: `checkout.submitPayment()` was called instead of the element's / `CardCoordinator`'s `submit()` (which tokenizes, then pays), or tokenization never succeeded (for a `TOKEN_CVV` saved card: the CVV-only tokenization) |
 | `IllegalArgumentException: … cannot be driven by a plugin coordinator` | `host(item)` called with a secondary method or a saved gift card — only a `PrimaryMethod` or a `PaymentToken` can |
 | `PaymentApiException: creditcard init not successful` | `/init` returned a non-`SUCCESS` state |
 | Form rebuilds and loses input on every keystroke elsewhere | The `host` wasn't `remember`ed — specificity 5 |

@@ -25,6 +25,7 @@ import eu.purse.core.session.LegacyPaymentSession
 import eu.purse.partnerui.PartnerUiContext
 import eu.purse.partnerui.PartnerUiPlugin
 import eu.purse.partnerui.PluginRegistry
+import eu.purse.partnerui.plugins.vaults.purse.creditcard.CardPlugin
 
 /**
  * The "create payment" pipeline — the Kotlin analog of web's `executePayment`
@@ -92,9 +93,7 @@ class PaymentValidator(private val api: PaymentApiClient) {
                         register = registration?.registered == true,
                         token = (source as? PaymentToken)?.toPayToken(),
                     )
-                    if (!plugin.validateUi(context)) {
-                        throw PurseCheckoutException.ValidateFailed("client-side validation failed for ${source.id}")
-                    }
+                    if (!plugin.validateUi(context)) throw clientValidationFailed(plugin, source.id)
                     payloads += enhanceWithRegistration(plugin.preValidation(context), registration)
                     prepared += Prepared(plugin, context)
                 }
@@ -204,7 +203,21 @@ class PaymentValidator(private val api: PaymentApiClient) {
         }
     }
 
+    /**
+     * The usual cause: `submitPayment()` called on a card whose form was never tokenized. On Android
+     * the card's own `submit()` tokenizes *and* pays, so the message names that call.
+     */
+    private fun clientValidationFailed(plugin: PartnerUiPlugin, sourceId: String) =
+        PurseCheckoutException.ValidateFailed(
+            "client-side validation failed for $sourceId" + if (plugin is CardPlugin) CARD_NOT_TOKENIZED_HINT else "",
+        )
+
     private companion object {
         const val TAG = "PaymentValidator"
     }
 }
+
+/** Names the step a bare `submitPayment()` skipped — iOS says "tokenize the card form first". */
+private const val CARD_NOT_TOKENIZED_HINT =
+    " — the card form was never submitted: pay with the card element's submit() or " +
+        "CardCoordinator.submit(), which tokenize the card and then pay, not submitPayment() alone"
