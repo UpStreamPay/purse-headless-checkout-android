@@ -320,8 +320,10 @@ no plugin registered for klarna/installments — add the `eu.purse:headless-chec
 ```
 
 The same line is logged at `PurseHeadlessCheckout.init` (tag `PurseHeadlessCheckout`, level W), and
-`submitPayment` throws `PurseCheckoutException.NoPluginRegistered`. Add the dependency, or hide the
-method in this build with `init(disabledMethods = setOf(MethodKey(partner, method)))`.
+`submitPayment` throws `PurseCheckoutException.NoPluginRegistered`. Building the element (or that
+submit) also disables the method with `PARTNER_UI_FATAL_ERROR` for the rest of the session, as web
+does; the same happens to a method whose `configurations.template` no plugin serves outside
+redirection mode. Add the dependency, or hide the method in this build with `init(disabledMethods = setOf(MethodKey(partner, method)))`.
 
 ## 13. Locale, texts, theme
 
@@ -350,6 +352,12 @@ PurseHeadlessCheckout.init(
 Scopes: `global`, `input`, `label`, `helperText`, each with `Invalid` / `Valid` variants and `inputFocus`.
 Resolution is scope variant → scope → global variant → global, over web's defaults. Every `null`
 text falls back to the SDK's localized resources (English, French).
+
+Colours take the web spellings: `#rgb`, `#rrggbb`, `#rrggbbaa` (CSS order, alpha last) or
+`transparent` (the default `input.backgroundColor`). Before the `input*` colours reach SecureFields
+the SDK rewrites them as `#AARRGGBB`, the form Android's `Color.parseColor` reads, so a default-theme
+field stays transparent rather than turning black. Other values (`rgb()`, `hsl()`, CSS names) are not
+read by the SDK's own form; on the secure fields, only the few names `Color.parseColor` knows work.
 
 ## 14. BNPL instalment simulation
 

@@ -73,6 +73,16 @@ merchant configured to redirect is driven by the redirect template even when a d
 that pair exists. Template matching is **strict equality**: `redirection_suffix` resolves to no
 generic at all (web has a test on exactly that, and so does `PluginRegistryTest`).
 
+A template no plugin registers **does not stop the walk**, on either platform: web's
+`getGenericPlugin` answers `null` and `getPartnerPlugin` carries on, which is how
+`'stripe_googlepay'` reaches Stripe's partner plugin and how a template Android lacks (`googlepay`)
+still reaches the Google Pay fallback. An unknown template in redirection mode is therefore served
+by the redirection generic. One with nothing behind it (QA's axepta wero, `template: 'axepta_wero'`,
+no `integration_mode`) resolves to `null`, and the checkout **retires** the item when it is engaged,
+as web's partner-ui does when it dies `not supported` on mount: building its payment element, or a
+`submitPayment` whose split holds it, sets `PARTNER_UI_FATAL_ERROR`, takes it out of the split and
+refuses it for the rest of the session (the submit throws `NoPluginRegistered`; nothing is sent).
+
 All five shipped plugins are **registered by default** (`PluginRegistry`'s own `init` block) — the
 session's `protocols` entry is the real gate on whether a method is offered, so no app-side setup
 call exists to drift out of sync with it. `PurseHeadlessCheckout.init(disabledMethods = …)` opts a
@@ -133,6 +143,9 @@ finishes once the shopper reaches this app's own deep link (`${applicationId}.re
 `returnUrlPrefix` (the session's return URL, attached by the caller as a "known terminal page" hint),
 or a `purse-redirection-data` URL. It is not exported: the deep link lands on `RedirectReturnActivity`,
 which forwards only the URI, so no other app can make the WebView load a page or HTML.
+Its settings are a browser's minus what a PSP page never needs: JavaScript and DOM storage
+(`localStorage` / `sessionStorage`, which iDEAL and other hosted pages rely on) are on; navigation is
+`https` only, and file/content access, popups and mixed content are off.
 
 > **Caveat:** some ACS providers refuse to render inside an embedded WebView (an anti-phishing measure
 > some card networks require). If one partner's challenge breaks there, that partner needs its own
@@ -187,7 +200,7 @@ The single biggest per-PSP difference, and the reason these pages exist:
 
 ```
 Google Pay   sheet ──▶ token ──▶ /validate                  (native step BEFORE)
-Card         form ──▶ vault token ──▶ /init ──▶ /validate   (native step BEFORE)
+Card         form ──▶ vault token ──▶ /validate             (native step BEFORE)
 PayPal       /init ──▶ order ──▶ approve out-of-app ──▶ /validate  (native step BEFORE)
 Klarna       /validate ──▶ authorize() (in postValidation)  (native step AFTER, inside submitPayment)
 Redirection  /init ──▶ /validate ──▶ hosted page            (NO native step — the redirect IS the step)

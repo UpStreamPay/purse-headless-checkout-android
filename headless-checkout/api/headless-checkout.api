@@ -2567,14 +2567,10 @@ public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardFormKt
 public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardMapper {
 	public static final field $stable I
 	public static final field INSTANCE Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardMapper;
-	public static final field METHOD Ljava/lang/String;
 	public static final field VAULT_VENDOR Ljava/lang/String;
-	public final fun buildInitPayload (Ljava/math/BigDecimal;Ljava/lang/String;Lorg/json/JSONObject;)Lorg/json/JSONObject;
-	public static synthetic fun buildInitPayload$default (Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardMapper;Ljava/math/BigDecimal;Ljava/lang/String;Lorg/json/JSONObject;ILjava/lang/Object;)Lorg/json/JSONObject;
 	public final fun buildTokenPaymentData (Leu/purse/partnerui/PayToken;Ljava/lang/String;)Lorg/json/JSONObject;
 	public static synthetic fun buildTokenPaymentData$default (Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardMapper;Leu/purse/partnerui/PayToken;Ljava/lang/String;ILjava/lang/Object;)Lorg/json/JSONObject;
 	public final fun buildValidatePaymentData (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lorg/json/JSONObject;
-	public final fun parseInit (Lorg/json/JSONObject;)Ljava/lang/Integer;
 }
 
 public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardModule : eu/purse/partnerui/PartnerModule {

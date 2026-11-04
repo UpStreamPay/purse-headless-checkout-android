@@ -608,7 +608,7 @@ theme, so a partial theme never leaves a hole. See [recipes §13](recipes.md#13-
 | `theme` | `val theme: PurseTheme.Resolved` | The merchant's `PluginOptions.theme` resolved over web's defaults. |
 | `mode` | `val mode: CardCoordinator.Mode` | See above; `mode.rendersForm` is `false` only for `TOKEN_NO_CVV`. |
 | `formValid` | `var formValid: Boolean` (Compose state) | `false` until every configured field is valid (always `true` in `TOKEN_NO_CVV`). Drive your "Pay" button off this, or off `isPaymentFulfilled`, which the coordinator keeps in step for you. |
-| `submit` | `fun submit()` | Tokenizes via SecureFields (the card, or just the CVV), then `/init` + `/validate` through the host; in `TOKEN_NO_CVV` it skips tokenization. A no-op (never an error) while the form isn't complete and valid. |
+| `submit` | `fun submit()` | Tokenizes via SecureFields (the card, or just the CVV), then `/validate` through the host (no `/init`); in `TOKEN_NO_CVV` it skips tokenization. A no-op (never an error) while the form isn't complete and valid. |
 
 One trap worth naming: `rememberCardCoordinator` keys its SecureFields instance on the `host` object,
 so build the host with `remember(...)` rather than inline —
@@ -754,6 +754,8 @@ While in flight, every item reads `DisabledState.Submitting`; the lock lifts whe
 - `PurseCheckoutException.NoPluginRegistered` — no plugin registered for the chosen primary's
   `(partner, method)`. For Google Pay, Klarna or PayPal this means the optional artifact is missing;
   `PartnerArtifacts.missingPluginMessage(partner, method)` (and the warning `init` logs) name it.
+  Nothing was sent; the method is disabled with `PARTNER_UI_FATAL_ERROR` and out of the split for
+  the rest of the session, as web does, so the shopper picks another one.
 - `PurseCheckoutException.ValidateFailed` — `/validate` failed. **Check `outcomeUnknown`**: `true`
   means the request left the device and no answer came back, so the payment may exist server-side —
   ask your backend for the outcome instead of telling the shopper it failed.
@@ -817,7 +819,7 @@ interactive plugin.
 |---|---|---|
 | `PurseCheckoutException.PaymentNotFulfilled` | `submitPayment` | Split doesn't cover the amount / no primary set. |
 | `PurseCheckoutException.ItemNotFulfilled` | `submitPayment` | An item in the split has an incomplete or invalid form (web's `ELEMENT_NOT_FULFILLED`). |
-| `PurseCheckoutException.NoPluginRegistered` | `submitPayment` | No `eu.purse.partnerui` plugin for the chosen `(partner, method)`. |
+| `PurseCheckoutException.NoPluginRegistered` | `submitPayment` | No `eu.purse.partnerui` plugin for the chosen `(partner, method)`; the method is retired (`PARTNER_UI_FATAL_ERROR`) for the session. |
 | `PurseCheckoutException.ValidateFailed` | `submitPayment` | `/validate` failed. `outcomeUnknown == true` means the request left and nothing answered: ask your backend for the outcome. |
 | `PurseCheckoutException.SessionExpired` | `submitPayment`, `setSession` | The session (or the new one) is expired (`EXPIRED_SESSION`). |
 | `PurseCheckoutException.SubmitBlocked` | `submitPayment`, `setSession` | A submit is in flight, or the session's one validation is spent (`SUBMIT_BLOCKED`). |

@@ -1,7 +1,7 @@
 // Web: none — web navigates the page
 // Same: —
 // Differs: in-app WebView with progress, first-page watchdog, network-failure surfacing, deep-link return;
-//          https-only navigation and a scheme-checked return intent.
+//          https-only navigation, DOM storage on, file/content access off, and a scheme-checked return intent.
 package eu.purse.partnerui.redirect
 
 import android.content.Intent
@@ -38,6 +38,7 @@ import androidx.appcompat.app.AppCompatActivity
  * What the WebView may load is an allow-list: `https` pages, plus the two return destinations
  * above. Everything else (`http`, `file`, `javascript`, `intent`, another app's scheme) is refused
  * — the challenge chain never legitimately needs it, and file/content access is switched off.
+ * JavaScript and DOM storage are on, because PSP pages rely on both as they would in a browser.
  */
 class RedirectionCheckoutActivity : AppCompatActivity() {
 
@@ -122,6 +123,11 @@ class RedirectionCheckoutActivity : AppCompatActivity() {
             // Challenge pages and the auto-submit form need script; nothing here needs local files,
             // content providers, popups or cleartext resources.
             javaScriptEnabled = true
+            // PSP pages read and write `window.localStorage` / `sessionStorage` as any browser
+            // offers them (a browser tab and WKWebView both do); with it off (the Android default)
+            // they get `null` and break — iDEAL's ext.pay.ideal.nl shows "Sorry, something went
+            // wrong" instead of its bank list (SDK-12572).
+            domStorageEnabled = true
             javaScriptCanOpenWindowsAutomatically = false
             setSupportMultipleWindows(false)
             allowFileAccess = false

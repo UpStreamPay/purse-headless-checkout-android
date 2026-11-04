@@ -344,7 +344,8 @@ class PurseHeadlessCheckout private constructor(
             }
         }
 
-        runEligibilityChecks()
+        // A restore probes once its saved state is applied (see [restore]): a spent session is never probed.
+        if (!instance.restored) runEligibilityChecks()
 
         // Saved gift cards carry no balance in the session — re-`/init` each one now (web's
         // `buildSecondaryPaymentToken` fires the same call as the token is built).
@@ -418,6 +419,10 @@ class PurseHeadlessCheckout private constructor(
      * Eligibility pre-check — web's `getEligibilityCheck` at session build
      * (`item-factory/primaries.ts:118`): a plugin that rejects the current client/session gets its
      * method deactivated with the filtered PLUGIN_INCOMPATIBLE code before it is rendered.
+     *
+     * A probe may `/init` (PayPal bnpl in redirection mode), so none runs on a session that is not
+     * [SessionState.READY] — a restored one whose payment already left, an expired one — nor after a
+     * `/validate` consumed it (SDK-12461: never re-`/init` a spent session).
      */
     private fun runEligibilityChecks() {
         meansOfPayment.forEach { item ->
@@ -444,6 +449,7 @@ class PurseHeadlessCheckout private constructor(
                 return@forEach
             }
             scope.launch {
+                if (validationConsumed || _sessionState.value != SessionState.READY) return@launch
                 try {
                     plugin.ensureClientCompatibility(pluginContext(item))
                 } catch (e: Exception) {
@@ -1354,6 +1360,24 @@ class PurseHeadlessCheckout private constructor(
         _paymentMethods.value = visibleMethods()
     }
 
+    /**
+     * Web's answer to an item no plugin serves — a template nothing registers outside redirection
+     * mode (QA's `axepta_wero`), a partner artifact missing from the build: partner-ui's element
+     * dies `not supported` when it mounts, so the item takes [DisabledState.PartnerUiFatalError],
+     * leaves the split and is refused for the rest of the session (the state is not recomputable).
+     * Runs when its payment element is built and when a submit finds it in the split; a no-op for
+     * an item the session no longer offers or one already retired.
+     */
+    internal fun retireUnserved(item: PaymentItem) {
+        if (_isTornDown.value) return
+        val live = meansOfPayment.firstOrNull { it.id == item.id } ?: return
+        if (live.disabled?.code == DisabledState.Code.PARTNER_UI_FATAL_ERROR) return
+        deactivate(live, DisabledState.PartnerUiFatalError(PartnerArtifacts.missingPluginMessage(item.partner, item.method)))
+    }
+
+    private fun isServed(item: PaymentItem): Boolean =
+        PluginRegistry.getPlugin(item.partner, item.method, session.source) != null
+
     private fun clearRecoverableDisabled(item: PaymentItem) {
         meansOfPayment = meansOfPayment.map {
             if (it.id == item.id && it.disabled?.isRecoverable == true) it.withDisabled(null) else it
@@ -1508,7 +1532,9 @@ class PurseHeadlessCheckout private constructor(
      * @throws PurseCheckoutException.CheckoutTornDown after [teardown].
      * @throws PurseCheckoutException.ValidateFailed if `/validate` failed — when its `outcomeUnknown`
      * is `true` the request left the device and the payment may exist: check [paymentStatus].
-     * @throws PurseCheckoutException.NoPluginRegistered while no `:partner-ui` plugins exist yet.
+     * @throws PurseCheckoutException.NoPluginRegistered if no plugin serves an item in the split
+     * (a missing partner artifact, a `configurations.template` nothing registers): that item is
+     * retired with [DisabledState.PartnerUiFatalError], nothing is sent and the state is unchanged.
      */
     suspend fun submitPayment(skipOnBeforeValidate: Boolean = false): ValidationResult {
         requireOpen()
@@ -1521,6 +1547,7 @@ class PurseHeadlessCheckout private constructor(
         )
         if (!splitter.fulfilled) throw PurseCheckoutException.PaymentNotFulfilled()
         unfulfilledItemId()?.let { throw PurseCheckoutException.ItemNotFulfilled(it) }
+        refuseUnservedSplit()
         acquireSubmitLock()
         submitting = true
         publishItems()
@@ -1628,6 +1655,21 @@ class PurseHeadlessCheckout private constructor(
             current = current.cause
         }
         return false
+    }
+
+    /**
+     * An item no plugin serves never reaches `/validate`: web's element dies `not supported` at
+     * engagement, so a split built without mounting one (`setPrimary` then submit) retires it here,
+     * before the submit lock, and refuses the call (SDK-12575).
+     */
+    private fun refuseUnservedSplit() {
+        val unserved = splitter.splits.map { it.source }
+            .filter { it is PrimaryMethod || it is PaymentToken }
+            .filterIsInstance<PaymentItem>()
+            .firstOrNull { !isServed(it) }
+            ?: return
+        retireUnserved(unserved)
+        throw PurseCheckoutException.NoPluginRegistered(PartnerArtifacts.missingPluginMessage(unserved.partner, unserved.method))
     }
 
     /** The first item in the current split that reports its form unfulfilled, if any. */
@@ -1857,6 +1899,7 @@ class PurseHeadlessCheckout private constructor(
                 ),
             )
             checkout.applySavedState(json)
+            checkout.runEligibilityChecks()
             return checkout
         }
 

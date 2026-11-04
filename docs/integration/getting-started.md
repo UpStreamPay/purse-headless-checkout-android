@@ -35,7 +35,8 @@ carries the generated API reference; your IDE shows the same KDoc from the publi
 A partner artifact registers its payment method on its own once it is on the classpath. If the
 session offers a method whose artifact you did not add, the SDK logs a warning at `init` naming the
 dependency to add, and the method's payment element has no UI — `submit` reports the same message
-as a `PaymentOutcome.Failed(NoPluginRegistered)`.
+as a `PaymentOutcome.Failed(NoPluginRegistered)` — and building that element disables the method
+with `PARTNER_UI_FATAL_ERROR` for the rest of the session, as web does.
 
 Everything else ships in the artifacts' own manifests: the `INTERNET` permission, Google Pay's
 `meta-data`, the redirect WebView Activity (3-D Secure, redirection methods) and PayPal's return
