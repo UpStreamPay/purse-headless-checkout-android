@@ -25,6 +25,7 @@ import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.PluginHost
 import eu.purse.partnerui.PurseTheme
+import eu.purse.partnerui.ThemeValues
 import eu.purse.partnerui.plugins.generics.redirection.RedirectionMapper
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.securefields.SecureFieldsAndroid
@@ -319,8 +320,12 @@ private fun rememberCardTexts(texts: CardFormTexts): ResolvedCardTexts {
     return remember(cardNumber, expDate, cvv, holderName) { ResolvedCardTexts(cardNumber, expDate, cvv, holderName) }
 }
 
-/** The resolved `input` scope and its variants → SecureFields' [VaultStyles]; keys without an analog don't travel. */
-private fun PurseTheme.Resolved.toVaultStyles(): VaultStyles = input.toVaultStyles(
+/**
+ * The resolved `input` scope and its variants → SecureFields' [VaultStyles]; keys without an analog
+ * don't travel. Colours go through [ThemeValues.parseColorArgb]: SecureFields reads them with
+ * `Color.parseColor`, which turns the default theme's `transparent` into opaque black.
+ */
+internal fun PurseTheme.Resolved.toVaultStyles(): VaultStyles = input.toVaultStyles(
     focus = inputFocus.toVaultStyles(),
     invalid = inputInvalid.toVaultStyles(),
     valid = inputValid.toVaultStyles(),
@@ -335,9 +340,9 @@ private fun PurseTheme.FieldStyle.toVaultStyles(
     fontSize = fontSize,
     lineHeight = lineHeight,
     fontWeight = fontWeight,
-    color = color,
-    placeholderColor = placeholderColor,
-    backgroundColor = backgroundColor,
+    color = ThemeValues.parseColorArgb(color),
+    placeholderColor = ThemeValues.parseColorArgb(placeholderColor),
+    backgroundColor = ThemeValues.parseColorArgb(backgroundColor),
     focus = focus,
     invalid = invalid,
     valid = valid,

@@ -43,7 +43,7 @@ adds or removes a divergence.
 | `commons/PartnerUI/initGuard.ts` | `core/api/InitGuard.kt` | yes |
 | `partner-ui/src/events.ts` (`UnifiedEvent`) | `partnerui/PluginEvent.kt` | trimmed |
 | `plugins/utils/noCVV.ts`, `patchItemPayloadWithToken` | `PayToken.requiresCvv`, `PayToken.patchPaymentData` | yes |
-| `commons/PartnerUI/theming/*`, `hostedForm` translations | `partnerui/PurseTheme.kt`, `CardFormTexts` | same scopes and fallback chain |
+| `commons/PartnerUI/theming/*`, `hostedForm` translations | `partnerui/PurseTheme.kt`, `CardFormTexts` | same scopes and fallback chain; colours re-spelled `#AARRGGBB` for SecureFields' `Color.parseColor` |
 | `plugins/generics/googlepay/*` + `partners/{adyen,ingenico,default}` + `libs/ingenico-onlinepayments` | `plugins/generics/googlepay/*`, `partners/*`, `WorldlineProductClient.kt` (module `:partner-googlepay`, artifact `headless-checkout-googlepay`) | protocol yes; sheet via Play Services |
 | `plugins/generics/redirection/*` + `manageRedirection` | `plugins/generics/redirection/*`, `partnerui/redirect/RedirectionResolver.kt` + WebView Activity | yes; return handled in-app |
 | `plugins/partners/klarna-installments` | `plugins/partners/klarna/*` (module `:partner-klarna`, artifact `headless-checkout-klarna`) | JS SDK → `KlarnaPaymentView`; optional artifact |
