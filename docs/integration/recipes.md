@@ -77,7 +77,8 @@ Button(onClick = { element.submit() }, enabled = element.ready) { Text("Pay") }
 ```
 
 An empty or invalid form is never payable: `isPaymentFulfilled` stays `false` until every field
-validates. `submit()` tokenizes, then `/init` + `/validate`, then follows 3-D Secure.
+validates. `submit()` tokenizes, then `/init` + `/validate`, then follows 3-D Secure. To lay out the
+fields yourself or draw your own error messages, see [Card form: two levels](card-form.md).
 
 **Save the card** when the method allows it:
 

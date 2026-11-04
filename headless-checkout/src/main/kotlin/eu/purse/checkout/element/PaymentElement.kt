@@ -30,6 +30,10 @@ import eu.purse.partnerui.SurfaceRequest
  * One rendered payment method or saved token, behind one shape: whatever it needs on screen (a card
  * form, a wallet button, Klarna's widget, a CVV field, or nothing), its readiness, and a [submit].
  * Obtain it with [rememberPaymentElement], place it with [PaymentElementUi].
+ *
+ * A card element reports only [ready]: its field errors are drawn inside the form. For per-field
+ * state, brand or error messages, drive the form one level down — `checkout.host(item)` →
+ * `rememberCardCoordinator` (`fieldStates`, `errorMessage(field)`); see `docs/integration/card-form.md`.
  */
 class PaymentElement internal constructor(
     /** The [PrimaryMethod] this element renders, or the saved [PaymentToken] it pays with. */

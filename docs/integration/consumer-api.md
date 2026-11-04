@@ -581,6 +581,8 @@ return URL must resume the **same Activity** hosting the widget — see
 > Deep dive — session prerequisites, sequence diagram, quirks, failure modes:
 > **[docs/plugins/card-purse-vault.md](../plugins/card-purse-vault.md)**.
 
+> Which level to use — the drop-in element or the coordinator: **[Card form: two levels](card-form.md)**.
+
 `rememberCardCoordinator(host, listener)` owns the SecureFields instance. The host's token (and its
 `requiresCvv`) selects the `CardCoordinator.Mode`: `FRESH_CARD` (full form), `TOKEN_CVV` (a saved card
 whose PSP still wants the CVV: CVV-only form) or `TOKEN_NO_CVV` (nothing to render, payable as-is).
