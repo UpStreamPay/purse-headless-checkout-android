@@ -343,7 +343,8 @@ class PurseHeadlessCheckout private constructor(
             }
         }
 
-        runEligibilityChecks()
+        // A restore probes once its saved state is applied (see [restore]): a spent session is never probed.
+        if (!instance.restored) runEligibilityChecks()
 
         // Saved gift cards carry no balance in the session — re-`/init` each one now (web's
         // `buildSecondaryPaymentToken` fires the same call as the token is built).
@@ -417,6 +418,10 @@ class PurseHeadlessCheckout private constructor(
      * Eligibility pre-check — web's `getEligibilityCheck` at session build
      * (`item-factory/primaries.ts:118`): a plugin that rejects the current client/session gets its
      * method deactivated with the filtered PLUGIN_INCOMPATIBLE code before it is rendered.
+     *
+     * A probe may `/init` (PayPal bnpl in redirection mode), so none runs on a session that is not
+     * [SessionState.READY] — a restored one whose payment already left, an expired one — nor after a
+     * `/validate` consumed it (SDK-12461: never re-`/init` a spent session).
      */
     private fun runEligibilityChecks() {
         meansOfPayment.forEach { item ->
@@ -443,6 +448,7 @@ class PurseHeadlessCheckout private constructor(
                 return@forEach
             }
             scope.launch {
+                if (validationConsumed || _sessionState.value != SessionState.READY) return@launch
                 try {
                     plugin.ensureClientCompatibility(pluginContext(item))
                 } catch (e: Exception) {
@@ -1838,6 +1844,7 @@ class PurseHeadlessCheckout private constructor(
                 ),
             )
             checkout.applySavedState(json)
+            checkout.runEligibilityChecks()
             return checkout
         }
 

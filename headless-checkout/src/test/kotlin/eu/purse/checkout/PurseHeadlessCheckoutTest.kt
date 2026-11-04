@@ -836,6 +836,97 @@ class PurseHeadlessCheckoutTest {
         assertEquals(0, restored.session.amount.compareTo(restored.remainingAmountToPay.value))
     }
 
+    // --- PayPal bnpl eligibility probe (SDK-12576) -------------------------------------------------
+
+    /** The fixture plus a PayPal bnpl primary in redirection mode, against [apiRoot]. */
+    private fun paypalBnplWidgetData(apiRoot: String): String {
+        val session = JSONObject(CheckoutTestSessions.samplePaymentSessionJson)
+        session.getJSONObject("protocols").getJSONObject("paypal").put(
+            "bnpl",
+            JSONObject(
+                """
+                { "configurations": {
+                    "stable": true, "labels": ["paypal", "bnpl", "primary"], "position": 4,
+                    "settings": {
+                      "registration_mode": "OFF_SESSION",
+                      "merchant_specifics": { "integration_mode": "redirection", "client_id": "paypal-client-abc" }
+                    } } }
+                """,
+            ),
+        )
+        return CheckoutTestSessions.widgetData(session.toString(), apiRoot)
+    }
+
+    private fun PurseHeadlessCheckout.hasBnpl() = primaryMethods.any { it.partner == Partner.Paypal && it.method == Method.Bnpl }
+
+    private fun PurseHeadlessCheckout.awaitBnplWithdrawn() {
+        val deadline = System.currentTimeMillis() + 5_000
+        while (hasBnpl() && System.currentTimeMillis() < deadline) Thread.sleep(20)
+    }
+
+    @Test
+    fun `an ineligible PayPal bnpl is withdrawn from the list once its probe init answers NOT_ELIGIBLE`() {
+        FakePaymentApi().use { api ->
+            api.respond("init", """{ "status": { "state": "ERROR" }, "plugin_result": { "status": "NOT_ELIGIBLE" } }""")
+            val checkout = checkout(paypalBnplWidgetData(api.apiRoot))
+
+            val init = api.awaitRequests("init").single().json
+            assertEquals("bnpl", init.getString("method"))
+            checkout.awaitBnplWithdrawn()
+
+            assertFalse("PLUGIN_INCOMPATIBLE is a filtered code", checkout.hasBnpl())
+            assertTrue(checkout.primaryMethods.any { it.partner == Partner.Paypal && it.method == Method.Wallet })
+        }
+    }
+
+    @Test
+    fun `an eligible PayPal bnpl stays listed`() {
+        FakePaymentApi().use { api ->
+            api.respond("init", """{ "status": { "state": "SUCCESS" }, "step_id": 3, "plugin_result": { "status": "SUCCESS" } }""")
+            val checkout = checkout(paypalBnplWidgetData(api.apiRoot))
+
+            assertEquals(1, api.awaitRequests("init").size)
+            Thread.sleep(200)
+
+            assertTrue(checkout.hasBnpl())
+            assertNull(checkout.primaryMethods.single { it.method == Method.Bnpl }.disabled)
+        }
+    }
+
+    @Test
+    fun `a restored session whose payment already left is never probed`() {
+        FakePaymentApi().use { api ->
+            api.respond("init", """{ "status": { "state": "SUCCESS" }, "plugin_result": { "status": "SUCCESS" } }""")
+            val json = JSONObject(checkout(paypalBnplWidgetData(api.apiRoot)).saveState().toJson()).put("submitted", true).toString()
+            api.awaitRequests("init")
+            api.requests.clear()
+
+            val restored = PurseHeadlessCheckout.restore(CheckoutSavedState.fromJson(json), datetimeChecker = offlineChecker())
+            Thread.sleep(300)
+
+            assertEquals(SessionState.SUBMITTED, restored.sessionState.value)
+            assertTrue("no /init on a spent session (SDK-12461)", api.initRequests().isEmpty())
+        }
+    }
+
+    @Test
+    fun `a restored session not yet submitted is probed again`() {
+        FakePaymentApi().use { api ->
+            api.respond("init", """{ "status": { "state": "ERROR" }, "plugin_result": { "status": "NOT_ELIGIBLE" } }""")
+            val first = checkout(paypalBnplWidgetData(api.apiRoot))
+            val state = first.saveState()
+            // Settled, so the restore's probe is a new call rather than coalesced into this one by InitGuard.
+            first.awaitBnplWithdrawn()
+            api.requests.clear()
+
+            val restored = PurseHeadlessCheckout.restore(state, datetimeChecker = offlineChecker())
+
+            assertEquals(1, api.awaitRequests("init").size)
+            restored.awaitBnplWithdrawn()
+            assertFalse(restored.hasBnpl())
+        }
+    }
+
     @Test
     fun `saveState carries the lock and the disabled methods, and refuses to run after teardown`() {
         val checkout = PurseHeadlessCheckout.init(
