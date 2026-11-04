@@ -593,6 +593,13 @@ while focused, and its **error message** in place of the help text when the shop
 `PaymentElementUi` shows for a card element; SecureFields' bare `VaultForm(coordinator.sdk)` /
 `VaultField(...)` remain available for a custom layout.
 
+Each secure input is named by its label: `PurseCardForm` passes the resolved `label` to SecureFields
+as the input's `contentDescription` (what TalkBack announces and Espresso matches), and tags the field
+with `CardField.testTag` — `purse_card_number`, `purse_card_exp_date`, `purse_card_cvv`,
+`purse_card_holder_name`, the identifiers the iOS SDK uses. Override the name through
+`CardFormTexts.FieldTexts.label`. UiAutomator and Appium see test tags only once an ancestor sets
+`Modifier.semantics { testTagsAsResourceId = true }`.
+
 Copy comes from `PluginOptions.cardFormTexts` (`CardFormTexts`, one `CardFormTexts.FieldTexts` per
 field: `label`, `placeholder`, `helperText`, `requiredError`, `formatError`), every `null` falling
 back to the SDK's localized `purse_card_*` resources — web's `hostedForm` translations, in English and

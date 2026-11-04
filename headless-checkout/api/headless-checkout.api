@@ -2560,6 +2560,17 @@ public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardCoordi
 	public static final fun rememberCardCoordinator (Leu/purse/partnerui/PluginHost;Leu/purse/partnerui/PaymentElementListener;Landroidx/compose/runtime/Composer;I)Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardCoordinator;
 }
 
+public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardField : java/lang/Enum {
+	public static final field CARD_NUMBER Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;
+	public static final field CVV Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;
+	public static final field EXP_DATE Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;
+	public static final field HOLDER_NAME Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public final fun getTestTag ()Ljava/lang/String;
+	public static fun valueOf (Ljava/lang/String;)Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;
+	public static fun values ()[Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;
+}
+
 public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardFormKt {
 	public static final fun PurseCardForm (Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardCoordinator;Landroidx/compose/ui/Modifier;Landroidx/compose/runtime/Composer;II)V
 }

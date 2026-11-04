@@ -83,16 +83,16 @@ fun rememberCardCoordinator(host: PluginHost, listener: PaymentElementListener):
             brandSelector = mode == CardCoordinator.Mode.FRESH_CARD,
             fields = when (mode) {
                 CardCoordinator.Mode.FRESH_CARD -> SecureFieldsFieldsConfig(
-                    cardNumber = VaultFieldConfig(placeholder = texts.cardNumber.placeholder),
-                    expDate = VaultFieldConfig(placeholder = texts.expDate.placeholder),
-                    cvv = VaultFieldConfig(placeholder = texts.cvv.placeholder),
-                    holderName = VaultFieldConfig(placeholder = texts.holderName.placeholder),
+                    cardNumber = texts.cardNumber.vaultFieldConfig(),
+                    expDate = texts.expDate.vaultFieldConfig(),
+                    cvv = texts.cvv.vaultFieldConfig(),
+                    holderName = texts.holderName.vaultFieldConfig(),
                 )
                 // CVV only: with no card-number field mounted SecureFields omits the `card` object,
                 // which the vault reads as a CVV-only submission (securefields-android ≥ 1.4.0).
                 CardCoordinator.Mode.TOKEN_CVV,
                 CardCoordinator.Mode.TOKEN_NO_CVV,
-                -> SecureFieldsFieldsConfig(cvv = VaultFieldConfig(placeholder = texts.cvv.placeholder))
+                -> SecureFieldsFieldsConfig(cvv = texts.cvv.vaultFieldConfig())
             },
             styles = theme.toVaultStyles(),
         )
@@ -285,6 +285,16 @@ private fun Brand.toGatewayScheme(): String? = when (this) {
     Brand.ONEY -> "ONEY"
     Brand.UNKNOWN -> null
 }
+
+/**
+ * The placeholder inside the secure input, and its label as the input's `contentDescription` — the
+ * name TalkBack and Espresso see, since the label [PurseCardForm] draws above is a separate node
+ * (web: `aria-labelledby`; iOS: `SecureFieldConfig.accessibilityLabel`).
+ */
+private fun ResolvedFieldTexts.vaultFieldConfig() = VaultFieldConfig(
+    placeholder = placeholder,
+    contentDescription = label?.takeIf { it.isNotBlank() },
+)
 
 /** [CardFormTexts] over the SDK's localized `purse_card_*` resources — merchant override first. */
 @Composable

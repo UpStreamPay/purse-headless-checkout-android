@@ -20,6 +20,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -47,6 +48,10 @@ import eu.purse.securefields.model.VaultFieldName
  * Error semantics mirror web's `final-form` rules: a field the shopper left **empty after
  * touching it** shows its `requiredError`; content SecureFields rejects shows its `formatError`;
  * otherwise the field's `helperText` (if any) is shown while the field has focus.
+ *
+ * Each secure input carries its label as `contentDescription` and [CardField.testTag]
+ * (`purse_card_number`, `purse_card_exp_date`, `purse_card_cvv`, `purse_card_holder_name`) as its
+ * test tag.
  *
  * This is what `PaymentElementUi` renders for a card element. Call it directly only when you host
  * a [CardCoordinator] yourself; SecureFields' bare `VaultForm(coordinator.sdk)` remains available
@@ -84,9 +89,10 @@ fun PurseCardForm(coordinator: CardCoordinator, modifier: Modifier = Modifier) {
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(theme.gapDp())) {
         fields.forEach { (name, controller) ->
             ThemedField(
+                field = CardField.of(name),
                 controller = controller,
                 state = states[name] ?: FieldUiState(),
-                texts = texts.resolved(name),
+                texts = texts[CardField.of(name)],
                 theme = theme,
             )
         }
@@ -95,6 +101,7 @@ fun PurseCardForm(coordinator: CardCoordinator, modifier: Modifier = Modifier) {
 
 @Composable
 private fun ThemedField(
+    field: CardField,
     controller: VaultFieldController,
     state: FieldUiState,
     texts: ResolvedFieldTexts,
@@ -111,7 +118,9 @@ private fun ThemedField(
             )
         }
         FieldFrame(theme, focused = state.focused, invalid = invalid) {
-            VaultField(controller, Modifier.fillMaxWidth().height(FIELD_HEIGHT_DP.dp))
+            // Named by its label through the input's own `contentDescription` (see
+            // `vaultFieldConfig`); the tag is the stable UI-test handle.
+            VaultField(controller, Modifier.fillMaxWidth().height(FIELD_HEIGHT_DP.dp).testTag(field.testTag))
         }
         val helper = message ?: texts.helperText?.takeIf { state.focused && it.isNotBlank() }
         if (helper != null) {
@@ -201,20 +210,20 @@ internal data class ResolvedFieldTexts(
     val formatError: String,
 )
 
-private fun ResolvedCardTexts.resolved(name: VaultFieldName): ResolvedFieldTexts = when (name) {
-    VaultFieldName.CardNumber -> cardNumber
-    VaultFieldName.ExpDate -> expDate
-    VaultFieldName.Cvv -> cvv
-    VaultFieldName.HolderName -> holderName
-}
-
 /** All four fields' copy, resolved once per coordinator (see [rememberCardCoordinator]). */
 internal data class ResolvedCardTexts(
     val cardNumber: ResolvedFieldTexts,
     val expDate: ResolvedFieldTexts,
     val cvv: ResolvedFieldTexts,
     val holderName: ResolvedFieldTexts,
-)
+) {
+    operator fun get(field: CardField): ResolvedFieldTexts = when (field) {
+        CardField.CARD_NUMBER -> cardNumber
+        CardField.EXP_DATE -> expDate
+        CardField.CVV -> cvv
+        CardField.HOLDER_NAME -> holderName
+    }
+}
 
 // --- theme → Compose -----------------------------------------------------------------------------
 
