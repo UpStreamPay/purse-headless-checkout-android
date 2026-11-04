@@ -23,10 +23,11 @@ package eu.purse.partnerui
  * `global = Text(color = "#123456")` recolours labels, helper texts and inputs at once, while
  * `helperTextInvalid = Text(color = "#B3261E")` only changes the error message colour.
  *
- * Values are CSS-like strings, exactly as web and SecureFields take them: colours `#rgb`,
- * `#rrggbb`, `#rrggbbaa` or `transparent`; sizes `"14px"` / `"14sp"` / `"14"` (all read as sp);
- * weights `"400"`, `"700"`, `"bold"`, `"normal"`; families `sans-serif`, `serif`, `monospace`
- * (anything else falls back to the platform default).
+ * Values are CSS-like strings, as web takes them: colours `#rgb`, `#rrggbb`, `#rrggbbaa` (CSS
+ * order, alpha last) or `transparent` — re-spelled `#AARRGGBB` before they reach SecureFields,
+ * whose `Color.parseColor` reads neither `transparent` nor `#rgb`; sizes `"14px"` / `"14sp"` /
+ * `"14"` (all read as sp); weights `"400"`, `"700"`, `"bold"`, `"normal"`; families `sans-serif`,
+ * `serif`, `monospace` (anything else falls back to the platform default).
  */
 data class PurseTheme(
     /** Base values every scope falls back to (web `global`): colour, font, and the `gap` between fields. */
@@ -217,6 +218,19 @@ object ThemeValues {
             else -> null
         }
     }
+
+    /**
+     * A theme colour → `#AARRGGBB`, the one spelling `android.graphics.Color.parseColor` reads the
+     * way the theme means it. SecureFields parses `VaultStyles` colours with `parseColor` and paints
+     * opaque black on failure, and `parseColor` knows neither `transparent` nor `#rgb`, and reads
+     * 8 digits alpha-first — a CSS `#rrggbbaa` would come out with its channels shuffled.
+     * A value [colorArgb] cannot read is passed through untouched, so what `parseColor` already
+     * understood on its own (its named colours such as `white`) keeps working.
+     */
+    internal fun parseColorArgb(value: String?): String? =
+        colorArgb(value)?.let { "#" + it.toString(radix = 16).padStart(ARGB_HEX_DIGITS, '0').uppercase() } ?: value
+
+    private const val ARGB_HEX_DIGITS = 8
 
     /** `"14px"`, `"14sp"`, `"14dp"`, `"14"` → 14f (all read as scale-independent points), else `null`. */
     fun sizeSp(value: String?): Float? {

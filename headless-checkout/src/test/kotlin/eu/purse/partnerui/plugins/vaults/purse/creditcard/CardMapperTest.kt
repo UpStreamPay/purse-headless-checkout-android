@@ -1,45 +1,10 @@
 package eu.purse.partnerui.plugins.vaults.purse.creditcard
 
-import org.json.JSONObject
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class CardMapperTest {
-
-    private fun cardInit(stepId: Int? = 1): JSONObject {
-        val init = JSONObject().put("status", JSONObject().put("state", "SUCCESS"))
-        stepId?.let { init.put("step_id", it) }
-        return init
-    }
-
-    @Test
-    fun `init parses the step id`() {
-        assertEquals(1, CardMapper.parseInit(cardInit(stepId = 1)))
-    }
-
-    @Test
-    fun `init step id is null when absent`() {
-        assertNull(CardMapper.parseInit(cardInit(stepId = null)))
-    }
-
-    @Test
-    fun `an unsuccessful init throws`() {
-        val failed = JSONObject().put("status", JSONObject().put("state", "FAILED"))
-        try {
-            CardMapper.parseInit(failed)
-            assertTrue("expected a PaymentApiException", false)
-        } catch (e: Exception) {
-            assertTrue(e.message?.contains("not successful") == true)
-        }
-    }
-
-    @Test
-    fun `init payload carries the purse vault vendor`() {
-        val payload = CardMapper.buildInitPayload(java.math.BigDecimal("4.80"), "purse")
-        assertEquals("purse", payload.getJSONObject("payment_data").getString("vault_vendor"))
-    }
 
     @Test
     fun `validate payment data carries the vault token at the top level, not nested under card`() {

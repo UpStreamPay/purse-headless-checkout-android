@@ -16,7 +16,7 @@ Google Pay, PayPal and Klarna live in their own artifacts (`eu.purse:headless-ch
 6. [Redirection methods](#6-redirection-methods)
 7. [Gift cards and co-payment](#7-gift-cards-and-co-payment)
 8. [Saved cards and saved PayPal accounts](#8-saved-cards-and-saved-paypal-accounts)
-9. [Confirm after a redirect](#9-confirm-after-a-redirect)
+9. [Confirm after a redirect: ask your backend](#9-confirm-after-a-redirect-ask-your-backend)
 10. [Hooks](#10-hooks)
 11. [Events and monitoring](#11-events-and-monitoring)
 12. [Errors](#12-errors)
@@ -77,7 +77,8 @@ Button(onClick = { element.submit() }, enabled = element.ready) { Text("Pay") }
 ```
 
 An empty or invalid form is never payable: `isPaymentFulfilled` stays `false` until every field
-validates. `submit()` tokenizes, then `/init` + `/validate`, then follows 3-D Secure.
+validates. `submit()` tokenizes, then `/validate`, then follows 3-D Secure. To lay out the
+fields yourself or draw your own error messages, see [Card form: two levels](card-form.md).
 
 **Save the card** when the method allows it:
 
@@ -207,19 +208,25 @@ checkout.deleteAllTokens()
 // without a wallet session: WalletOperationFailed(MISSING_WALLET_SESSION)
 ```
 
-## 9. Confirm after a redirect
+## 9. Confirm after a redirect: ask your backend
 
-`PaymentOutcome.ReturnedFromRedirect` means the shopper came back, nothing more.
+`PaymentOutcome.ReturnedFromRedirect` means the shopper came back, nothing more: a 3-D Secure or PSP
+page's final redirect is built server-side and the app cannot read it. The verdict lives in the
+session's transactions, and only **your backend** can read them — with its own merchant credentials.
+The Payment API answers `401` to the client key the app holds. Web works the same way: it concludes
+on `/validate`, the redirection return and the success/failure URLs, and the merchant confirms on its
+server.
 
 ```kotlin
 override fun onOutcome(outcome: PaymentOutcome) {
     when (outcome) {
         is PaymentOutcome.Completed -> render(outcome.status)                // SUCCESS or a decline
         PaymentOutcome.ReturnedFromRedirect -> scope.launch {
-            when (val status = checkout.awaitPaymentOutcome(timeoutMs = 60_000, pollIntervalMs = 3_000)) {
-                is PaymentSessionStatus.Confirmed -> showSuccess()
-                is PaymentSessionStatus.Failed -> showFailure()
-                is PaymentSessionStatus.Pending -> showStillProcessing(status.operations)
+            showConfirming()
+            when (myBackend.paymentVerdict(orderId)) {                      // your own endpoint
+                Verdict.PAID -> showSuccess()
+                Verdict.REFUSED -> showFailure()
+                Verdict.PENDING -> showStillProcessing()                     // retry a few times, then let the order page settle it
             }
         }
         PaymentOutcome.Canceled -> Unit
@@ -228,13 +235,21 @@ override fun onOutcome(outcome: PaymentOutcome) {
 }
 ```
 
-`checkout.paymentStatus()` is the one-shot version; `sessionTransactions()` the raw JSON. The
-response lists operations, not payments: one captured payment is an `AUTHORIZE` and a `CAPTURE` row.
+Your backend reads the session (or the PSP notification it already receives) and answers. The
+session's rows are operations, not payments: one captured payment is an `AUTHORIZE` and a `CAPTURE`
+row (see [plugins/README.md](../plugins/README.md#reading-the-sessions-transactions--operations-not-payments)).
+If your backend relays those rows as they are, `PaymentSessionStatus.from(rows)` classifies them on
+the device.
 
-The same check covers a submit that was interrupted: a `ValidateFailed` whose `outcomeUnknown` is
-`true` (the request left, nothing answered) means the payment may exist — poll before showing an
-error. A return from the redirect WebView after the app was killed lands here too, never on
-`Canceled`.
+The same call covers a submit that was interrupted: a `ValidateFailed` whose `outcomeUnknown` is
+`true` (the request left, nothing answered) means the payment may exist — ask your backend before
+showing an error. A return from the redirect WebView after the app was killed lands here too, never
+on `Canceled`.
+
+`checkout.sessionTransactions()`, `paymentStatus()` and `awaitPaymentOutcome()` read that same route
+with the client key, so they cannot confirm anything: they are **deprecated** and go at the next
+major. Don't poll them. The demo app shows the flow above: its result screen asks the alfred backend
+for the session's transactions.
 
 ## 10. Hooks
 
@@ -306,8 +321,10 @@ no plugin registered for klarna/installments — add the `eu.purse:headless-chec
 ```
 
 The same line is logged at `PurseHeadlessCheckout.init` (tag `PurseHeadlessCheckout`, level W), and
-`submitPayment` throws `PurseCheckoutException.NoPluginRegistered`. Add the dependency, or hide the
-method in this build with `init(disabledMethods = setOf(MethodKey(partner, method)))`.
+`submitPayment` throws `PurseCheckoutException.NoPluginRegistered`. Building the element (or that
+submit) also disables the method with `PARTNER_UI_FATAL_ERROR` for the rest of the session, as web
+does; the same happens to a method whose `configurations.template` no plugin serves outside
+redirection mode. Add the dependency, or hide the method in this build with `init(disabledMethods = setOf(MethodKey(partner, method)))`.
 
 ## 13. Locale, texts, theme
 
@@ -335,7 +352,15 @@ PurseHeadlessCheckout.init(
 
 Scopes: `global`, `input`, `label`, `helperText`, each with `Invalid` / `Valid` variants and `inputFocus`.
 Resolution is scope variant → scope → global variant → global, over web's defaults. Every `null`
-text falls back to the SDK's localized resources (English, French).
+text falls back to the SDK's localized resources (English, French), read in `locale` — not the
+device language — so a French device paying through an `en-GB` checkout reads English. Without a
+`locale`, the device's language applies; a language the SDK has no copy for gets English.
+
+Colours take the web spellings: `#rgb`, `#rrggbb`, `#rrggbbaa` (CSS order, alpha last) or
+`transparent` (the default `input.backgroundColor`). Before the `input*` colours reach SecureFields
+the SDK rewrites them as `#AARRGGBB`, the form Android's `Color.parseColor` reads, so a default-theme
+field stays transparent rather than turning black. Other values (`rgb()`, `hsl()`, CSS names) are not
+read by the SDK's own form; on the secure fields, only the few names `Color.parseColor` knows work.
 
 ## 14. BNPL instalment simulation
 
@@ -387,7 +412,7 @@ save decisions, and what the native steps collected. What does not: a card form'
 saved, by design) and `hooks` / `options` (they hold code — pass the same ones to `restore`).
 
 If a submit had already left the device, the restored `sessionState` is `SUBMITTED` and
-`submitPayment` refuses: confirm the outcome with `awaitPaymentOutcome()` (recipe 9) instead of
+`submitPayment` refuses: confirm the outcome from your backend (recipe 9) instead of
 letting the shopper pay twice. The return from the redirect Activity after the process was killed
 lands on the recreated payment element's listener as `PaymentOutcome.ReturnedFromRedirect`, which
 leads to the same check.

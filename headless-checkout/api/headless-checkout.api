@@ -2535,6 +2535,8 @@ public final class eu/purse/partnerui/plugins/generics/redirection/RedirectionRe
 
 public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardCoordinator : eu/purse/partnerui/PaymentCoordinator {
 	public static final field $stable I
+	public final fun errorMessage (Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;)Ljava/lang/String;
+	public final fun getFieldStates ()Ljava/util/Map;
 	public final fun getFormValid ()Z
 	public final fun getMode ()Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardCoordinator$Mode;
 	public final fun getSdk ()Leu/purse/securefields/SecureFieldsAndroid;
@@ -2561,6 +2563,37 @@ public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardCoordi
 	public static final fun rememberCardCoordinator (Leu/purse/partnerui/PluginHost;Leu/purse/partnerui/PaymentElementListener;Landroidx/compose/runtime/Composer;I)Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardCoordinator;
 }
 
+public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardField : java/lang/Enum {
+	public static final field CARD_NUMBER Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;
+	public static final field CVV Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;
+	public static final field EXP_DATE Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;
+	public static final field HOLDER_NAME Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public final fun getTestTag ()Ljava/lang/String;
+	public static fun valueOf (Ljava/lang/String;)Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;
+	public static fun values ()[Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;
+}
+
+public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardFieldState {
+	public static final field $stable I
+	public fun <init> ()V
+	public fun <init> (ZZZZ)V
+	public synthetic fun <init> (ZZZZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Z
+	public final fun component2 ()Z
+	public final fun component3 ()Z
+	public final fun component4 ()Z
+	public final fun copy (ZZZZ)Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardFieldState;
+	public static synthetic fun copy$default (Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardFieldState;ZZZZILjava/lang/Object;)Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardFieldState;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getHasContent ()Z
+	public final fun getWasBlurred ()Z
+	public fun hashCode ()I
+	public final fun isFocused ()Z
+	public final fun isValid ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardFormKt {
 	public static final fun PurseCardForm (Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardCoordinator;Landroidx/compose/ui/Modifier;Landroidx/compose/runtime/Composer;II)V
 }
@@ -2568,14 +2601,10 @@ public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardFormKt
 public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardMapper {
 	public static final field $stable I
 	public static final field INSTANCE Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardMapper;
-	public static final field METHOD Ljava/lang/String;
 	public static final field VAULT_VENDOR Ljava/lang/String;
-	public final fun buildInitPayload (Ljava/math/BigDecimal;Ljava/lang/String;Lorg/json/JSONObject;)Lorg/json/JSONObject;
-	public static synthetic fun buildInitPayload$default (Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardMapper;Ljava/math/BigDecimal;Ljava/lang/String;Lorg/json/JSONObject;ILjava/lang/Object;)Lorg/json/JSONObject;
 	public final fun buildTokenPaymentData (Leu/purse/partnerui/PayToken;Ljava/lang/String;)Lorg/json/JSONObject;
 	public static synthetic fun buildTokenPaymentData$default (Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardMapper;Leu/purse/partnerui/PayToken;Ljava/lang/String;ILjava/lang/Object;)Lorg/json/JSONObject;
 	public final fun buildValidatePaymentData (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lorg/json/JSONObject;
-	public final fun parseInit (Lorg/json/JSONObject;)Ljava/lang/Integer;
 }
 
 public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardModule : eu/purse/partnerui/PartnerModule {

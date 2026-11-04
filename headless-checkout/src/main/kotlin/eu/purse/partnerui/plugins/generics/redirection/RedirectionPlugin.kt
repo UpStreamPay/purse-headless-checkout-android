@@ -1,14 +1,20 @@
 // Web: packages/partner-ui/src/plugins/generics/redirection/index.ts
 // Same: /init at render, step_id + browser into /validate, token patched in.
-// Differs: partner and method come from the session, never hardcoded.
+// Differs: partner and method come from the session, never hardcoded; PayPal bnpl's eligibility
+//          probe (web's `partners/paypal/bnpl` `ensureClientCompatibility`) lives here, since
+//          redirection mode is the only one this SDK serves bnpl in and it needs no PayPal SDK.
 package eu.purse.partnerui.plugins.generics.redirection
 
 import eu.purse.core.payload.ItemPayload
 import eu.purse.core.payload.ValidateItemPayload
+import eu.purse.core.payment.IntegrationMode
 import eu.purse.core.payment.Method
 import eu.purse.core.payment.Partner
 import eu.purse.partnerui.PartnerUiContext
+import eu.purse.partnerui.PartnerUiException
 import eu.purse.partnerui.PartnerUiPlugin
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 
 /**
@@ -84,6 +90,39 @@ class RedirectionPlugin(
     }
 
     /**
+     * PayPal bnpl's eligibility probe — web's `paypal_bnpl.ensureClientCompatibility`
+     * (`partner-ui/src/plugins/partners/paypal/bnpl/index.ts`), which headless runs at session build
+     * through `getEligibilityCheck` (`item-factory/primaries.ts`) whatever plugin renders the method.
+     * In `integration_mode = redirection` it POSTs a bare `/init` and throws when
+     * `plugin_result.status` is `NOT_ELIGIBLE`; the checkout then withdraws the method with the
+     * filtered `PLUGIN_INCOMPATIBLE`. Any other failure (network, HTTP error) propagates and
+     * withdraws it too — web's `.catch` makes no distinction, so the probe fails closed.
+     *
+     * Every other pair this template serves, and bnpl in any other mode, passes without a call: web's
+     * probe returns at once outside redirection mode, and no other plugin has one.
+     */
+    override suspend fun ensureClientCompatibility(context: PartnerUiContext) {
+        if (!isPaypalBnplRedirection(context)) return
+        val response = withContext(Dispatchers.IO) {
+            context.api.init(
+                RedirectionMapper.buildInitPayload(
+                    amount = context.amount,
+                    partnerWireValue = partner.wireValue,
+                    methodWireValue = method.wireValue,
+                    browser = null,
+                ),
+            )
+        }
+        if (response.optJSONObject("plugin_result")?.optString("status") == NOT_ELIGIBLE) {
+            throw PartnerUiException("PayPal BNPL is not eligible for this order")
+        }
+    }
+
+    private fun isPaypalBnplRedirection(context: PartnerUiContext): Boolean =
+        partner == Partner.Paypal && method == Method.Bnpl &&
+            context.configuration?.settings?.integrationMode == IntegrationMode.REDIRECTION
+
+    /**
      * The `/validate` item — the envelope, the `/init` `step_id`, and the browser block, exactly as
      * web's `preValidation` builds it, then patched with a saved token's value, holder, expiry and
      * network (web's `patchItemPayloadWithToken`) when the item replays a card-on-file.
@@ -116,6 +155,9 @@ class RedirectionPlugin(
 
         /** Key [RedirectionCoordinator] uses in `setCollected` for [RedirectionMapper.browserData]. */
         const val COLLECTED_BROWSER = "redirectionBrowser"
+
+        /** The `/init` `plugin_result.status` PayPal answers for a bnpl order it will not finance. */
+        internal const val NOT_ELIGIBLE = "NOT_ELIGIBLE"
     }
 }
 

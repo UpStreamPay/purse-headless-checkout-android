@@ -43,11 +43,12 @@ adds or removes a divergence.
 | `commons/PartnerUI/initGuard.ts` | `core/api/InitGuard.kt` | yes |
 | `partner-ui/src/events.ts` (`UnifiedEvent`) | `partnerui/PluginEvent.kt` | trimmed |
 | `plugins/utils/noCVV.ts`, `patchItemPayloadWithToken` | `PayToken.requiresCvv`, `PayToken.patchPaymentData` | yes |
-| `commons/PartnerUI/theming/*`, `hostedForm` translations | `partnerui/PurseTheme.kt`, `CardFormTexts` | same scopes and fallback chain |
+| `commons/PartnerUI/theming/*`, `hostedForm` translations | `partnerui/PurseTheme.kt`, `CardFormTexts` | same scopes and fallback chain; colours re-spelled `#AARRGGBB` for SecureFields' `Color.parseColor` |
 | `plugins/generics/googlepay/*` + `partners/{adyen,ingenico,default}` + `libs/ingenico-onlinepayments` | `plugins/generics/googlepay/*`, `partners/*`, `WorldlineProductClient.kt` (module `:partner-googlepay`, artifact `headless-checkout-googlepay`) | protocol yes; sheet via Play Services |
 | `plugins/generics/redirection/*` + `manageRedirection` | `plugins/generics/redirection/*`, `partnerui/redirect/RedirectionResolver.kt` + WebView Activity | yes; return handled in-app |
 | `plugins/partners/klarna-installments` | `plugins/partners/klarna/*` (module `:partner-klarna`, artifact `headless-checkout-klarna`) | JS SDK → `KlarnaPaymentView`; optional artifact |
 | `plugins/partners/paypal/wallet` | `plugins/partners/paypal/wallet/*` (module `:partner-paypal`, artifact `headless-checkout-paypal`) | JS popup → PayPal Android SDK; optional artifact |
+| `plugins/partners/paypal/bnpl` `ensureClientCompatibility` + `getEligibilityCheck` (`item-factory/primaries.ts`) | `RedirectionPlugin.ensureClientCompatibility` + `PurseHeadlessCheckout.runEligibilityChecks` | probe only; the popup plugin is not ported |
 | `plugins/vaults/purse/creditcard` + `generics/hostedfields` | `plugins/vaults/purse/creditcard/*` | iframes → SecureFields Android |
 
 ## Vocabulary
@@ -73,21 +74,23 @@ adds or removes a divergence.
 |---|---|---|---|
 | Plugin activation | static lookup table | `PluginRegistry` with all built-ins registered in `init` | same effect; registry kept for `Partner.Other` and host-registered plugins |
 | Google Pay resolution | template `googlepay` | pair `(ingenico, googlepay)` + method fallback | historical; harmless for today's sessions |
+| Item no plugin serves (unknown template outside redirection mode, missing artifact) | partner-ui dies `not supported` on mount → `PARTNER_UI_FATAL_ERROR`, `clearSplit`, `deactivateMop` | same state when its payment element is built (`PurseHeadlessCheckout.retireUnserved`), and when `submitPayment` finds it in the split (throws `NoPluginRegistered`, nothing sent) | no DOM mount to die in; a split can be built with `setPrimary` alone (SDK-12575) |
 | Interactive step | plugin renders into the DOM and owns its client | a `PaymentCoordinator` subclass owns the native SDK; the base owns `/validate`, redirects and the return; the plugin stays pure protocol | Activity lifecycle and result contracts have no web analogue |
 | Plugin ↔ checkout access | plugin holds the checkout context | one `PluginHost` interface, implemented by `PurseHeadlessCheckout.host(item)` | keeps `eu.purse.partnerui` from depending on `eu.purse.checkout` |
 | Fulfilment | `setAsPrimarySource` refuses an unfulfilled element | reactive `isPaymentFulfilled`, selectable before the form is filled | fits `StateFlow` UIs |
-| Card `/init` timing | at `onSessionSet` | inside `preValidation` | nothing about rendering depends on it on Android |
 | PayPal `/init` timing | at render | on button tap | avoids orphan PayPal orders |
+| PayPal bnpl eligibility probe | on the dedicated `paypal/bnpl` plugin, looked up by pair whatever plugin renders | on the generic `RedirectionPlugin`, the plugin that serves bnpl (redirection mode only) | no dedicated bnpl plugin on Android; the probe needs no PayPal SDK, so no artifact either (iOS does the same) |
+| Eligibility probes on a spent session | run at every primary build | skipped when the session is not `READY` or its `/validate` was consumed, so a restore after a submit never re-`/init`s | web has no restore; SDK-12461 (never `/init` a spent session) |
 | PayPal `redirection.url` in `/validate` | never followed | explicitly dropped when it is a PayPal approval URL | it is the web popup URL echoed back; following it re-opens PayPal |
 | Klarna return | page URL | host app must declare a `singleTask` deep link | `KlarnaPaymentView` resumes the same Activity |
-| Payment confirmation after redirect | merchant success page | `paymentStatus()` / `awaitPaymentOutcome()` polling | the app returns to the launching screen |
+| Payment confirmation after redirect | `/validate`, the redirection return and the success/failure URLs; the merchant confirms on its server | `ReturnedFromRedirect`, then the app asks the merchant's backend. `paymentStatus()` / `awaitPaymentOutcome()` are deprecated (removed at the next major): the session read answers `401` to the client key (SDK-12574, iOS SDK-12559) | the app returns to the launching screen, which cannot read the final redirect |
 | `setSession` survivors | resets the split | keeps an unchanged primary selected | AC of US-24 |
 | Second submit | latch posts `HEADLESS_CHECKOUT_SUBMIT_BLOCKED` and returns silently | same latch, atomic, **throws** `SubmitBlocked` (`SUBMIT_BLOCKED`) and re-checks expiry first | a merchant needs a code to react to, not a silent no-op (SDK-12218) |
 | `/validate` once per session | per-instance `#validationConsumed`; `fetch` never replays a POST | same latch, plus a process-wide `ValidateGuard` per session id, streamed bodies (no `HttpURLConnection` replay), and a lost answer (`outcomeUnknown`) spends the session | a re-created Activity can rebuild the checkout for the same session, and `HttpURLConnection` re-sends a buffered POST whose answer was lost (SDK-12621) |
 | `SUBMITTING` disabled state | declared, never set | overlaid on every selectable item while `submitPayment` runs | US-22 |
 | `teardown()` | unsubscribes the event bus; instance stays usable | releases everything, `isTornDown`, later calls throw `CheckoutTornDown` | US-25 |
-| Redirect WebView | page navigation | `https`-only navigation, file/content access off, return intent checked against the app's own scheme | US-08 / US-09 |
-| Process death during a redirect | n/a | recreation reports a *return* (check the session), never a cancel | US-27 |
+| Redirect WebView | page navigation | `https`-only navigation, file/content access off, DOM storage on (PSP pages such as iDEAL need `localStorage`), return intent checked against the app's own scheme | US-08 / US-09, SDK-12572 |
+| Process death during a redirect | n/a | recreation reports a *return* (ask the merchant's backend), never a cancel | US-27 |
 | Saved gift cards | listed in `mops` | `savedSecondaryTokens` flow, balances re-`/init`ed sequentially | `InitGuard` would coalesce parallel `/init`s of one issuer |
 | Monitoring envelope | `wrapper`, `env`, … | same plus `platform: "android"` | matches the native vault SDKs |
 | `HEADLESS_CHECKOUT_CREATE` payload | `user_agent`, `screen` | same plus `device` (OS version, API level, manufacturer, model) | what RUN parses out of a web user agent (SDK-12189) |
@@ -96,5 +99,7 @@ adds or removes a divergence.
 | `PAYMENT_ERROR` on a thrown error | `message`, `stack` | plus `code`, `api_path`, `api_status`, `api_error`, `outcome_unknown` | a minified Android stack says nothing; the codes do |
 | `instanceId` on the envelope | one per page load (`window.__PURSE_INSTANCE_ID__`) | one per checkout, exposed as `instanceId`, saved with `saveState` and kept by `restore`; CREATE says `restored: true` | a shopper's journey survives process death as one instance |
 | SDK `version` on the envelope | `package.json` version | `SdkVersion.VALUE`, generated from the release tag at build time | `0.0.0-SNAPSHOT` for a local build |
+| Card form levels | one element (`appendTo`) | the drop-in element, or `rememberCardCoordinator` + `PurseCardForm` / `VaultField` with `fieldStates` and `errorMessage(field)` ([card form](integration/card-form.md)) | the iOS split; a native app lays out its own fields more often (SDK-12579) |
+| Card field names | `aria-labelledby` to the visible label | the label as the input's `contentDescription`, plus a `purse_card_*` test tag | no label/input association across the SecureFields `AndroidView`; tags match iOS (SDK-12579) |
 | UI toolkit | DOM | Compose only: `rememberPaymentElement`, `remember*Coordinator`, `PurseCardForm` | SecureFields Android is Compose-first; a View app hosts a `ComposeView` |
 | Secondaries extension | static configs | `SecondaryConfigs.register`, `pollForToken`, `classifyInitError` hooks | lets a host add an issuer without an SDK release |

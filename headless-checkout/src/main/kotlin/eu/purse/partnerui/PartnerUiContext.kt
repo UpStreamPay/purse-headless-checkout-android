@@ -54,7 +54,11 @@ data class PartnerUiContext(
  * trimmed to what the Android plugins render themselves.
  */
 data class PluginOptions(
-    /** BCP-47 locale (e.g. `"fr-FR"`); `null` falls back to the device locale. */
+    /**
+     * BCP-47 locale (e.g. `"fr-FR"`); `null` falls back to the device locale. Picks the language of
+     * the card form's default copy ([CardFormTexts]) and the `partner_data.browser.locale` sent to
+     * the PSP.
+     */
     val locale: String? = null,
     /** Styling for partner-rendered fields (the SecureFields card form). */
     val theme: PurseTheme? = null,
@@ -66,8 +70,8 @@ data class PluginOptions(
  * Overridable copy for the card form — the card subset of web's `HostedFormUIOptions`
  * (`panInputLabel`, `panPlaceholder`, `panRequiredError`, `panFormatError`, `panTooltipText`, …),
  * one [FieldTexts] per secure field. `null` falls back to the SDK's localized resources
- * (`purse_card_*` strings, `values/` + `values-fr/`) — web falls back to its translation table the
- * same way.
+ * (`purse_card_*` strings, `values/` + `values-fr/`) read in [PluginOptions.locale] — the device
+ * locale only when that is `null` — as web falls back to its translation table.
  */
 data class CardFormTexts(
     val cardNumber: FieldTexts = FieldTexts(),

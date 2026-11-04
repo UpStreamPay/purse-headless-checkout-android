@@ -76,7 +76,8 @@ this filter; its `klarnaReturnUrl` parameter overrides it. Details: [plugins/kla
 The session decides which methods are listed, not your dependencies. If it offers Google Pay,
 PayPal or Klarna and the artifact is missing, the SDK logs a warning at `init` naming the
 dependency, the method's payment element has no UI, and `submit()` reports the same message as a
-`PaymentOutcome.Failed(NoPluginRegistered)`:
+`PaymentOutcome.Failed(NoPluginRegistered)`. Building that element disables the method with
+`PARTNER_UI_FATAL_ERROR` for the rest of the session, as web does:
 
 ```
 no plugin registered for klarna/installments — add the `eu.purse:headless-checkout-klarna` dependency to offer this method
