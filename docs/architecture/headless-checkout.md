@@ -334,7 +334,7 @@ left without an answer. `teardown()` sets `isTornDown` and every later operation
 `CheckoutTornDown`. All exceptions share one `PurseException` root (`code`, `documentationLink`),
 `PurseSessionException` (`SESSION_MALFORMED`) and `PaymentApiException` (`API_ERROR`) included;
 `PurseErrorCodeCoverageTest` exercises every code. The redirect WebView follows `https` pages only,
-with file/content access off, accepts a return intent only on the app's own scheme, and reports
+with file/content access off (DOM storage on since SDK-12572, as PSP pages need `localStorage`), accepts a return intent only on the app's own scheme, and reports
 recreation after process death as a *return* to reconcile, never a cancel.
 
 Since then (SDK-12216): **CVV re-entry on a saved card** — `PaymentToken.requiresCvv` (the inverse

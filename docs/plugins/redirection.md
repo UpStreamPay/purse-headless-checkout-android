@@ -208,6 +208,7 @@ able to pick another method.
 | `Completed` with a `Log.w "no redirect to follow"` | `/validate` carried no redirect, or it was suppressed as the widget's own confirmation page — see specificity 1 and `RedirectionResolver`'s doc |
 | `PaymentApiException: redirection init not successful` | Backend refused the `/init` for this item |
 | `Failed(PartnerUiException("call prepare() first"))` | `submit()` before `/init` came back |
+| The PSP page shows its own generic error ("Sorry, something went wrong") | The page needs a browser feature the WebView lacked — DOM storage was off before SDK-12572 and broke iDEAL; check `adb logcat -s RedirectionCheckout` and the page's console |
 | The PSP page refuses to render | Some providers block embedded WebViews — see the caveat in [plugins/README](README.md#shared-redirects-and-3-d-secure) |
 | `PurseCheckoutException.NoPluginRegistered` | The item resolved to no plugin at all — a near-miss `template` value is the usual cause |
 
