@@ -218,6 +218,19 @@ object ThemeValues {
         }
     }
 
+    /**
+     * A theme colour → `#AARRGGBB`, the one spelling `android.graphics.Color.parseColor` reads the
+     * way the theme means it. SecureFields parses `VaultStyles` colours with `parseColor` and paints
+     * opaque black on failure, and `parseColor` knows neither `transparent` nor `#rgb`, and reads
+     * 8 digits alpha-first — a CSS `#rrggbbaa` would come out with its channels shuffled.
+     * A value [colorArgb] cannot read is passed through untouched, so what `parseColor` already
+     * understood on its own (its named colours such as `white`) keeps working.
+     */
+    internal fun parseColorArgb(value: String?): String? =
+        colorArgb(value)?.let { "#" + it.toString(radix = 16).padStart(ARGB_HEX_DIGITS, '0').uppercase() } ?: value
+
+    private const val ARGB_HEX_DIGITS = 8
+
     /** `"14px"`, `"14sp"`, `"14dp"`, `"14"` → 14f (all read as scale-independent points), else `null`. */
     fun sizeSp(value: String?): Float? {
         val v = value?.trim()?.lowercase() ?: return null
