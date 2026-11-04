@@ -16,6 +16,7 @@ import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
 import eu.purse.core.environment.PurseEnvironment
+import eu.purse.partnerui.CardFormTexts
 import eu.purse.partnerui.PayToken
 import eu.purse.partnerui.PaymentCoordinator
 import eu.purse.partnerui.PaymentElementListener
@@ -33,6 +34,7 @@ import eu.purse.securefields.config.VaultFieldConfig
 import eu.purse.securefields.config.VaultStyles
 import eu.purse.securefields.events.BrandDetectedPayload
 import eu.purse.securefields.events.BrandUserSelectionPayload
+import eu.purse.securefields.events.FieldStatePayload
 import eu.purse.securefields.events.FormValidPayload
 import eu.purse.securefields.model.Brand
 import eu.purse.securefields.model.SubmitOptions
@@ -130,6 +132,9 @@ fun rememberCardCoordinator(host: PluginHost, listener: PaymentElementListener):
             override fun onBrandUserSelection(payload: BrandUserSelectionPayload) {
                 coordinator.selectedBrand = payload.selected
             }
+            override fun onChange(payload: FieldStatePayload) = coordinator.fieldTracker.onChange(payload)
+            override fun onFocus(payload: FieldStatePayload) = coordinator.fieldTracker.onFocus(payload)
+            override fun onBlur(payload: FieldStatePayload) = coordinator.fieldTracker.onBlur(payload)
         })
         sdk.render()
         onDispose {
@@ -189,6 +194,25 @@ class CardCoordinator internal constructor(
     /** The form's validity; always `true` without a form. Mirrored into the checkout through `setFulfilled`. */
     var formValid: Boolean by mutableStateOf(!mode.rendersForm)
         internal set
+
+    internal val fieldTracker = CardFieldStates(texts)
+
+    /**
+     * Per-field state (Compose state), refreshed on every SecureFields change, focus and blur event —
+     * whether the form is [PurseCardForm] or your own `VaultField` layout. A field nothing has
+     * happened to yet is absent; read it as `CardFieldState()`.
+     */
+    val fieldStates: Map<CardField, CardFieldState> get() = fieldTracker.current
+
+    /**
+     * The error [PurseCardForm] shows under [field] right now, or `null` — for a host that draws its
+     * own messages (iOS `errorMessage(for:)`). Never while the shopper is typing in the field: a
+     * format error appears once the field is left with content SecureFields rejects, and clears once
+     * it is valid; a required error appears once an empty field has been left. The copy is the
+     * field's `formatError` / `requiredError` from [CardFormTexts], else the SDK default in the
+     * checkout locale.
+     */
+    fun errorMessage(field: CardField): String? = fieldTracker.errorMessage(field)
 
     /** Which co-badged brand to submit as: SecureFields' BIN detection, or the shopper's choice. */
     internal var selectedBrand: Brand? by mutableStateOf(null)

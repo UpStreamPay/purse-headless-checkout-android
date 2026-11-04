@@ -615,6 +615,8 @@ theme, so a partial theme never leaves a hole. See [recipes §13](recipes.md#13-
 | `theme` | `val theme: PurseTheme.Resolved` | The merchant's `PluginOptions.theme` resolved over web's defaults. |
 | `mode` | `val mode: CardCoordinator.Mode` | See above; `mode.rendersForm` is `false` only for `TOKEN_NO_CVV`. |
 | `formValid` | `var formValid: Boolean` (Compose state) | `false` until every configured field is valid (always `true` in `TOKEN_NO_CVV`). Drive your "Pay" button off this, or off `isPaymentFulfilled`, which the coordinator keeps in step for you. |
+| `fieldStates` | `val fieldStates: Map<CardField, CardFieldState>` (Compose state) | Per field: `isValid`, `isFocused`, `hasContent`, `wasBlurred` (set the first time the field loses focus, never cleared). Refreshed on every SecureFields change, focus and blur, with `PurseCardForm` or your own `VaultField` layout. A field nothing has happened to yet is absent. |
+| `errorMessage` | `fun errorMessage(field: CardField): String?` | The error `PurseCardForm` shows under `field` right now, or `null`: `formatError` once the field is left with rejected content, `requiredError` once an empty field is left, never while the shopper is typing in it. For a host that draws its own messages. |
 | `submit` | `fun submit()` | Tokenizes via SecureFields (the card, or just the CVV), then `/init` + `/validate` through the host; in `TOKEN_NO_CVV` it skips tokenization. A no-op (never an error) while the form isn't complete and valid. |
 
 One trap worth naming: `rememberCardCoordinator` keys its SecureFields instance on the `host` object,
