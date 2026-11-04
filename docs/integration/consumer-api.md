@@ -769,7 +769,10 @@ While in flight, every item reads `DisabledState.Submitting`; the lock lifts whe
   the rest of the session, as web does, so the shopper picks another one.
 - `PurseCheckoutException.ValidateFailed` — `/validate` failed. **Check `outcomeUnknown`**: `true`
   means the request left the device and no answer came back, so the payment may exist server-side —
-  ask your backend for the outcome instead of telling the shopper it failed.
+  the outcome is unknown: confirm it from your backend (server-side session read) instead of telling
+  the shopper it failed, and if it did not go through, start a new session. Such a session is
+  spent: a retry is refused with `SubmitBlocked` and no second `/validate` is ever sent. A failure
+  before the request left the device (no network) has `outcomeUnknown == false` and stays retryable.
 
 Most callers reach `submitPayment` indirectly, through `PluginHost.submitPayment`, which coordinators
 call for you; the element's `PaymentOutcome.Failed` carries the same exception.

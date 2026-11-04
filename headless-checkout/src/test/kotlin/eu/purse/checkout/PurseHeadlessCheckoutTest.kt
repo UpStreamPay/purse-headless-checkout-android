@@ -10,6 +10,7 @@ import eu.purse.checkout.state.CheckoutSavedState
 import eu.purse.checkout.state.SessionState
 import eu.purse.core.api.InitGuard
 import eu.purse.core.api.PaymentApiException
+import eu.purse.core.api.ValidateGuard
 import eu.purse.core.datetime.ServerDatetimeChecker
 import eu.purse.core.environment.PurseEnvironment
 import eu.purse.core.error.PurseErrorCode
@@ -1388,6 +1389,10 @@ class PurseHeadlessCheckoutTest {
 
     // --- reliability: one submit per session, locks, teardown (SDK-12218) ------------------------------
 
+    /** `/validate` is once-only per session id, process-wide — every test here reuses the same session. */
+    @Before
+    fun resetValidateGuard() = ValidateGuard.reset()
+
     private val SUCCESS_ANSWER = """{"global_status":"SUCCESS","results":[]}"""
 
     /** A checkout whose whole amount a gift card covers, so a submit needs no plugin. */
@@ -1456,16 +1461,60 @@ class PurseHeadlessCheckoutTest {
     }
 
     @Test
-    fun `a validate that never answered is reported as outcome unknown`() {
+    fun `a validate that never left the device leaves the session submittable`() {
         val api = FakePaymentApi()
         val checkout = coveredCheckout(api)
-        api.close() // the request leaves the device; nothing answers
+        api.close() // connection refused: the request never leaves the device
 
         val thrown = assertThrows(PurseCheckoutException.ValidateFailed::class.java) {
             runBlocking { checkout.submitPayment() }
         }
-        assertTrue("the payment may exist server-side — the merchant must reconcile", thrown.outcomeUnknown)
+        assertFalse("the server cannot have seen it", thrown.outcomeUnknown)
         assertEquals(SessionState.ERROR, checkout.sessionState.value)
+        assertFalse("nothing was sent, so the shopper may retry", checkout.saveState().submitted)
+    }
+
+    /**
+     * SDK-12621: the server records the payment (`200`) but the answer never reaches the device.
+     * `HttpURLConnection` used to replay the buffered POST once, which the API refused with
+     * `400 SESSION_ALREADY_SUBMITTED_ERROR` — the shopper saw a failure for an accepted payment.
+     */
+    @Test
+    fun `a validate whose answer is lost is sent once, reported outcome unknown, and spends the session`() {
+        FakePaymentApi().use { api ->
+            var calls = 0
+            api.on("validate") {
+                if (calls++ == 0) FakePaymentApi.DROP to "" else 400 to """{"error":"SESSION_ALREADY_SUBMITTED_ERROR"}"""
+            }
+            val checkout = coveredCheckout(api)
+
+            val thrown = assertThrows(PurseCheckoutException.ValidateFailed::class.java) {
+                runBlocking { checkout.submitPayment() }
+            }
+            assertTrue("the payment may exist server-side — the outcome is unknown", thrown.outcomeUnknown)
+            assertEquals("the HTTP stack never replays /validate", 1, api.requests.count { it.path.endsWith("/validate") })
+            assertEquals(SessionState.ERROR, checkout.sessionState.value)
+
+            assertThrows(PurseCheckoutException.SubmitBlocked::class.java) { runBlocking { checkout.submitPayment() } }
+            assertEquals("a retry never reaches the API", 1, api.requests.count { it.path.endsWith("/validate") })
+            assertTrue("the spent session survives process death", checkout.saveState().submitted)
+        }
+    }
+
+    @Test
+    fun `a checkout rebuilt for a session that already sent its validate cannot send another`() {
+        FakePaymentApi().use { api ->
+            api.respond("validate", SUCCESS_ANSWER)
+            runBlocking { coveredCheckout(api).submitPayment() }
+
+            // Same session, new instance — what a re-created Activity without saveState would build.
+            val rebuilt = coveredCheckout(api)
+            val thrown = assertThrows(PurseCheckoutException.SubmitBlocked::class.java) {
+                runBlocking { rebuilt.submitPayment() }
+            }
+            assertEquals(PurseErrorCode.SUBMIT_BLOCKED, thrown.code)
+            assertEquals(1, api.requests.count { it.path.endsWith("/validate") })
+        }
     }
 
     @Test

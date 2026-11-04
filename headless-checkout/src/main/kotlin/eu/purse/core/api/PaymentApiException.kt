@@ -25,14 +25,22 @@ class PaymentApiException(
     val errorCode: String? = null,
     /** The request path that failed, e.g. `/init`. */
     val path: String? = null,
+    /**
+     * Whether the request may have left the device. `false` only when the failure happened before
+     * the body was handed to the socket (no route, DNS, connection refused, TLS handshake) or when
+     * the SDK itself declined to send it — the server cannot have seen it.
+     */
+    val requestSent: Boolean = true,
 ) : PurseException(message, PurseErrorCode.API_ERROR, cause) {
 
     /**
-     * Whether the request may have reached the server even though no answer came back — a transport
-     * failure with no [status]. After a `/validate`, this means the payment may exist; check the
-     * session status instead of reporting a failure.
+     * Whether the request may have reached the server even though no usable answer came back — a
+     * transport failure with no [status] after the request left the device ([requestSent]). After a
+     * `/validate`, this means the payment may exist: the outcome is unknown, so confirm it from the
+     * merchant backend (server-side session read) instead of reporting a failure, start a new session
+     * if it did not go through, and never send the `/validate` again.
      */
-    val outcomeUnknown: Boolean get() = status == null
+    val outcomeUnknown: Boolean get() = status == null && requestSent
 
     /**
      * The session itself is spent — already submitted, expired, or gone — so every further call is
