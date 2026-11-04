@@ -1,11 +1,12 @@
 // Web: packages/headless-checkout/src/headless-checkout.ts + session/payment/payment.ts
 // Same: session, method list, split, submit, tokens, setSession, monitoring events.
-// Differs: Svelte stores → StateFlow; `host(item)` seam for coordinators; `awaitPaymentOutcome` for the app's return from a redirect;
+// Differs: Svelte stores → StateFlow; `host(item)` seam for coordinators; `awaitPaymentOutcome` (deprecated, SDK-12574);
 //          the submit latch throws SubmitBlocked and sets SUBMITTING on every item; teardown() refuses later calls.
 package eu.purse.checkout
 
 import android.util.Log
 import eu.purse.checkout.confirmation.PaymentSessionStatus
+import eu.purse.checkout.confirmation.SESSION_READ_DEPRECATED
 import eu.purse.checkout.monitoring.CheckoutEventBus
 import eu.purse.checkout.monitoring.CheckoutEventCode
 import eu.purse.checkout.monitoring.CheckoutMonitoring
@@ -1417,17 +1418,29 @@ class PurseHeadlessCheckout private constructor(
     }
 
     /**
-     * Re-query the session's transactions (`GET /{entityId}/sessions/{sessionId}`) — the source of
-     * truth to check after a redirect/3-D Secure return, or after a `submitPayment` whose
-     * `ValidateFailed.outcomeUnknown` is `true`, rather than trusting a locally-held result. Runs on
-     * `Dispatchers.IO`. For a typed answer use [paymentStatus] / [awaitPaymentOutcome].
+     * Every transaction so far, raw (`GET /{entityId}/sessions/{sessionId}`). Runs on `Dispatchers.IO`.
+     *
+     * **Deprecated**: the Payment API answers `401` to the session's client key, so this can never
+     * confirm a payment from the app. Take the outcome from [submitPayment] / the element's
+     * `onOutcome` / the redirection return, then confirm the payment from your backend, which reads
+     * the session with its own credentials. Removed in the next major.
      */
+    @Deprecated(SESSION_READ_DEPRECATED)
+    @Suppress("DEPRECATION") // deprecated itself; it only chains to the rest of the session read
     suspend fun sessionTransactions(): JSONArray {
         val api = apiClient()
         return withContext(Dispatchers.IO) { api.getSession() }
     }
 
-    /** One typed status check against the session's own transactions (see [awaitPaymentOutcome] to poll). */
+    /**
+     * What the session's transactions say about the payment, right now.
+     *
+     * **Deprecated**: the Payment API answers `401` to the client key. A shopper returning from a
+     * 3-D Secure or PSP page tells you they came back, nothing more: ask your backend. Removed in
+     * the next major.
+     */
+    @Deprecated(SESSION_READ_DEPRECATED)
+    @Suppress("DEPRECATION") // deprecated itself; it only chains to the rest of the session read
     suspend fun paymentStatus(): PaymentSessionStatus = PaymentSessionStatus.from(sessionTransactions())
 
     /**
@@ -1435,7 +1448,13 @@ class PurseHeadlessCheckout private constructor(
      * doesn't need (its redirect lands on the merchant's own success/failure page, while an app
      * returns to the very screen that launched the redirect). Returns the last status on timeout
      * (typically [PaymentSessionStatus.Pending]); cancellable like any suspend function.
+     *
+     * **Deprecated**: every poll is the same `GET` session, which answers `401` to the client key.
+     * On `ReturnedFromRedirect`, or a `ValidateFailed` whose `outcomeUnknown` is `true`, ask your
+     * backend instead. Removed in the next major.
      */
+    @Deprecated(SESSION_READ_DEPRECATED)
+    @Suppress("DEPRECATION") // deprecated itself; it only chains to the rest of the session read
     suspend fun awaitPaymentOutcome(
         timeoutMs: Long = 60_000,
         pollIntervalMs: Long = 3_000,
@@ -1833,8 +1852,8 @@ class PurseHeadlessCheckout private constructor(
          * decisions and what the native steps collected come back; a form re-mounts empty (card data is
          * never saved). When a submit had already left the device ([CheckoutSavedState.submitted]) the
          * restored session is **spent**: [sessionState] is `SUBMITTED`, [submitPayment] refuses, and
-         * the merchant confirms the outcome with [awaitPaymentOutcome] — a second `/validate` for the
-         * same session is never sent.
+         * the merchant confirms the outcome from its backend — a second `/validate` for the same
+         * session is never sent.
          *
          * [hooks] and [options] are not saved (they hold code): pass the same ones as at [init].
          * Anything the saved snapshot names that the session no longer offers is skipped silently.

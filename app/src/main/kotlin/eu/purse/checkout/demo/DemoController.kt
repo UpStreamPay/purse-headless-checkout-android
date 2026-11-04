@@ -714,9 +714,10 @@ class DemoController(private val activity: ComponentActivity) {
     }
 
     /**
-     * A redirect return is not a verdict, so the result screen settles it itself: poll the session's
-     * transactions a few times, the way a merchant backend (or `awaitPaymentOutcome`) would. The
-     * "Get transactions" button in the developer panel stays for a manual retry.
+     * A redirect return is not a verdict, so the result screen settles it itself: ask the merchant
+     * backend (alfred) for the session's transactions a few times, the flow the SDK documents — the
+     * SDK's own session read answers 401 to the client key. The "Get transactions" button in the
+     * developer panel stays for a manual retry.
      */
     private fun confirmInBackground() {
         if (alfredSessionId.isBlank()) return

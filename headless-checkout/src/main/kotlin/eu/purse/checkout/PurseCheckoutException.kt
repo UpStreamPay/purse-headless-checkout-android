@@ -89,8 +89,8 @@ sealed class PurseCheckoutException(
     /**
      * A client-side or API validation step failed during "create payment". When [outcomeUnknown]
      * is `true` the `POST /validate` left the device but no answer came back (transport failure):
-     * the payment may exist server-side — reconcile with `paymentStatus()` /
-     * `awaitPaymentOutcome()` instead of telling the shopper it failed.
+     * the payment may exist server-side — ask your backend for the session's outcome instead of
+     * telling the shopper it failed.
      */
     class ValidateFailed(
         message: String,

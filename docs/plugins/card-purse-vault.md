@@ -80,7 +80,7 @@ sequenceDiagram
         Co-->>App: Listener.onRequiresAction()
         Co->>Rd: launch (in-app WebView)
         Rd-->>Co: Approved / Canceled / Failed
-        Co-->>App: onOutcome(ReturnedFromRedirect) — confirm against the session
+        Co-->>App: onOutcome(ReturnedFromRedirect) — confirm from your backend
     else no redirect
         Co-->>App: onOutcome(Completed(result))
     end
@@ -205,7 +205,7 @@ either way.
 |---|---|
 | `onReady(ready)` | Form validity changed (mirrors `formValid`; also re-fired if `submit()` is refused) |
 | `onOutcome(PaymentOutcome.Completed)` | Terminal, no redirect pending — `status` is the API's verdict (`SUCCESS`, or a refusal) |
-| `onOutcome(PaymentOutcome.ReturnedFromRedirect)` | The shopper came back from a redirect — not an outcome, confirm with `awaitPaymentOutcome()` |
+| `onOutcome(PaymentOutcome.ReturnedFromRedirect)` | The shopper came back from a redirect — not an outcome, confirm from your backend ([recipe 9](../integration/recipes.md#9-confirm-after-a-redirect-ask-your-backend)) |
 | `onRequiresAction()` | A 3-D Secure step is being launched (informational) |
 | `onPaymentId(id)` | Informational `payment_id` off the confirmation-page JWT |
 | `onOutcome(PaymentOutcome.Canceled)` | The 3-D Secure WebView was dismissed | |

@@ -7,7 +7,7 @@ import eu.purse.partnerui.PaymentOutcome
  * What the demo shows on screen 3. Three outcomes, not two, because a payment flow can genuinely end
  * without an answer: when the shopper comes back from a partner redirect (3-D Secure, Klarna, an
  * external banking app), the coordinators deliberately report only "they returned" — the real status
- * has to be re-checked against the session (see `GooglePayCoordinator.onRedirectReturn`'s doc and
+ * has to be confirmed by the merchant backend, alfred here (see `GooglePayCoordinator.onRedirectReturn`'s doc and
  * `docs/decisions/pain-points-recap.md`). Rendering that as success would be a lie; as failure, a
  * different one. Hence [Unconfirmed], which points at the transactions lookup instead.
  */

@@ -31,8 +31,8 @@ import androidx.appcompat.app.AppCompatActivity
  * redirect path rather than reverting this one.
  *
  * A returned [RedirectionCheckoutResult.Approved] only means the shopper reached one of those URLs
- * (or came back to this Activity at all) — the caller must still re-check the session status to
- * learn the real outcome. That is also why a return intent fired by another app cannot approve a
+ * (or came back to this Activity at all) — the merchant's backend must still confirm the real
+ * outcome. That is also why a return intent fired by another app cannot approve a
  * payment: it is checked against this app's own return scheme, and even then only says "came back".
  *
  * What the WebView may load is an allow-list: `https` pages, plus the two return destinations

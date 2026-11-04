@@ -83,13 +83,13 @@ adds or removes a divergence.
 | Eligibility probes on a spent session | run at every primary build | skipped when the session is not `READY` or its `/validate` was consumed, so a restore after a submit never re-`/init`s | web has no restore; SDK-12461 (never `/init` a spent session) |
 | PayPal `redirection.url` in `/validate` | never followed | explicitly dropped when it is a PayPal approval URL | it is the web popup URL echoed back; following it re-opens PayPal |
 | Klarna return | page URL | host app must declare a `singleTask` deep link | `KlarnaPaymentView` resumes the same Activity |
-| Payment confirmation after redirect | merchant success page | `paymentStatus()` / `awaitPaymentOutcome()` polling | the app returns to the launching screen |
+| Payment confirmation after redirect | `/validate`, the redirection return and the success/failure URLs; the merchant confirms on its server | `ReturnedFromRedirect`, then the app asks the merchant's backend. `paymentStatus()` / `awaitPaymentOutcome()` are deprecated (removed at the next major): the session read answers `401` to the client key (SDK-12574, iOS SDK-12559) | the app returns to the launching screen, which cannot read the final redirect |
 | `setSession` survivors | resets the split | keeps an unchanged primary selected | AC of US-24 |
 | Second submit | latch posts `HEADLESS_CHECKOUT_SUBMIT_BLOCKED` and returns silently | same latch, atomic, **throws** `SubmitBlocked` (`SUBMIT_BLOCKED`) and re-checks expiry first | a merchant needs a code to react to, not a silent no-op (SDK-12218) |
 | `SUBMITTING` disabled state | declared, never set | overlaid on every selectable item while `submitPayment` runs | US-22 |
 | `teardown()` | unsubscribes the event bus; instance stays usable | releases everything, `isTornDown`, later calls throw `CheckoutTornDown` | US-25 |
 | Redirect WebView | page navigation | `https`-only navigation, file/content access off, DOM storage on (PSP pages such as iDEAL need `localStorage`), return intent checked against the app's own scheme | US-08 / US-09, SDK-12572 |
-| Process death during a redirect | n/a | recreation reports a *return* (check the session), never a cancel | US-27 |
+| Process death during a redirect | n/a | recreation reports a *return* (ask the merchant's backend), never a cancel | US-27 |
 | Saved gift cards | listed in `mops` | `savedSecondaryTokens` flow, balances re-`/init`ed sequentially | `InitGuard` would coalesce parallel `/init`s of one issuer |
 | Monitoring envelope | `wrapper`, `env`, … | same plus `platform: "android"` | matches the native vault SDKs |
 | `HEADLESS_CHECKOUT_CREATE` payload | `user_agent`, `screen` | same plus `device` (OS version, API level, manufacturer, model) | what RUN parses out of a web user agent (SDK-12189) |

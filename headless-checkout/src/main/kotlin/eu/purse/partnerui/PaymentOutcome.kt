@@ -27,7 +27,7 @@ sealed class PaymentOutcome {
     /**
      * The shopper came back from a redirect (3-D Secure, a PSP page, PayPal's approval). This is
      * **not** an outcome: the final redirect is built server-side and can land on a URL this client
-     * cannot read. Confirm against the session with `PurseHeadlessCheckout.awaitPaymentOutcome()`.
+     * cannot read. Confirm from your backend.
      */
     data object ReturnedFromRedirect : PaymentOutcome()
 
@@ -37,7 +37,7 @@ sealed class PaymentOutcome {
     /**
      * The attempt did not produce a payment. Nothing was charged, with one exception: a
      * `PurseCheckoutException.ValidateFailed` whose `outcomeUnknown` is `true` means the request
-     * left the device unanswered — confirm against the session before showing a failure. A
+     * left the device unanswered — confirm from your backend before showing a failure. A
      * `PurseCheckoutException.PartnerFailed` before any submit means the method could not be set
      * up; the item is disabled accordingly on `paymentMethods`.
      */

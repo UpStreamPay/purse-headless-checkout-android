@@ -35,6 +35,8 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 
+// One class per public entry point; splitting it would scatter the shared fixtures. // ponytail: split by feature when it gets in the way
+@Suppress("LargeClass")
 class PurseHeadlessCheckoutTest {
 
     /** A checker that never syncs (no network) and trusts the local clock. */
@@ -1531,6 +1533,8 @@ class PurseHeadlessCheckoutTest {
         assertFalse(checkout.isPaymentFulfilled.value)
     }
 
+    // paymentStatus() is deprecated (GET session 401s to the client key) but still shipped, so still covered.
+    @Suppress("DEPRECATION")
     @Test
     fun `after teardown every operation fails with CHECKOUT_TORN_DOWN`() {
         val checkout = checkout()

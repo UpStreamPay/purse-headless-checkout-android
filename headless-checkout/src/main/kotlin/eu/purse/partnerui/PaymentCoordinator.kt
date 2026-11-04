@@ -149,8 +149,8 @@ abstract class PaymentCoordinator protected constructor(
     /**
      * The shopper is back from the redirect WebView. `Approved` only means they came back
      * ([PaymentOutcome.ReturnedFromRedirect]): a 3-D Secure challenge's final redirect is built
-     * server-side and can land on a URL this client cannot read, so the real outcome is checked
-     * against the session (`PurseHeadlessCheckout.awaitPaymentOutcome`), never inferred here.
+     * server-side and can land on a URL this client cannot read, so the merchant's backend confirms
+     * the real outcome, never inferred here.
      */
     @InternalPurseApi
     fun onRedirectReturn(result: RedirectionCheckoutResult) {

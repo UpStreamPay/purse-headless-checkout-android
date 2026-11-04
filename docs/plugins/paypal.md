@@ -87,7 +87,7 @@ sequenceDiagram
         Co-->>App: Listener.onRequiresAction()
         Co->>Rd: launch (in-app WebView)
         Rd-->>Co: Approved / Canceled / Failed
-        Co-->>App: onOutcome(ReturnedFromRedirect) — confirm against the session
+        Co-->>App: onOutcome(ReturnedFromRedirect) — confirm from your backend
     else no redirect
         Co-->>App: onOutcome(Completed(result))
     end
@@ -131,7 +131,7 @@ sequenceDiagram
    payment legitimately shows `AUTHORIZE` + `CAPTURE` — the same payment reads as a single row on
    `v1`. Check the capture's `parent_transaction_id` and the shared `partner_reference` before
    reading a row count as a duplicate; see
-   [plugins/README](README.md#reading-sessiontransactions--operations-not-payments).
+   [plugins/README](README.md#reading-the-sessions-transactions--operations-not-payments).
 
    > **Open question this raises.** Web approves *after* `/validate`; this plugin approves *before*
    > it. Both end with one approval and one `/validate` (which is single-use — a second call is
@@ -203,7 +203,7 @@ The approval commits the method as primary itself (`host.setAsPrimary()`).
 |---|---|
 | `onReady(ready)` | `prepare` completed — show the branded button |
 | `onOutcome(PaymentOutcome.Completed)` | Terminal, no redirect pending — `status` is the API's verdict (`SUCCESS`, or a refusal) |
-| `onOutcome(PaymentOutcome.ReturnedFromRedirect)` | The shopper came back from a redirect — not an outcome, confirm with `awaitPaymentOutcome()` |
+| `onOutcome(PaymentOutcome.ReturnedFromRedirect)` | The shopper came back from a redirect — not an outcome, confirm from your backend ([recipe 9](../integration/recipes.md#9-confirm-after-a-redirect-ask-your-backend)) |
 | `onRequiresAction()` | PayPal's approval is being launched — and again if `/validate` chains a 3-D Secure step |
 | `onPaymentId(id)` | Informational `payment_id` off the confirmation-page JWT |
 | `onOutcome(PaymentOutcome.Canceled)` | Buyer dismissed PayPal's approval, or the chained redirect was dismissed | |
