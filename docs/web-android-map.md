@@ -48,6 +48,7 @@ adds or removes a divergence.
 | `plugins/generics/redirection/*` + `manageRedirection` | `plugins/generics/redirection/*`, `partnerui/redirect/RedirectionResolver.kt` + WebView Activity | yes; return handled in-app |
 | `plugins/partners/klarna-installments` | `plugins/partners/klarna/*` (module `:partner-klarna`, artifact `headless-checkout-klarna`) | JS SDK → `KlarnaPaymentView`; optional artifact |
 | `plugins/partners/paypal/wallet` | `plugins/partners/paypal/wallet/*` (module `:partner-paypal`, artifact `headless-checkout-paypal`) | JS popup → PayPal Android SDK; optional artifact |
+| `plugins/partners/paypal/bnpl` `ensureClientCompatibility` + `getEligibilityCheck` (`item-factory/primaries.ts`) | `RedirectionPlugin.ensureClientCompatibility` + `PurseHeadlessCheckout.runEligibilityChecks` | probe only; the popup plugin is not ported |
 | `plugins/vaults/purse/creditcard` + `generics/hostedfields` | `plugins/vaults/purse/creditcard/*` | iframes → SecureFields Android |
 
 ## Vocabulary
@@ -78,6 +79,8 @@ adds or removes a divergence.
 | Plugin ↔ checkout access | plugin holds the checkout context | one `PluginHost` interface, implemented by `PurseHeadlessCheckout.host(item)` | keeps `eu.purse.partnerui` from depending on `eu.purse.checkout` |
 | Fulfilment | `setAsPrimarySource` refuses an unfulfilled element | reactive `isPaymentFulfilled`, selectable before the form is filled | fits `StateFlow` UIs |
 | PayPal `/init` timing | at render | on button tap | avoids orphan PayPal orders |
+| PayPal bnpl eligibility probe | on the dedicated `paypal/bnpl` plugin, looked up by pair whatever plugin renders | on the generic `RedirectionPlugin`, the plugin that serves bnpl (redirection mode only) | no dedicated bnpl plugin on Android; the probe needs no PayPal SDK, so no artifact either (iOS does the same) |
+| Eligibility probes on a spent session | run at every primary build | skipped when the session is not `READY` or its `/validate` was consumed, so a restore after a submit never re-`/init`s | web has no restore; SDK-12461 (never `/init` a spent session) |
 | PayPal `redirection.url` in `/validate` | never followed | explicitly dropped when it is a PayPal approval URL | it is the web popup URL echoed back; following it re-opens PayPal |
 | Klarna return | page URL | host app must declare a `singleTask` deep link | `KlarnaPaymentView` resumes the same Activity |
 | Payment confirmation after redirect | merchant success page | `paymentStatus()` / `awaitPaymentOutcome()` polling | the app returns to the launching screen |

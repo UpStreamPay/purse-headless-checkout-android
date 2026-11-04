@@ -362,7 +362,9 @@ one shared `patchItemPayloadWithToken` the card, redirection and PayPal plugins 
 
 ## Deferred (intentionally not built yet)
 
-PayPal BNPL ("Pay Later") and PayPal vaulting — *creating* a PayPal token (registration); paying with
+A dedicated PayPal BNPL ("Pay Later") plugin (bnpl in redirection mode works, eligibility probe
+included — see [docs/plugins/redirection.md](../plugins/redirection.md)) and PayPal vaulting —
+*creating* a PayPal token (registration); paying with
 an already-vaulted one ships (the wallet pay-now plugin ships too; see
 [docs/plugins/paypal.md](../plugins/paypal.md)), Apple Pay (same shape as Google Pay), the
 `adyen`/`stripe` Google

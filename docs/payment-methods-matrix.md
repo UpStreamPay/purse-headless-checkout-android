@@ -61,7 +61,7 @@ both: `PARTNER_UI_FATAL_ERROR`, out of the split, refused for the session (Andro
 | PayPal wallet, pay now | ✅ JS popup | ✅ PayPal Android SDK browser switch | Android drops the echoed approval URL in `/validate`; see [paypal.md](plugins/paypal.md). |
 | PayPal wallet, saved token | ✅ | ✅ | No CVV, captures on submit. |
 | PayPal wallet, vaulting (create a token) | ✅ | ❌ | Deferred. |
-| PayPal BNPL (`bnpl`) | ✅ popup or redirection; has `ensureClientCompatibility` | ❌ dedicated; ✅ only if `integration_mode = redirection` | |
+| PayPal BNPL (`bnpl`) | ✅ popup or redirection; `ensureClientCompatibility` probes redirection mode at session build | ❌ dedicated; ✅ only if `integration_mode = redirection`, with the same probe | An ineligible bnpl (`/init` → `NOT_ELIGIBLE`, or a failed probe) is withdrawn (`PLUGIN_INCOMPATIBLE`) on both; see [redirection.md](plugins/redirection.md#specificities). |
 | PayPal Fraudnet fingerprinting on redirection | ✅ | ❌ | |
 
 ### BNPL, instalments, invoice
@@ -108,7 +108,7 @@ Same keys on both platforms; each is a config, not a plugin.
 - **Android covers every method a merchant can run through the Purse vault, a redirection, or one
   of three native SDKs** (Google Pay, PayPal, Klarna). Everything else web supports is a PSP-hosted
   form living in the browser, which has no native equivalent and is not planned.
-- **The three gaps worth a decision** are `pci_proxy` cards, `ancv-connect`, and the PayPal BNPL /
-  vaulting pair. The rest of the ❌ column is "works on Android if the merchant switches the method
+- **The three gaps worth a decision** are `pci_proxy` cards, `ancv-connect`, and the PayPal BNPL
+  popup / vaulting pair. The rest of the ❌ column is "works on Android if the merchant switches the method
   to `redirection` mode".
 - Rows marked 🧪 are the scope of US-53 (sandbox validation per PSP).
