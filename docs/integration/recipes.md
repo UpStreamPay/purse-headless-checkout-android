@@ -77,7 +77,8 @@ Button(onClick = { element.submit() }, enabled = element.ready) { Text("Pay") }
 ```
 
 An empty or invalid form is never payable: `isPaymentFulfilled` stays `false` until every field
-validates. `submit()` tokenizes, then `/init` + `/validate`, then follows 3-D Secure.
+validates. `submit()` tokenizes, then `/validate`, then follows 3-D Secure. To lay out the
+fields yourself or draw your own error messages, see [Card form: two levels](card-form.md).
 
 **Save the card** when the method allows it:
 
@@ -351,7 +352,9 @@ PurseHeadlessCheckout.init(
 
 Scopes: `global`, `input`, `label`, `helperText`, each with `Invalid` / `Valid` variants and `inputFocus`.
 Resolution is scope variant → scope → global variant → global, over web's defaults. Every `null`
-text falls back to the SDK's localized resources (English, French).
+text falls back to the SDK's localized resources (English, French), read in `locale` — not the
+device language — so a French device paying through an `en-GB` checkout reads English. Without a
+`locale`, the device's language applies; a language the SDK has no copy for gets English.
 
 Colours take the web spellings: `#rgb`, `#rrggbb`, `#rrggbbaa` (CSS order, alpha last) or
 `transparent` (the default `input.backgroundColor`). Before the `input*` colours reach SecureFields

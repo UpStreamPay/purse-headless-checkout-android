@@ -231,6 +231,8 @@ either way.
 | `CardMapper.kt` | `/validate` `payment_data` (fresh card and saved token) |
 | `CardCoordinator.kt` | `rememberCardCoordinator`, SecureFields listeners, fulfillment reporting, tokenize, brand mapping (the shared submit/redirect flow lives in `PaymentCoordinator`) |
 | `CardForm.kt` | `PurseCardForm` — labels, help texts and errors around the secure fields |
+| `CardField.kt` | `CardField` (+ `purse_card_*` test tags), `CardFieldState`, the per-field state reducer and error rule behind `fieldStates` / `errorMessage` |
+| `CardFormCopy.kt` | `CardFormTexts` over the `purse_card_*` resources, read in `PluginOptions.locale` |
 
 Web reference: `usp-widget/packages/partner-ui/src/plugins/vaults/purse/creditcard/` (bridge) and
 `plugins/generics/hostedfields/` (the form/lifecycle half).

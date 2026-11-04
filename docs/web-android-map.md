@@ -98,5 +98,7 @@ adds or removes a divergence.
 | `PAYMENT_ERROR` on a thrown error | `message`, `stack` | plus `code`, `api_path`, `api_status`, `api_error`, `outcome_unknown` | a minified Android stack says nothing; the codes do |
 | `instanceId` on the envelope | one per page load (`window.__PURSE_INSTANCE_ID__`) | one per checkout, exposed as `instanceId`, saved with `saveState` and kept by `restore`; CREATE says `restored: true` | a shopper's journey survives process death as one instance |
 | SDK `version` on the envelope | `package.json` version | `SdkVersion.VALUE`, generated from the release tag at build time | `0.0.0-SNAPSHOT` for a local build |
+| Card form levels | one element (`appendTo`) | the drop-in element, or `rememberCardCoordinator` + `PurseCardForm` / `VaultField` with `fieldStates` and `errorMessage(field)` ([card form](integration/card-form.md)) | the iOS split; a native app lays out its own fields more often (SDK-12579) |
+| Card field names | `aria-labelledby` to the visible label | the label as the input's `contentDescription`, plus a `purse_card_*` test tag | no label/input association across the SecureFields `AndroidView`; tags match iOS (SDK-12579) |
 | UI toolkit | DOM | Compose only: `rememberPaymentElement`, `remember*Coordinator`, `PurseCardForm` | SecureFields Android is Compose-first; a View app hosts a `ComposeView` |
 | Secondaries extension | static configs | `SecondaryConfigs.register`, `pollForToken`, `classifyInitError` hooks | lets a host add an issuer without an SDK release |

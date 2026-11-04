@@ -581,6 +581,8 @@ return URL must resume the **same Activity** hosting the widget — see
 > Deep dive — session prerequisites, sequence diagram, quirks, failure modes:
 > **[docs/plugins/card-purse-vault.md](../plugins/card-purse-vault.md)**.
 
+> Which level to use — the drop-in element or the coordinator: **[Card form: two levels](card-form.md)**.
+
 `rememberCardCoordinator(host, listener)` owns the SecureFields instance. The host's token (and its
 `requiresCvv`) selects the `CardCoordinator.Mode`: `FRESH_CARD` (full form), `TOKEN_CVV` (a saved card
 whose PSP still wants the CVV: CVV-only form) or `TOKEN_NO_CVV` (nothing to render, payable as-is).
@@ -593,10 +595,17 @@ while focused, and its **error message** in place of the help text when the shop
 `PaymentElementUi` shows for a card element; SecureFields' bare `VaultForm(coordinator.sdk)` /
 `VaultField(...)` remain available for a custom layout.
 
+Each secure input is named by its label: `PurseCardForm` passes the resolved `label` to SecureFields
+as the input's `contentDescription` (what TalkBack announces and Espresso matches), and tags the field
+with `CardField.testTag` — `purse_card_number`, `purse_card_exp_date`, `purse_card_cvv`,
+`purse_card_holder_name`, the identifiers the iOS SDK uses. Override the name through
+`CardFormTexts.FieldTexts.label`. UiAutomator and Appium see test tags only once an ancestor sets
+`Modifier.semantics { testTagsAsResourceId = true }`.
+
 Copy comes from `PluginOptions.cardFormTexts` (`CardFormTexts`, one `CardFormTexts.FieldTexts` per
 field: `label`, `placeholder`, `helperText`, `requiredError`, `formatError`), every `null` falling
 back to the SDK's localized `purse_card_*` resources — web's `hostedForm` translations, in English and
-French. Styling comes from `PluginOptions.theme` (`PurseTheme`): the `input*` scopes reach
+French — read in the checkout's `PluginOptions.locale`, or the device locale when it is `null`. Styling comes from `PluginOptions.theme` (`PurseTheme`): the `input*` scopes reach
 SecureFields' `VaultStyles`, `label*` and `helperText*` reach the texts around them, `global*` is the
 base every scope falls back to and `gap` the spacing between fields. `PurseTheme.resolve()` applies
 web's `Theme.build()` order — scope variant → scope → global variant → global — over web's default
@@ -608,6 +617,8 @@ theme, so a partial theme never leaves a hole. See [recipes §13](recipes.md#13-
 | `theme` | `val theme: PurseTheme.Resolved` | The merchant's `PluginOptions.theme` resolved over web's defaults. |
 | `mode` | `val mode: CardCoordinator.Mode` | See above; `mode.rendersForm` is `false` only for `TOKEN_NO_CVV`. |
 | `formValid` | `var formValid: Boolean` (Compose state) | `false` until every configured field is valid (always `true` in `TOKEN_NO_CVV`). Drive your "Pay" button off this, or off `isPaymentFulfilled`, which the coordinator keeps in step for you. |
+| `fieldStates` | `val fieldStates: Map<CardField, CardFieldState>` (Compose state) | Per field: `isValid`, `isFocused`, `hasContent`, `wasBlurred` (set the first time the field loses focus, never cleared). Refreshed on every SecureFields change, focus and blur, with `PurseCardForm` or your own `VaultField` layout. A field nothing has happened to yet is absent. |
+| `errorMessage` | `fun errorMessage(field: CardField): String?` | The error `PurseCardForm` shows under `field` right now, or `null`: `formatError` once the field is left with rejected content, `requiredError` once an empty field is left, never while the shopper is typing in it. For a host that draws its own messages. |
 | `submit` | `fun submit()` | Tokenizes via SecureFields (the card, or just the CVV), then `/validate` through the host (no `/init`); in `TOKEN_NO_CVV` it skips tokenization. A no-op (never an error) while the form isn't complete and valid. |
 
 One trap worth naming: `rememberCardCoordinator` keys its SecureFields instance on the `host` object,
