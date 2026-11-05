@@ -1539,6 +1539,25 @@ class PurseHeadlessCheckoutTest {
     }
 
     @Test
+    fun `submitPayment on a valid card form never submitted names the missing card submit`() {
+        FakePaymentApi().use { api ->
+            val checkout = checkout(widgetData = CheckoutTestSessions.widgetData(apiUrl = api.apiRoot))
+            val card = checkout.primaryMethods.single { it.method == Method.CreditCard }
+            checkout.setPrimary(card)
+            checkout.setFulfilled(card, true) // every field valid, but card.submit() never ran: no vault token
+
+            val thrown = assertThrows(PurseCheckoutException.ValidateFailed::class.java) {
+                runBlocking { checkout.submitPayment() }
+            }
+
+            val message = thrown.message.orEmpty()
+            assertTrue(message, message.startsWith("client-side validation failed for ${card.id}"))
+            assertTrue(message, message.contains("CardCoordinator.submit()"))
+            assertTrue("nothing left the device", api.requests.isEmpty())
+        }
+    }
+
+    @Test
     fun `a validate that never left the device leaves the session submittable`() {
         val api = FakePaymentApi()
         val checkout = coveredCheckout(api)

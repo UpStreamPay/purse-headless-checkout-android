@@ -99,6 +99,14 @@ class WalletApiClient internal constructor(
         execute("PATCH", "/token/$tokenId/favorite?favorite=$favorite", body = null)
     }
 
+    /** The `code` (or `error`) field of a JSON error body, or `null` when the body isn't that shape. */
+    private fun parseErrorCode(responseBody: String): String? = try {
+        val json = JSONObject(responseBody)
+        json.optString("code").ifBlank { json.optString("error") }.ifBlank { null }
+    } catch (_: JSONException) {
+        null
+    }
+
     private fun execute(method: String, path: String, body: String?): String {
         val url = "$root/$ownerReference/sessions/$walletSessionId$path"
         val connection = openConnection(URL(url)).apply {
@@ -118,9 +126,12 @@ class WalletApiClient internal constructor(
             val stream = if (code < 400) connection.inputStream else connection.errorStream
             val responseBody = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (code >= 400) {
+                // Only the body's error code, never the body itself (see PaymentApiException).
+                val errorCode = parseErrorCode(responseBody)
                 throw PaymentApiException(
-                    "Wallet API $method $path failed: HTTP $code $responseBody",
+                    "Wallet API $method $path failed: HTTP $code" + (errorCode?.let { " ($it)" } ?: ""),
                     status = code,
+                    errorCode = errorCode,
                     path = path,
                 )
             }

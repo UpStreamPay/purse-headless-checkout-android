@@ -514,7 +514,7 @@ What they share:
 | Callback | Fires |
 |---|---|
 | `onReady(ready: Boolean)` | The method's readiness changed — `isReadyToPay` for Google Pay, `prepare()` done for PayPal and redirection, the widget loaded for Klarna, the form's validity for the card. |
-| `onOutcome(outcome: PaymentOutcome)` | The attempt ended — see the sealed class below. Once per attempt. |
+| `onOutcome(outcome: PaymentOutcome)` | The attempt ended — see the sealed class below. Once per attempt. The **only** channel for an attempt started by `submit()` or a wallet tap: implement it unless another surface relays the outcome to your screen. `sessionState` and the hooks never see a cancel, a failure before `submitPayment()` (tokenization, a disabled method, a missing plugin) or the return from a redirect — an empty `PaymentElementListener {}` loses them. |
 | `onRequiresAction()` | A redirect step is being launched (3-D Secure, PayPal's approval, the PSP's page). |
 | `onPaymentId(paymentId: String)` | Informational — a `payment_id` the flow could read, when present. Never required for the payment to resolve. |
 
@@ -639,7 +639,7 @@ theme, so a partial theme never leaves a hole. See [recipes §13](recipes.md#13-
 | `formValid` | `var formValid: Boolean` (Compose state) | `false` until every configured field is valid (always `true` in `TOKEN_NO_CVV`). Drive your "Pay" button off this, or off `isPaymentFulfilled`, which the coordinator keeps in step for you. |
 | `fieldStates` | `val fieldStates: Map<CardField, CardFieldState>` (Compose state) | Per field: `isValid`, `isFocused`, `hasContent`, `wasBlurred` (set the first time the field loses focus, never cleared). Refreshed on every SecureFields change, focus and blur, with `PurseCardForm` or your own `VaultField` layout. A field nothing has happened to yet is absent. |
 | `errorMessage` | `fun errorMessage(field: CardField): String?` | The error `PurseCardForm` shows under `field` right now, or `null`: `formatError` once the field is left with rejected content, `requiredError` once an empty field is left, never while the shopper is typing in it. For a host that draws its own messages. |
-| `submit` | `fun submit()` | Tokenizes via SecureFields (the card, or just the CVV), then `/validate` through the host (no `/init`); in `TOKEN_NO_CVV` it skips tokenization. A no-op (never an error) while the form isn't complete and valid. |
+| `submit` | `fun submit()` | **Pays**: tokenizes via SecureFields (the card, or just the CVV), then `/validate` through the host (no `/init`), then any 3-D Secure redirect; the result arrives on `onOutcome`. In `TOKEN_NO_CVV` it skips tokenization. A no-op (never an error) while the form isn't complete and valid. Unlike iOS, where `CardCoordinator.submit()` only tokenizes, do not call `submitPayment()` yourself — before it fails with `ValidateFailed` (no vault token), while or after it pays with `SubmitBlocked`. Make the card the primary first (`setPrimary`). |
 
 One trap worth naming: `rememberCardCoordinator` keys its SecureFields instance on the `host` object,
 so build the host with `remember(...)` rather than inline —
@@ -787,7 +787,10 @@ While in flight, every item reads `DisabledState.Submitting`; the lock lifts whe
   `PartnerArtifacts.missingPluginMessage(partner, method)` (and the warning `init` logs) name it.
   Nothing was sent; the method is disabled with `PARTNER_UI_FATAL_ERROR` and out of the split for
   the rest of the session, as web does, so the shopper picks another one.
-- `PurseCheckoutException.ValidateFailed` — `/validate` failed. **Check `outcomeUnknown`**: `true`
+- `PurseCheckoutException.ValidateFailed` — before any call, `client-side validation failed for … —
+  the card form was never submitted…`: a card in the split has no vault token, because
+  `submitPayment()` was called instead of the card element's or `CardCoordinator`'s `submit()`,
+  which tokenize and then pay. Otherwise `/validate` failed. **Check `outcomeUnknown`**: `true`
   means the request left the device and no answer came back, so the payment may exist server-side —
   the outcome is unknown: confirm it from your backend (server-side session read) instead of telling
   the shopper it failed, and if it did not go through, start a new session. Such a session is
@@ -868,7 +871,7 @@ interactive plugin.
 | `PurseCheckoutException.LoanSimulationFailed` | `simulateLoan` / `simulateLoans` | The simulation API answered without a schedule — no `plugin_result`, or a refusal like `EMPTY_SIMULATION` (`INVALID_LOAN_SIMULATION`; the API's code is on the cause). |
 | `PurseSessionException.SessionMalformed` | `PurseHeadlessCheckout.init`, `setSession` | `widget.data` couldn't be decoded, or is missing required fields (`SESSION_MALFORMED`). |
 | `PurseSessionException.EnvironmentNotAllowed` | `PurseHeadlessCheckout.init`, `restore`, `setSession` | A release (non-debuggable) app asked for `TEST` / `DEVELOPMENT` — locked, declared, or through the `api_url`'s host (`ENVIRONMENT_NOT_ALLOWED`, native-only, shared with iOS). `environment` names the tier. See [Internal tiers in a release app](#internal-tiers-in-a-release-app). |
-| `PaymentApiException` | Any Payment API call | Network/transport failure, non-2xx/3xx status, or an unusable response body (`API_ERROR`; the backend's own reason is `errorCode`, `outcomeUnknown` when no answer came back). |
+| `PaymentApiException` | Any Payment API call | Network/transport failure, non-2xx/3xx status, or an unusable response body (`API_ERROR`; the backend's own reason is `errorCode`, `outcomeUnknown` when no answer came back). The response body is never carried — to read it while debugging, see [recipes §12](recipes.md#12-errors). A transient `/init` failure has already been sent 3 times when it reaches you. |
 
 All of the above extend `eu.purse.core.error.PurseException`: unchecked, with a stable `code`
 (`PurseErrorCode`, web's names; `ENVIRONMENT_NOT_ALLOWED` is native-only), a `message` and a `documentationLink`. Catch the root for generic

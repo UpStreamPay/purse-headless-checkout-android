@@ -293,23 +293,53 @@ goes to background. What is sent — and what never is — is in [Monitoring and
 
 ## 12. Errors
 
-Every SDK exception carries a `code` shared with web.
+Every SDK exception carries a `code` shared with web. Where it reaches you depends on who started
+the attempt:
 
 ```kotlin
+fun handle(e: PurseException) = when {
+    e is PaymentApiException -> if (e.isSessionTerminal) newSession() else retry()   // transport / HTTP
+    e.code == PurseErrorCode.PAYMENT_NOT_FULFILLED_ON_SUBMIT -> highlightMissingAmount()
+    e.code == PurseErrorCode.ELEMENT_NOT_FULFILLED -> focusInvalidForm()
+    else -> showError(e.code)
+}
+
+// An element's or a coordinator's submit() (card, Klarna, redirection) or a wallet tap:
+// the error is the outcome — submit() returns nothing.
+override fun onOutcome(outcome: PaymentOutcome) {
+    if (outcome is PaymentOutcome.Failed) handle(outcome.error)
+}
+
+// submitPayment() yourself: only for a split with no form to submit — gift cards covering the
+// amount, a saved card that pays without its CVV.
 try {
     withContext(Dispatchers.IO) { checkout.submitPayment() }
-} catch (e: PurseCheckoutException) {
-    when (e.code) {
-        PurseErrorCode.PAYMENT_NOT_FULFILLED_ON_SUBMIT -> highlightMissingAmount()
-        PurseErrorCode.ELEMENT_NOT_FULFILLED -> focusInvalidForm()
-        else -> showError(e.code)
-    }
-} catch (e: PaymentApiException) {                     // transport / HTTP
-    if (e.isSessionTerminal) newSession() else retry()
+} catch (e: PurseException) {
+    handle(e)
 }
 ```
 
-Transient `/init` failures are retried by the SDK; do not add your own retry loop.
+A card form pays through its own `submit()` (the element's or `CardCoordinator`'s), which tokenizes
+the card and then calls `submitPayment()` for you. Calling `submitPayment()` instead fails before
+anything is sent with `ValidateFailed: client-side validation failed for purse-creditcard — the card
+form was never submitted…`; calling it while or after the card pays fails with `SubmitBlocked`.
+
+**`/init` is retried for you.** A transient failure — no HTTP answer, an answer that is not JSON,
+or a 5xx — is sent again after 300 ms, then after 900 ms: 3 identical requests at most, and only
+the last failure reaches you. A 4xx is never retried. A call that failed for good (a 4xx, or the
+third transient failure) is not sent again: the same `/init` — same session, partner, method and
+amount — fails at once with that same error, while a different amount is a different call. Do not
+add your own retry loop.
+
+**Why did the API refuse a call?** The message names the call, the HTTP status and the API's
+`error` code (`Payment API POST /init failed: HTTP 400 (BAD_REQUEST)`); `PaymentApiException`
+carries them as `path`, `status` and `errorCode`. A `/validate` failure arrives as
+`PurseCheckoutException.ValidateFailed` with the `PaymentApiException` as its `cause`. The response
+body — the field and rule at fault — is never on the exception, in Logcat or in monitoring: it can
+quote what the shopper typed. To read it, run a debuggable build and open Android Studio's
+**App Inspection → Network Inspector**, which records the SDK's calls with their request and
+response bodies; or route the device through a debugging proxy trusted by a `debug-overrides`
+network security config. Never ship either in a release build.
 
 **A method shows up but cannot pay.** If the session offers Google Pay, PayPal or Klarna and the
 matching artifact is not on your classpath, the method is still listed (the session decides that),
@@ -446,7 +476,7 @@ import eu.purse.partnerui.plugins.partners.paypal.wallet.rememberPaypalCoordinat
 import eu.purse.partnerui.plugins.partners.klarna.rememberKlarnaCoordinator            // in headless-checkout-klarna
 
 val host = remember(method.id) { checkout.host(method) }             // remember it: the card form is keyed on it
-val card = rememberCardCoordinator(host, listener)                    // PurseCardForm(card) + card.submit()
+val card = rememberCardCoordinator(host, listener)                    // setPrimary(method); PurseCardForm(card) + card.submit()
 val googlePay = rememberGooglePayCoordinator(listener)                // prepare(host); GooglePayButton(googlePay, theme = …)
 val paypal = rememberPaypalCoordinator(listener)                      // prepare(host); paypal.submit()
 val klarna = rememberKlarnaCoordinator(listener)                      // container = …; prepare(host, returnUrl); submit()
@@ -454,5 +484,11 @@ val redirection = rememberRedirectionCoordinator(listener)            // prepare
 ```
 
 Each partner's `remember*Coordinator` ships with its artifact, in the plugin's own package.
+
+Every coordinator's `submit()` (Google Pay's `launchSheet()`) **pays**: it runs the method's native
+step and `submitPayment()` itself, then follows any redirect — `card.submit()` included, where
+iOS's only tokenizes. Do not
+call `submitPayment()` next to it. The result arrives only on `listener.onOutcome`, so pass a
+listener that implements it.
 
 Per-method internals (`/init` shapes, sequence diagrams, failure modes): [docs/plugins](../plugins/README.md).

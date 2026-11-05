@@ -10,10 +10,15 @@ import org.json.JSONObject
  * (usp-widget `packages/partner-ui/src/commons/PartnerUI/initGuard.ts`, SDK-12073):
  *
  * - **coalesces** concurrent duplicate calls (same key → all callers share one in-flight request);
- * - **retries** transient failures ([PaymentApiException.isRetryable]: no HTTP status, or ≥ 500)
- *   up to [MAX_ATTEMPTS] with a capped backoff;
- * - **fast-rejects** repeats of a call that just failed terminally (a 4xx is a definitive backend
- *   decision — retrying changes nothing), keeping the original error;
+ * - **retries** transient failures — [PaymentApiException.isRetryable]: no HTTP status (a transport
+ *   failure, *or a success status whose body is not JSON*) or ≥ 500, and any other exception — up to
+ *   [MAX_ATTEMPTS] sends in total, [BACKOFF_MS] (300 ms, then 900 ms) apart. One `/init` the app
+ *   asked for can therefore put three identical requests on the wire, silently: only the last
+ *   failure is thrown;
+ * - never retries a 4xx (a definitive backend decision — retrying changes nothing);
+ * - **fast-rejects** repeats of a call that failed for good — a 4xx, or a transient failure once
+ *   its attempts are spent: every later call with the same key rethrows that original error
+ *   without a send, until the key falls out of the [MAX_TRACKED_KEYS] most recent ones;
  * - successes are *not* cached — only the in-flight window coalesces.
  *
  * Keyed on session + partner + method + amount (not session alone): distinct methods on the same

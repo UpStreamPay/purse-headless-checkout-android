@@ -118,7 +118,9 @@ sequenceDiagram
    button through corrects itself, and returns. An unfilled form is not a failed payment.
 5. **`validateUi` is the last line of defence**: no collected vault token means the form was never
    successfully submitted, so `PaymentValidator` raises `ValidateFailed` before `preValidation` can
-   build a payload.
+   build a payload — its message names the missing step (`CardCoordinator.submit()`), the usual cause
+   being a bare `checkout.submitPayment()`. `CardCoordinator.submit()` **pays** (tokenize →
+   `submitPayment()` → 3-D Secure); iOS's only tokenizes and leaves `submitPayment()` to the app.
 6. **Compose-first, and the `host` must be `remember`ed.** `rememberCardCoordinator` keys its
    SecureFields instance on the `host` object, so building the host inline recreates the form — and
    loses whatever's been typed — on every recomposition:
@@ -217,7 +219,7 @@ either way.
 |---|---|
 | Pay button never enables | The form isn't valid — SecureFields reports `hasErrors` until every configured field is valid |
 | `PurseCheckoutException.ItemNotFulfilled` | `submitPayment()` called directly while the card form is incomplete — or a saved token that requires a CVV was selected and its CVV field never validated (or was never rendered) |
-| `PurseCheckoutException.ValidateFailed: client-side validation failed…` | No vault token collected — tokenization never succeeded (for a `TOKEN_CVV` saved card: the CVV-only tokenization) |
+| `PurseCheckoutException.ValidateFailed: client-side validation failed for … — the card form was never submitted…` | No vault token collected: `checkout.submitPayment()` was called instead of the element's / `CardCoordinator`'s `submit()` (which tokenizes, then pays), or tokenization never succeeded (for a `TOKEN_CVV` saved card: the CVV-only tokenization) |
 | `IllegalArgumentException: … cannot be driven by a plugin coordinator` | `host(item)` called with a secondary method or a saved gift card — only a `PrimaryMethod` or a `PaymentToken` can |
 | Form rebuilds and loses input on every keystroke elsewhere | The `host` wasn't `remember`ed — specificity 5 |
 | SecureFields fails to initialize | Blank `vaultTenantId` — the session carries no `vault.vendor_front_data.purse.tenant_id` |

@@ -8,6 +8,7 @@ import java.net.HttpURLConnection
 import java.net.URL
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
@@ -139,5 +140,17 @@ class WalletApiClientTest {
         assertEquals("/tokens/tok-1/name", error.path)
         assertTrue(error.message!!.contains("PATCH"))
         assertTrue(error.message!!.contains("TOKEN_NOT_FOUND"))
+        assertEquals("TOKEN_NOT_FOUND", error.errorCode)
+    }
+
+    @Test
+    fun `a failed call keeps a non-JSON error body out of the exception`() {
+        val error = assertThrows(PaymentApiException::class.java) {
+            client(status = 502, responseBody = "<html>gateway SECRET-4242</html>").editTokenName("tok-1", "My card")
+        }
+
+        assertEquals(502, error.status)
+        assertNull(error.errorCode)
+        assertFalse(error.message!!.contains("SECRET-4242"))
     }
 }
