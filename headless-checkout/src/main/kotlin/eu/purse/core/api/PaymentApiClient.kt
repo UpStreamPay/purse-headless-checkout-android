@@ -73,8 +73,9 @@ class PaymentApiClient(
         val responseBody = execute("GET", path = "", body = null)
         return try {
             JSONArray(responseBody)
-        } catch (e: JSONException) {
-            throw PaymentApiException("Payment API GET session returned non-JSON: ${e.message}", e, path = "")
+        } catch (_: JSONException) {
+            // Neither the JSONException's message nor the exception itself: org.json quotes the body.
+            throw PaymentApiException("Payment API GET session returned non-JSON", path = "")
         }
     }
 
@@ -107,8 +108,8 @@ class PaymentApiClient(
         val responseBody = execute("POST", path, product.toJson().toString(), url = "$root$path")
         val candidates = try {
             JSONArray(responseBody)
-        } catch (e: JSONException) {
-            throw PaymentApiException("Payment API $path returned non-JSON array: ${e.message}", e, path = path)
+        } catch (_: JSONException) {
+            throw PaymentApiException("Payment API $path returned non-JSON array", path = path)
         }
         return (0 until candidates.length()).mapNotNull { index ->
             candidates.optJSONObject(index)?.let(LoanSimulation::fromResponse)
@@ -133,8 +134,8 @@ class PaymentApiClient(
         val responseBody = execute("POST", path, body, url)
         return try {
             JSONObject(responseBody)
-        } catch (e: JSONException) {
-            throw PaymentApiException("Payment API $path returned non-JSON: ${e.message}", e, path = path)
+        } catch (_: JSONException) {
+            throw PaymentApiException("Payment API $path returned non-JSON", path = path)
         }
     }
 

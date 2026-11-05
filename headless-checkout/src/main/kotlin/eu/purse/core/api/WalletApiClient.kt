@@ -103,7 +103,7 @@ class WalletApiClient(
             val responseBody = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (code >= 400) {
                 throw PaymentApiException(
-                    "Wallet API $method $path failed: HTTP $code $responseBody",
+                    "Wallet API $method $path failed: HTTP $code",
                     status = code,
                     path = path,
                 )

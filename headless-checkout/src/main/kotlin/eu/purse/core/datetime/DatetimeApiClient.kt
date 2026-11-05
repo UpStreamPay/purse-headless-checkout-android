@@ -39,13 +39,14 @@ class DatetimeApiClient(
             val stream = if (code < 400) connection.inputStream else connection.errorStream
             val body = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (code >= 400) {
-                throw PaymentApiException("Datetime call failed: HTTP $code $body", status = code, path = "/datetime")
+                throw PaymentApiException("Datetime call failed: HTTP $code", status = code, path = "/datetime")
             }
             Instant.parse(JSONObject(body).getString("iso"))
         } catch (e: IOException) {
             throw PaymentApiException("Datetime call failed: ${e.message}", e, path = "/datetime")
-        } catch (e: JSONException) {
-            throw PaymentApiException("Datetime call returned an unusable body: ${e.message}", e, path = "/datetime")
+        } catch (_: JSONException) {
+            // Not the JSONException: org.json quotes the body in its message.
+            throw PaymentApiException("Datetime call returned an unusable body", path = "/datetime")
         } finally {
             connection.disconnect()
         }
