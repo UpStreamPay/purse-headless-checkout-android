@@ -5,10 +5,16 @@ package eu.purse.checkout.confirmation
 
 import org.json.JSONArray
 
+/** The one deprecation message the client-side session read carries (SDK-12574, iOS SDK-12559). */
+internal const val SESSION_READ_DEPRECATED =
+    "GET session answers 401 to the client key: confirm the payment from your backend instead. " +
+        "Take the outcome from submitPayment / onOutcome / the redirection return, then ask your " +
+        "backend. Removed in the next major."
+
 /**
  * One operation row from `GET /{entity}/sessions/{session}` — an **operation, not a payment**: a
  * single auto-captured payment legitimately shows one `AUTHORIZE` and one `CAPTURE` row on Payment
- * API v2, while v1 aggregates them (see docs/plugins/README.md, "Reading sessionTransactions()").
+ * API v2, while v1 aggregates them (see docs/plugins/README.md, "Reading the session's transactions").
  */
 data class TransactionOperation(
     val partner: String,
@@ -26,7 +32,8 @@ data class TransactionOperation(
 
 /**
  * What the session's own transactions say about the payment — the settled answer a coordinator's
- * "the shopper came back from the redirect" deliberately is not.
+ * "the shopper came back from the redirect" deliberately is not. Only a backend can read them (the
+ * Payment API answers `401` to the client key); [from] still classifies rows your backend relays.
  */
 sealed class PaymentSessionStatus {
     abstract val operations: List<TransactionOperation>
@@ -44,7 +51,7 @@ sealed class PaymentSessionStatus {
         private val MONEY_ACTIONS = setOf("AUTHORIZE", "CAPTURE")
         private val FAILED_STATES = setOf("ERROR", "FAILED")
 
-        /** Classify a raw `sessionTransactions()` response. */
+        /** Classify a raw session transactions list, as your backend reads it. */
         fun from(transactions: JSONArray): PaymentSessionStatus {
             val operations = parse(transactions)
             val money = operations.filter { it.action in MONEY_ACTIONS }

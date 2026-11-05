@@ -53,7 +53,8 @@ PaymentElementUi(element)
 if (!element.selfSubmitting) Button(onClick = { element.submit() }, enabled = element.ready) { Text("Pay") }
 ```
 
-Outcomes arrive on the listener; after a redirect, confirm with `checkout.awaitPaymentOutcome()`.
+Outcomes arrive on the listener; after a redirect, confirm the payment from your backend
+([recipe 9](docs/integration/recipes.md#9-confirm-after-a-redirect-ask-your-backend)).
 
 ## Layout
 

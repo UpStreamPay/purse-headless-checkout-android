@@ -21,7 +21,7 @@ interface PaymentElementListener {
 
     /**
      * The attempt ended: see [PaymentOutcome]. Branch on the type — `Completed` carries the API's
-     * verdict, `ReturnedFromRedirect` must be confirmed against the session, `Canceled` and `Failed`
+     * verdict, `ReturnedFromRedirect` must be confirmed from your backend, `Canceled` and `Failed`
      * leave the shopper free to try again.
      *
      * The only channel for an attempt started by an element's or a coordinator's `submit()` — and a

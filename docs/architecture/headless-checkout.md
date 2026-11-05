@@ -168,8 +168,10 @@ session (checked in `getPlugin` against `protocols`) is the real gate on whether
 offered — that's already decided server-side, so no app-side setup call is required for a built-in
 plugin to work. `PurseHeadlessCheckout.init(disabledMethods = …)` opts a method out of one checkout (scoped
 to the instance, not the process); `register`/`registerFallback`/`registerGeneric` (or a whole `PartnerModule` via
-`PluginRegistry.install`) remain for a plugin that isn't one of Purse's own. A `(partner, method)` with no plugin at all (e.g. a non-Purse-vaulted card/CB)
-still makes `submitPayment` throw `PurseCheckoutException.NoPluginRegistered`.
+`PluginRegistry.install`) remain for a plugin that isn't one of Purse's own. A `(partner, method)` with no plugin at all (e.g. a non-Purse-vaulted card/CB,
+or a `configurations.template` nothing registers outside redirection mode) is retired when engaged,
+as on web: its payment element, or a `submitPayment` that finds it in the split, disables it with
+`PARTNER_UI_FATAL_ERROR` for the session, and the submit throws `PurseCheckoutException.NoPluginRegistered`.
 
 Each shipped plugin has its own reference page — `/init` contract, sequence diagram, quirks, failure
 modes, host integration: **[docs/plugins](../plugins/README.md)**. What follows is only the shape of
@@ -310,7 +312,8 @@ fulfilment gate, registration, live plugin and — beyond web — its place as p
 torn down and gets a new `itemGenerations` generation so `rememberPaymentElement` rebuilds it;
 applied gift cards are dropped; the watchdog restarts; `paymentSession` emits the swap); CDN method
 icons (`PurseAssets`); typed
-payment confirmation (`paymentStatus()` / `awaitPaymentOutcome()` over `sessionTransactions()`);
+payment confirmation (`paymentStatus()` / `awaitPaymentOutcome()` over `sessionTransactions()`, since
+deprecated: the session read answers `401` to the client key, the merchant's backend confirms — SDK-12574);
 and a hardened redirect WebView (progress, first-page watchdog, network-failure surfacing); BNPL
 loan simulation (`PrimaryMethod.simulable` off the `simulable` label,
 `simulateLoan` / `simulateLoans` over the entity-scoped `POST /simulation/…` endpoints, `LoanProduct` /
@@ -334,8 +337,21 @@ left without an answer. `teardown()` sets `isTornDown` and every later operation
 `CheckoutTornDown`. All exceptions share one `PurseException` root (`code`, `documentationLink`),
 `PurseSessionException` (`SESSION_MALFORMED`) and `PaymentApiException` (`API_ERROR`) included;
 `PurseErrorCodeCoverageTest` exercises every code. The redirect WebView follows `https` pages only,
-with file/content access off, accepts a return intent only on the app's own scheme, and reports
+with file/content access off (DOM storage on since SDK-12572, as PSP pages need `localStorage`), accepts a return intent only on the app's own scheme, and reports
 recreation after process death as a *return* to reconcile, never a cancel.
+
+Since then (SDK-12621): **`/validate` leaves the device at most once per session**. Request bodies
+are streamed (`setFixedLengthStreamingMode`), because `HttpURLConnection` silently re-sends a
+buffered POST once when the answer is lost after the request went out — for `/validate` that replay
+reached the API as a second submit, answered `400 SESSION_ALREADY_SUBMITTED_ERROR`, and hid the
+first, accepted one. A process-wide `ValidateGuard` (keyed by session id) refuses a second
+`/validate` while one is in flight or once one may have been accepted — answered, outcome unknown,
+or the API saying the session is finished — whichever checkout instance sends it; a refused call,
+or one that never left the device (`PaymentApiException.requestSent == false`), leaves the session
+open. A `ValidateFailed` with `outcomeUnknown` now spends the session: `submitPayment` refuses with
+`SubmitBlocked` and `saveState()` records it as submitted. A `400 SESSION_ALREADY_SUBMITTED_ERROR`
+is still never read as a success: the outcome is unknown, and the merchant confirms it from its
+backend (server-side session read) — if it did not go through, it starts a new session.
 
 Since then (SDK-12216): **CVV re-entry on a saved card** — `PaymentToken.requiresCvv` (the inverse
 of web's no-CVV gates) arms the per-item fulfillment gate at `setPrimaryToken`, `host(token)`
@@ -360,7 +376,9 @@ one shared `patchItemPayloadWithToken` the card, redirection and PayPal plugins 
 
 ## Deferred (intentionally not built yet)
 
-PayPal BNPL ("Pay Later") and PayPal vaulting — *creating* a PayPal token (registration); paying with
+A dedicated PayPal BNPL ("Pay Later") plugin (bnpl in redirection mode works, eligibility probe
+included — see [docs/plugins/redirection.md](../plugins/redirection.md)) and PayPal vaulting —
+*creating* a PayPal token (registration); paying with
 an already-vaulted one ships (the wallet pay-now plugin ships too; see
 [docs/plugins/paypal.md](../plugins/paypal.md)), Apple Pay (same shape as Google Pay), the
 `adyen`/`stripe` Google

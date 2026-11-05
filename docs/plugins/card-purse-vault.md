@@ -13,7 +13,7 @@ fields themselves.
 | Family | **vault** — `PluginRegistry.registerVault(VaultVendor.PURSE)`, keyed by vault vendor, not `(partner, method)`, and resolved **first** (before generic/partner) |
 | Native SDK | `eu.purse.securefields` (`SecureFieldsAndroid`, `VaultField`) wrapped by the SDK's `PurseCardForm` |
 | UI surface | Compose — `rememberCardCoordinator(host, listener)` + `PurseCardForm`, or simply `rememberPaymentElement` |
-| Native step vs `/validate` | tokenize **before**, then `/init` and `/validate` back to back |
+| Native step vs `/validate` | tokenize **before**, then `/validate` — no `/init` |
 | Gates `isPaymentFulfilled`? | **Yes** — the only plugin that does |
 | Saved cards | **Yes** — `host(token)`: a CVV-only form when `token.requiresCvv` (`Mode.TOKEN_CVV`), no form behind the no-CVV gates (`Mode.TOKEN_NO_CVV`) |
 | Artifact | `eu.purse:headless-checkout-android` (always present) |
@@ -21,7 +21,7 @@ fields themselves.
 
 Because the vault family resolves first, this plugin serves *any* partner's `creditcard` as long as
 the session marks it Purse-vaulted — `CardPlugin(partner)` carries whichever partner that is into the
-`/init` and `/validate` payloads.
+`/validate` payload.
 
 ## Session prerequisites
 
@@ -70,9 +70,7 @@ sequenceDiagram
     Ck->>Pl: validateUi(context)
     Pl-->>Ck: true (a vault token exists)
     Ck->>Pl: preValidation(context)
-    Pl->>Api: POST /init (vault_vendor purse + partner_data.browser)
-    Api-->>Pl: step_id
-    Pl-->>Ck: item payload - vault_vendor_token_id + card.bin + step_id + partner_data.browser
+    Pl-->>Ck: item payload - vault_vendor_token_id + card.bin + partner_data.browser, no step_id
     Ck->>Api: POST /validate (all splits)
     Api-->>Ck: results + redirection + global_status
     Ck-->>Co: ValidationResult
@@ -82,7 +80,7 @@ sequenceDiagram
         Co-->>App: Listener.onRequiresAction()
         Co->>Rd: launch (in-app WebView)
         Rd-->>Co: Approved / Canceled / Failed
-        Co-->>App: onOutcome(ReturnedFromRedirect) — confirm against the session
+        Co-->>App: onOutcome(ReturnedFromRedirect) — confirm from your backend
     else no redirect
         Co-->>App: onOutcome(Completed(result))
     end
@@ -90,12 +88,14 @@ sequenceDiagram
 
 ## Specificities
 
-1. **`/init` moved late, on purpose.** Web calls `/init` at `onSessionSet`, before the shopper sees
-   the form, purely to obtain a `step_id`. Here `preValidation` does **both** steps itself — `/init`
-   for the `step_id`, then the `/validate` payload — because nothing about rendering depends on
-   `/init`'s response (unlike Google Pay's gateway config or Klarna's client token). Same two calls in
-   the same order, just later. There is consequently **no `buildRequest`** on this plugin.
-2. **`partner_data.browser` on `/init` and `/validate`**, fresh card and saved token alike — web's
+1. **No `/init`.** SecureFields tokenizes without it and the Payment API takes a vault card's
+   `/validate` without a step, so `preValidation` only builds the `/validate` payload, with no
+   `step_id`. This matches web's purse vault bridge, which sets `skipInit` (since headless-checkout
+   3.73.0) and validates with `step_id: null`. The `/init` is not just useless but harmful: Worldpay
+   refuses it (`Session data doesn't meet the partner's requirements`, SDK-12570). Web lets a partner
+   opt back in with `vaultExtras.skipInit: false` (only Cybersource does); Android has no such opt-in.
+   There is consequently **no `buildRequest`** on this plugin.
+2. **`partner_data.browser` on `/validate`**, fresh card and saved token alike — web's
    hostedfields `getBrowserData`. The coordinator reads it at submit with
    `RedirectionMapper.browserData`, so it describes the in-app WebView a 3-D Secure challenge opens
    in. Without it dalenys refuses a token (`Missing parameter`) and centralpay or axepta never open a
@@ -159,7 +159,7 @@ sequenceDiagram
       stays at its 3-digit default (a 4-digit AMEX CVV is a known gap on the SecureFields side).
     - `TOKEN_NO_CVV`: nothing is rendered (`sdk.render()` is never called — SecureFields builds its
       native fields lazily) and nothing gates; `submit()` skips tokenization and goes straight to
-      `/init`+`/validate` with the token payload, then follows a 3-D Secure redirect as usual.
+      `/validate` with the token payload, then follows a 3-D Secure redirect as usual.
 
 ## Host integration
 
@@ -207,11 +207,11 @@ either way.
 |---|---|
 | `onReady(ready)` | Form validity changed (mirrors `formValid`; also re-fired if `submit()` is refused) |
 | `onOutcome(PaymentOutcome.Completed)` | Terminal, no redirect pending — `status` is the API's verdict (`SUCCESS`, or a refusal) |
-| `onOutcome(PaymentOutcome.ReturnedFromRedirect)` | The shopper came back from a redirect — not an outcome, confirm with `awaitPaymentOutcome()` |
+| `onOutcome(PaymentOutcome.ReturnedFromRedirect)` | The shopper came back from a redirect — not an outcome, confirm from your backend ([recipe 9](../integration/recipes.md#9-confirm-after-a-redirect-ask-your-backend)) |
 | `onRequiresAction()` | A 3-D Secure step is being launched (informational) |
 | `onPaymentId(id)` | Informational `payment_id` off the confirmation-page JWT |
 | `onOutcome(PaymentOutcome.Canceled)` | The 3-D Secure WebView was dismissed | |
-| `onOutcome(PaymentOutcome.Failed)` | Tokenization (`SubmitResult.Error`), `/init`, `/validate`, or redirect launch failed |; `error` is the typed `PurseException` (`PartnerUiException` for the partner's own failures) |
+| `onOutcome(PaymentOutcome.Failed)` | Tokenization (`SubmitResult.Error`), `/validate`, or redirect launch failed |; `error` is the typed `PurseException` (`PartnerUiException` for the partner's own failures) |
 
 ## Failure modes
 
@@ -221,7 +221,6 @@ either way.
 | `PurseCheckoutException.ItemNotFulfilled` | `submitPayment()` called directly while the card form is incomplete — or a saved token that requires a CVV was selected and its CVV field never validated (or was never rendered) |
 | `PurseCheckoutException.ValidateFailed: client-side validation failed for … — the card form was never submitted…` | No vault token collected: `checkout.submitPayment()` was called instead of the element's / `CardCoordinator`'s `submit()` (which tokenizes, then pays), or tokenization never succeeded (for a `TOKEN_CVV` saved card: the CVV-only tokenization) |
 | `IllegalArgumentException: … cannot be driven by a plugin coordinator` | `host(item)` called with a secondary method or a saved gift card — only a `PrimaryMethod` or a `PaymentToken` can |
-| `PaymentApiException: creditcard init not successful` | `/init` returned a non-`SUCCESS` state |
 | Form rebuilds and loses input on every keystroke elsewhere | The `host` wasn't `remember`ed — specificity 5 |
 | SecureFields fails to initialize | Blank `vaultTenantId` — the session carries no `vault.vendor_front_data.purse.tenant_id` |
 | `selected_network` missing from `/validate` | No brand detected/selected (`Brand.UNKNOWN` maps to `null`) — valid, the backend resolves it |
@@ -230,10 +229,12 @@ either way.
 
 | File | Role |
 |---|---|
-| `CardPlugin.kt` | `validateUi`, `preValidation` (`/init` + payload) |
-| `CardMapper.kt` | `/init` body, `/init` parsing, `/validate` `payment_data` |
+| `CardPlugin.kt` | `validateUi`, `preValidation` (the `/validate` item) |
+| `CardMapper.kt` | `/validate` `payment_data` (fresh card and saved token) |
 | `CardCoordinator.kt` | `rememberCardCoordinator`, SecureFields listeners, fulfillment reporting, tokenize, brand mapping (the shared submit/redirect flow lives in `PaymentCoordinator`) |
 | `CardForm.kt` | `PurseCardForm` — labels, help texts and errors around the secure fields |
+| `CardField.kt` | `CardField` (+ `purse_card_*` test tags), `CardFieldState`, the per-field state reducer and error rule behind `fieldStates` / `errorMessage` |
+| `CardFormCopy.kt` | `CardFormTexts` over the `purse_card_*` resources, read in `PluginOptions.locale` |
 
 Web reference: `usp-widget/packages/partner-ui/src/plugins/vaults/purse/creditcard/` (bridge) and
 `plugins/generics/hostedfields/` (the form/lifecycle half).

@@ -21,6 +21,7 @@ import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
+import org.junit.Before
 import org.junit.Test
 
 /**
@@ -48,6 +49,10 @@ class PaymentValidatorTest {
 
     /** Port 1 is never listening — any real call fails fast, so reaching it is itself the assertion. */
     private val api = PaymentApiClient("k", "http://127.0.0.1:1", "e", "s-1")
+
+    /** `/validate` is once-only per session, process-wide — every test here reuses `s-1`. */
+    @Before
+    fun resetValidateGuard() = eu.purse.core.api.ValidateGuard.reset()
 
     private fun primary(id: String = "fintecture-instantpayment") = PrimaryMethod(
         id = id,

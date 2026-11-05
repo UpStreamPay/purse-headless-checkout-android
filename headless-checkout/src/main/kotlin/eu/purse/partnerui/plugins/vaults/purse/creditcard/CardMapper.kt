@@ -1,60 +1,22 @@
 // Web: packages/partner-ui/src/plugins/vaults/purse/creditcard/bridge.ts
-// Same: /init body, `vault_vendor_token_id` + bin + selected_network in `payment_data`.
+// Same: `vault_vendor_token_id` + bin + selected_network in `payment_data`; no /init (`skipInit`).
 // Differs: nothing.
 package eu.purse.partnerui.plugins.vaults.purse.creditcard
 
-import eu.purse.core.api.PaymentApiException
-import eu.purse.partnerui.plugins.generics.redirection.RedirectionMapper
-import java.math.BigDecimal
 import org.json.JSONObject
 
 /**
- * Builds the `/init` and `/validate` request bodies for a `purse`-vendor vault-backed card
- * (`creditcard`) payment and parses `/init`'s response. Ports usp-widget `partner-ui`'s
- * `plugins/vaults/purse/creditcard` bridge (`bridge.ts`'s `submitForResult`/`postValidate`) and the
- * generic `plugins/generics/hostedfields` plugin it plugs into (`index.ts`'s
- * `onSessionSet`/`preValidation`).
+ * Builds the `/validate` `payment_data` for a `purse`-vendor vault-backed card (`creditcard`)
+ * payment. Ports usp-widget `partner-ui`'s `plugins/vaults/purse/creditcard` bridge (`bridge.ts`'s
+ * `submitForResult`) and the generic `plugins/generics/hostedfields` plugin it plugs into.
  *
- * Web calls `/init` once, early, at `onSessionSet` — before the shopper even sees the card form —
- * purely to obtain a `step_id` to carry into `/validate` later. [CardPlugin.preValidation] calls it
- * right after SecureFields tokenizes instead, immediately before `/validate` — same two calls in
- * the same order, just later in the lifecycle (no rendering step here depends on `/init`'s
- * response, unlike Google Pay's gateway config or Klarna's client token).
+ * There is no `/init` body: the purse bridge sets `skipInit`, so web never calls `/init` for a vault
+ * card and its `/validate` item carries `step_id: null`. [CardPlugin]'s item has no step either
+ * (`ItemPayload` then leaves `step_id` out, which the Payment API reads the same way).
  */
 object CardMapper {
 
-    const val METHOD = "creditcard"
     const val VAULT_VENDOR = "purse"
-
-    /**
-     * `/init` body — mirrors web's `onSessionSet` call: no card data yet, just enough to register
-     * the method and get back a `step_id`. `payment_data.vault_vendor` mirrors
-     * `purseCreditCardBridge`'s `additionalInitData`. `partner_data.browser` goes out here too, as
-     * on web, in case the PSP reads its 3-D Secure device data from `/init`.
-     */
-    fun buildInitPayload(amount: BigDecimal, partnerWireValue: String, browser: JSONObject? = null): JSONObject =
-        JSONObject()
-            .put("partner", partnerWireValue)
-            .put("method", METHOD)
-            .put("amount", amount)
-            .put("partner_data", RedirectionMapper.partnerDataFor(browser))
-            .put("payment_data", JSONObject().put("vault_vendor", VAULT_VENDOR))
-            .put("payment_preferences", JSONObject())
-
-    /**
-     * Parses `/init`'s `step_id` — see [buildValidatePaymentData].
-     *
-     * @throws PaymentApiException if the init wasn't a success.
-     */
-    fun parseInit(initData: JSONObject): Int? {
-        val status = initData.optJSONObject("status")
-        val state = status?.optString("state").orEmpty()
-        if (state.isNotEmpty() && state != "SUCCESS") {
-            val description = status?.optString("description").orEmpty()
-            throw PaymentApiException("creditcard init not successful (state=$state) $description".trim())
-        }
-        return if (initData.has("step_id") && !initData.isNull("step_id")) initData.optInt("step_id") else null
-    }
 
     /**
      * `/validate` `payment_data` body. [vaultVendorTokenId] is a **top-level field, not nested

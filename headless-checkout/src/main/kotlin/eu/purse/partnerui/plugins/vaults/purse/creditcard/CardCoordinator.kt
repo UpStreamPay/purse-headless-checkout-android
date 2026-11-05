@@ -1,5 +1,5 @@
 // Web: packages/partner-ui/src/plugins/vaults/purse/creditcard + generics/hostedfields
-// Same: fresh card / token with CVV (`cvvOnly`) / token without CVV; tokenize, then /init + /validate.
+// Same: fresh card / token with CVV (`cvvOnly`) / token without CVV; tokenize, then /validate.
 // Differs: SecureFields Android (Compose) instead of iframes; the form's validity is pushed into
 //          the checkout through `PluginHost.setFulfilled` rather than refused at `setAsPrimarySource`.
 package eu.purse.partnerui.plugins.vaults.purse.creditcard
@@ -15,8 +15,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.res.stringResource
-import eu.purse.checkout.R
 import eu.purse.core.environment.PurseEnvironment
 import eu.purse.partnerui.CardFormTexts
 import eu.purse.partnerui.PayToken
@@ -25,6 +23,7 @@ import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.PluginHost
 import eu.purse.partnerui.PurseTheme
+import eu.purse.partnerui.ThemeValues
 import eu.purse.partnerui.plugins.generics.redirection.RedirectionMapper
 import eu.purse.partnerui.redirect.RedirectionCheckoutContract
 import eu.purse.securefields.SecureFieldsAndroid
@@ -36,6 +35,7 @@ import eu.purse.securefields.config.VaultFieldConfig
 import eu.purse.securefields.config.VaultStyles
 import eu.purse.securefields.events.BrandDetectedPayload
 import eu.purse.securefields.events.BrandUserSelectionPayload
+import eu.purse.securefields.events.FieldStatePayload
 import eu.purse.securefields.events.FormValidPayload
 import eu.purse.securefields.model.Brand
 import eu.purse.securefields.model.SubmitOptions
@@ -48,7 +48,7 @@ import kotlinx.coroutines.withContext
 
 /**
  * Creates and remembers the card flow's interactive half: a [SecureFieldsAndroid] instance plus the
- * [CardCoordinator] that tokenizes on submit and runs `/init` + `/validate` through [host]. The host's
+ * [CardCoordinator] that tokenizes on submit and runs `/validate` through [host]. The host's
  * token (and its `requiresCvv`) selects the [CardCoordinator.Mode]. Render the form with
  * [PurseCardForm]; mounting it reports the item unfulfilled until SecureFields says every field is valid.
  */
@@ -72,7 +72,7 @@ fun rememberCardCoordinator(host: PluginHost, listener: PaymentElementListener):
                 .ifEmpty { listOf(Brand.VISA, Brand.MASTERCARD, Brand.CARTE_BANCAIRE) }
         }
     }
-    val texts = rememberCardTexts(context.options.cardFormTexts)
+    val texts = rememberCardTexts(context.options.cardFormTexts, context.options.locale)
     val theme = remember(context.options.theme) { (context.options.theme ?: PurseTheme()).resolve() }
     val config = remember(brands, mode, texts, theme) {
         SecureFieldsConfig(
@@ -83,16 +83,16 @@ fun rememberCardCoordinator(host: PluginHost, listener: PaymentElementListener):
             brandSelector = mode == CardCoordinator.Mode.FRESH_CARD,
             fields = when (mode) {
                 CardCoordinator.Mode.FRESH_CARD -> SecureFieldsFieldsConfig(
-                    cardNumber = VaultFieldConfig(placeholder = texts.cardNumber.placeholder),
-                    expDate = VaultFieldConfig(placeholder = texts.expDate.placeholder),
-                    cvv = VaultFieldConfig(placeholder = texts.cvv.placeholder),
-                    holderName = VaultFieldConfig(placeholder = texts.holderName.placeholder),
+                    cardNumber = texts.cardNumber.vaultFieldConfig(),
+                    expDate = texts.expDate.vaultFieldConfig(),
+                    cvv = texts.cvv.vaultFieldConfig(),
+                    holderName = texts.holderName.vaultFieldConfig(),
                 )
                 // CVV only: with no card-number field mounted SecureFields omits the `card` object,
                 // which the vault reads as a CVV-only submission (securefields-android ≥ 1.4.0).
                 CardCoordinator.Mode.TOKEN_CVV,
                 CardCoordinator.Mode.TOKEN_NO_CVV,
-                -> SecureFieldsFieldsConfig(cvv = VaultFieldConfig(placeholder = texts.cvv.placeholder))
+                -> SecureFieldsFieldsConfig(cvv = texts.cvv.vaultFieldConfig())
             },
             styles = theme.toVaultStyles(),
         )
@@ -133,6 +133,9 @@ fun rememberCardCoordinator(host: PluginHost, listener: PaymentElementListener):
             override fun onBrandUserSelection(payload: BrandUserSelectionPayload) {
                 coordinator.selectedBrand = payload.selected
             }
+            override fun onChange(payload: FieldStatePayload) = coordinator.fieldTracker.onChange(payload)
+            override fun onFocus(payload: FieldStatePayload) = coordinator.fieldTracker.onFocus(payload)
+            override fun onBlur(payload: FieldStatePayload) = coordinator.fieldTracker.onBlur(payload)
         })
         sdk.render()
         onDispose {
@@ -193,13 +196,32 @@ class CardCoordinator internal constructor(
     var formValid: Boolean by mutableStateOf(!mode.rendersForm)
         internal set
 
+    internal val fieldTracker = CardFieldStates(texts)
+
+    /**
+     * Per-field state (Compose state), refreshed on every SecureFields change, focus and blur event —
+     * whether the form is [PurseCardForm] or your own `VaultField` layout. A field nothing has
+     * happened to yet is absent; read it as `CardFieldState()`.
+     */
+    val fieldStates: Map<CardField, CardFieldState> get() = fieldTracker.current
+
+    /**
+     * The error [PurseCardForm] shows under [field] right now, or `null` — for a host that draws its
+     * own messages (iOS `errorMessage(for:)`). Never while the shopper is typing in the field: a
+     * format error appears once the field is left with content SecureFields rejects, and clears once
+     * it is valid; a required error appears once an empty field has been left. The copy is the
+     * field's `formatError` / `requiredError` from [CardFormTexts], else the SDK default in the
+     * checkout locale.
+     */
+    fun errorMessage(field: CardField): String? = fieldTracker.errorMessage(field)
+
     /** Which co-badged brand to submit as: SecureFields' BIN detection, or the shopper's choice. */
     internal var selectedBrand: Brand? by mutableStateOf(null)
 
     /**
      * Pays: tokenize (the full card, or just the CVV of a saved one), then the checkout's
-     * `submitPayment()` — `/init` + `/validate` over the whole split — then any 3-D Secure redirect.
-     * A saved card that needs no CVV skips straight to `/init` + `/validate`. The result arrives on
+     * `submitPayment()` — `/validate` over the whole split, no `/init` for the card — then any 3-D
+     * Secure redirect. A saved card that needs no CVV skips straight to `/validate`. The result arrives on
      * the listener's [PaymentElementListener.onOutcome], never as a return value.
      *
      * **Differs from iOS**, where `CardCoordinator.submit()` only tokenizes and the app calls
@@ -297,41 +319,22 @@ private fun Brand.toGatewayScheme(): String? = when (this) {
     Brand.UNKNOWN -> null
 }
 
-/** [CardFormTexts] over the SDK's localized `purse_card_*` resources — merchant override first. */
-@Composable
-private fun rememberCardTexts(texts: CardFormTexts): ResolvedCardTexts {
-    @Composable
-    fun field(
-        t: CardFormTexts.FieldTexts,
-        label: Int, placeholder: Int, helper: Int, required: Int, invalid: Int,
-    ) = ResolvedFieldTexts(
-        label = t.label ?: stringResource(label),
-        placeholder = t.placeholder ?: stringResource(placeholder),
-        helperText = t.helperText ?: stringResource(helper).ifBlank { null },
-        requiredError = t.requiredError ?: stringResource(required),
-        formatError = t.formatError ?: stringResource(invalid),
-    )
-    val cardNumber = field(
-        texts.cardNumber, R.string.purse_card_number_label, R.string.purse_card_number_placeholder,
-        R.string.purse_card_number_helper, R.string.purse_card_number_required, R.string.purse_card_number_invalid,
-    )
-    val expDate = field(
-        texts.expDate, R.string.purse_card_exp_date_label, R.string.purse_card_exp_date_placeholder,
-        R.string.purse_card_exp_date_helper, R.string.purse_card_exp_date_required, R.string.purse_card_exp_date_invalid,
-    )
-    val cvv = field(
-        texts.cvv, R.string.purse_card_cvv_label, R.string.purse_card_cvv_placeholder,
-        R.string.purse_card_cvv_helper, R.string.purse_card_cvv_required, R.string.purse_card_cvv_invalid,
-    )
-    val holderName = field(
-        texts.holderName, R.string.purse_card_holder_name_label, R.string.purse_card_holder_name_placeholder,
-        R.string.purse_card_holder_name_helper, R.string.purse_card_holder_name_required, R.string.purse_card_holder_name_invalid,
-    )
-    return remember(cardNumber, expDate, cvv, holderName) { ResolvedCardTexts(cardNumber, expDate, cvv, holderName) }
-}
+/**
+ * The placeholder inside the secure input, and its label as the input's `contentDescription` — the
+ * name TalkBack and Espresso see, since the label [PurseCardForm] draws above is a separate node
+ * (web: `aria-labelledby`; iOS: `SecureFieldConfig.accessibilityLabel`).
+ */
+private fun ResolvedFieldTexts.vaultFieldConfig() = VaultFieldConfig(
+    placeholder = placeholder,
+    contentDescription = label?.takeIf { it.isNotBlank() },
+)
 
-/** The resolved `input` scope and its variants → SecureFields' [VaultStyles]; keys without an analog don't travel. */
-private fun PurseTheme.Resolved.toVaultStyles(): VaultStyles = input.toVaultStyles(
+/**
+ * The resolved `input` scope and its variants → SecureFields' [VaultStyles]; keys without an analog
+ * don't travel. Colours go through [ThemeValues.parseColorArgb]: SecureFields reads them with
+ * `Color.parseColor`, which turns the default theme's `transparent` into opaque black.
+ */
+internal fun PurseTheme.Resolved.toVaultStyles(): VaultStyles = input.toVaultStyles(
     focus = inputFocus.toVaultStyles(),
     invalid = inputInvalid.toVaultStyles(),
     valid = inputValid.toVaultStyles(),
@@ -346,9 +349,9 @@ private fun PurseTheme.FieldStyle.toVaultStyles(
     fontSize = fontSize,
     lineHeight = lineHeight,
     fontWeight = fontWeight,
-    color = color,
-    placeholderColor = placeholderColor,
-    backgroundColor = backgroundColor,
+    color = ThemeValues.parseColorArgb(color),
+    placeholderColor = ThemeValues.parseColorArgb(placeholderColor),
+    backgroundColor = ThemeValues.parseColorArgb(backgroundColor),
     focus = focus,
     invalid = invalid,
     valid = valid,

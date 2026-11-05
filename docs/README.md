@@ -9,6 +9,7 @@ SDK, in Kotlin and Compose.
 | | |
 |---|---|
 | **[Getting started](integration/getting-started.md)** | Install from Maven Central, create the checkout, render a method, pay, confirm. Read this first. |
+| [Card form: two levels](integration/card-form.md) | The drop-in card element, or `CardCoordinator` for your own layout: per-field state and errors, accessibility names, test tags, copy language. |
 | [Recipes](integration/recipes.md) | One task per section: each payment method, gift cards, saved cards, hooks, theme, errors, session refresh, BNPL. |
 | [API reference](integration/consumer-api.md) | Every function, flow, type and error. The generated KDoc reference ships with each [release](https://github.com/UpStreamPay/purse-headless-checkout-android/releases). |
 | [Payment methods by platform](payment-methods-matrix.md) | What this SDK supports versus web. |
