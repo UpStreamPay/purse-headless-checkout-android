@@ -61,6 +61,7 @@ jobs:
     # Only this job holds the webhook; the packages are already published when it runs.
     environment: upcoming-release
     steps:
+      # Plain text: a Slack workflow trigger shows mrkdwn literally.
       - name: Post to Slack
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
@@ -69,8 +70,8 @@ jobs:
         run: |
           [ -n "$SLACK_WEBHOOK_URL" ] || { echo "::error::SLACK_WEBHOOK_URL missing from the upcoming-release environment."; exit 1; }
           payload=$(jq -n --arg v "$VERSION" --arg run "$RUN_URL" '{text: (
-            ":package: *Headless Checkout Android* upcoming release `" + $v + "` is ready to test\n"
-            + "```implementation(\"eu.purse:headless-checkout-android:" + $v + "\")```\n"
-            + "Repository: `https://maven.pkg.github.com/UpStreamPay/purse-headless-checkout-android`\n"
-            + "<" + $run + "|Build>")}')
+            ":package: Headless Checkout Android " + $v + " is ready to test\n"
+            + "implementation(\"eu.purse:headless-checkout-android:" + $v + "\")\n"
+            + "Repository: https://maven.pkg.github.com/UpStreamPay/purse-headless-checkout-android\n"
+            + "Build: " + $run)}')
           curl --fail -sS -X POST -H "Content-type: application/json" --data "$payload" "$SLACK_WEBHOOK_URL"
