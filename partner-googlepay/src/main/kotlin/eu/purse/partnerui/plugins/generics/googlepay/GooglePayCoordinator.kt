@@ -30,7 +30,8 @@ import org.json.JSONObject
  * Google Pay's interactive half: [prepare] runs `/init` (+ Worldline refine) and `isReadyToPay`,
  * [launchSheet] opens the sheet, and an approved sheet selects the method and captures. The sheet
  * runs **before** `/validate`, and its request carries the amount, so the surface calls [prepare]
- * again whenever `PluginHost.amount` moves (web's `onAmountUpdate`). Obtain one with
+ * again whenever `PluginHost.amount` moves (web's `onAmountUpdate`) — except down to 0, where it
+ * only clears the request (nothing to pay). Obtain one with
  * `rememberGooglePayCoordinator`.
  */
 class GooglePayCoordinator internal constructor(
@@ -66,6 +67,8 @@ class GooglePayCoordinator internal constructor(
         if (isReady) listener.onReady(false)
         isReady = false
         allowedPaymentMethodsJson = null
+        // Nothing left to pay: no sheet request at 0 — wait for the amount to move.
+        if (!hasAmountToPrepare(host)) return
         val client = GooglePayClient.create(activity, host.environment).also { this.client = it }
         preparing = activity.lifecycleScope.launch {
             try {

@@ -18,9 +18,12 @@ import eu.purse.core.payment.Method
 import eu.purse.core.payment.MethodKey
 import eu.purse.core.payment.Partner
 import eu.purse.core.payment.SaveTokenMode
+import eu.purse.partnerui.PaymentCoordinator
+import eu.purse.partnerui.PaymentElementListener
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.redirect.RedirectAction
 import java.math.BigDecimal
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -516,6 +519,30 @@ class PurseHeadlessCheckoutTest {
 
         assertEquals(0, BigDecimal("3.80").compareTo(host.amount.value))
         assertEquals(0, host.amount.value.compareTo(host.buildContext().amount))
+    }
+
+    @Test
+    fun `a gift card covering the whole amount leaves a wallet nothing to prepare`() {
+        // SDK-12567 review: no /init at 0 — a refused one would end as a non-recomputable PARTNER_UI_FATAL_ERROR.
+        val checkout = checkout()
+        val googlePay = checkout.primaryMethods.single { it.method == Method.GooglePay }
+        val host = checkout.host(googlePay)
+        val coordinator = object : PaymentCoordinator(CoroutineScope(Dispatchers.Unconfined), object : PaymentElementListener {}) {
+            override val tag = "test"
+            fun canPrepare() = hasAmountToPrepare(host)
+        }
+        assertTrue(coordinator.canPrepare())
+
+        val giftCard = checkout.secondaryMethods.single()
+        checkout.applySecondary(
+            SecondaryToken(
+                id = "illicado-giftcard-7890", partner = giftCard.partner, method = giftCard.method,
+                pan = "9250004781234567890", cvv = "123", name = "gift", balance = BigDecimal("10.00"),
+            ),
+        )
+
+        assertEquals(0, BigDecimal.ZERO.compareTo(host.amount.value))
+        assertFalse(coordinator.canPrepare())
     }
 
     // --- saved cards (wallet) ---------------------------------------------------------------------

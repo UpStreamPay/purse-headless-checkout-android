@@ -2086,6 +2086,7 @@ public abstract class eu/purse/partnerui/PaymentCoordinator {
 	protected final fun getListener ()Leu/purse/partnerui/PaymentElementListener;
 	protected final fun getSubmitting ()Z
 	protected abstract fun getTag ()Ljava/lang/String;
+	protected final fun hasAmountToPrepare (Leu/purse/partnerui/PluginHost;)Z
 	protected fun onSettled (Leu/purse/core/payload/ValidationResult;)V
 	protected fun onSubmitFailed (Ljava/lang/Exception;)V
 	protected final fun selectAndCapture (Leu/purse/partnerui/PluginHost;)V

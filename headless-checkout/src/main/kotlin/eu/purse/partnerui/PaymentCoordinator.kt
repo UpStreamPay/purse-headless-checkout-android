@@ -50,6 +50,15 @@ abstract class PaymentCoordinator protected constructor(
         submitting = false
     }
 
+    /**
+     * Whether [host] still has an amount to prepare a payment for. At 0 (a gift card covers the
+     * rest) a coordinator that bakes the amount into an `/init` or a sheet request must not prepare:
+     * a refused `/init` would end as `PARTNER_UI_FATAL_ERROR`, which no later amount change lifts,
+     * and send a `Failed` outcome with no shopper tap. It clears what it prepared and waits for the
+     * amount to move again.
+     */
+    protected fun hasAmountToPrepare(host: PluginHost): Boolean = host.amount.value.signum() > 0
+
     /** Tell the checkout what happened, so it can deactivate the method or end the session. */
     protected fun dispatch(event: PluginEvent) {
         runCatching { host?.buildContext()?.dispatchEvent(event) }

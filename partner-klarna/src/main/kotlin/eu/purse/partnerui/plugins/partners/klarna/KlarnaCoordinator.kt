@@ -33,7 +33,8 @@ import org.json.JSONObject
  * [container]; [submit] runs `/validate`, and [KlarnaPlugin.postValidation] then calls the widget's
  * `authorize()` through the callback stashed in `PartnerUiContext.collected`. One submit therefore
  * both pays and opens Klarna's step. The `/init` client token carries the amount, so the surface
- * calls [prepare] again whenever `PluginHost.amount` moves (web's `onAmountUpdate`). Obtain one
+ * calls [prepare] again whenever `PluginHost.amount` moves (web's `onAmountUpdate`) — except down
+ * to 0, where it only clears the widget (no `/init` for nothing to pay). Obtain one
  * with `rememberKlarnaCoordinator`.
  */
 class KlarnaCoordinator internal constructor(
@@ -117,6 +118,11 @@ class KlarnaCoordinator internal constructor(
         if (view != null) {
             view = null
             listener.onReady(false)
+        }
+        // Nothing left to pay: no /init at 0 — drop the stale widget and wait for the amount to move.
+        if (!hasAmountToPrepare(host)) {
+            container?.removeAllViews()
+            return
         }
         preparing = activity.lifecycleScope.launch {
             try {
