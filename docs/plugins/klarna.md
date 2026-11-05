@@ -146,13 +146,23 @@ it (the plugin itself is the optional `eu.purse:headless-checkout-klarna` artifa
 fun KlarnaRow(checkout: PurseHeadlessCheckout, item: PrimaryMethod, listener: PaymentElementListener) {
     val coordinator = rememberKlarnaCoordinator(listener)
     val returnUrl = "${LocalContext.current.packageName}.klarna://return"
-    // The widget inflates into a real ViewGroup: prepare once the container exists.
+    val host = remember(item.id) { checkout.host(item) }
+    val amount by host.amount.collectAsState()
+    var attached by remember { mutableStateOf(false) }
+    // The widget inflates into a real ViewGroup: prepare once the container exists, and again
+    // whenever the amount moves (the /init client token carries it).
+    LaunchedEffect(coordinator, attached, amount) { if (attached) coordinator.prepare(host, returnUrl) }
     AndroidView(factory = { context ->
-        FrameLayout(context).also { coordinator.container = it; coordinator.prepare(checkout.host(item), returnUrl) }
+        FrameLayout(context).also { coordinator.container = it; attached = true }
     })
     Button(onClick = { coordinator.submit() }) { Text("Pay with Klarna") }   // after onReady(true)
 }
 ```
+
+Re-preparing on `host.amount` is web's `onAmountUpdate`: a fresh `/init` and widget for the new
+amount, with `onReady(false)` until it loads, so `/validate` never rides a stale `step_id`. At an
+amount of 0 (a gift card covers the whole order) no `/init` goes out: `prepare` removes the widget
+and waits for the amount to move again.
 
 Compose this only when the Klarna row is selected — an unselected row does no `/init` work.
 `rememberPaymentElement(checkout, item, listener)` does exactly this.

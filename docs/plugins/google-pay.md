@@ -140,10 +140,19 @@ sequenceDiagram
 @Composable
 fun GooglePayRow(checkout: PurseHeadlessCheckout, item: PrimaryMethod, listener: PaymentElementListener) {
     val coordinator = rememberGooglePayCoordinator(listener)
-    LaunchedEffect(coordinator, item.id) { coordinator.prepare(checkout.host(item)) }   // /init + refine + isReadyToPay
+    val host = remember(item.id) { checkout.host(item) }
+    // The sheet request carries the amount: prepare again whenever it moves (a gift card applied).
+    val amount by host.amount.collectAsState()
+    LaunchedEffect(coordinator, item.id, amount) { coordinator.prepare(host) }   // /init + refine + isReadyToPay
     GooglePayButton(coordinator, Modifier.fillMaxWidth())   // shows itself once ready; tap → launchSheet()
 }
 ```
+
+Keying `prepare` on `host.amount` is web's `onAmountUpdate`: without it, a gift card applied after
+the button appeared leaves the sheet showing the full order while `/validate` carries the rest.
+`prepare` hides the button (`onReady(false)`) until the new request is ready. At an amount of 0 (a
+gift card covers the whole order) it builds no request at all and the button stays hidden until the
+amount moves again.
 
 The approved sheet commits the method as primary itself (`host.setAsPrimary()`), so there is no
 `setPrimary` call on your side. `rememberPaymentElement(checkout, item, listener)` is the same thing

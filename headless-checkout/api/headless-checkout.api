@@ -2094,6 +2094,7 @@ public abstract class eu/purse/partnerui/PaymentCoordinator {
 	protected final fun getListener ()Leu/purse/partnerui/PaymentElementListener;
 	protected final fun getSubmitting ()Z
 	protected abstract fun getTag ()Ljava/lang/String;
+	protected final fun hasAmountToPrepare (Leu/purse/partnerui/PluginHost;)Z
 	protected fun onSettled (Leu/purse/core/payload/ValidationResult;)V
 	protected fun onSubmitFailed (Ljava/lang/Exception;)V
 	protected final fun selectAndCapture (Leu/purse/partnerui/PluginHost;)V
@@ -2279,6 +2280,7 @@ public final class eu/purse/partnerui/PluginEvent$Redirect : eu/purse/partnerui/
 
 public abstract interface class eu/purse/partnerui/PluginHost : eu/purse/partnerui/redirect/RedirectionDelegate {
 	public abstract fun buildContext ()Leu/purse/partnerui/PartnerUiContext;
+	public abstract fun getAmount ()Lkotlinx/coroutines/flow/StateFlow;
 	public abstract fun getEnvironment ()Leu/purse/core/environment/PurseEnvironment;
 	public abstract fun getRedirectionReturnUrl ()Ljava/lang/String;
 	public abstract fun setAsPrimary ()V

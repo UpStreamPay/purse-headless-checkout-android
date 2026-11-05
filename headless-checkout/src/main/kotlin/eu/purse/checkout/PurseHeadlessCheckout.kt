@@ -298,8 +298,11 @@ class PurseHeadlessCheckout private constructor(
      */
     private val activePlugins = mutableMapOf<String, Pair<PaymentItem, PartnerUiPlugin>>()
 
-    /** The last remaining amount plugins were told about — gates [notifyAmountUpdate]. */
-    private var lastNotifiedRemaining: BigDecimal = splitter.remaining
+    /**
+     * The last remaining amount plugins were told about — gates [notifyAmountUpdate], and is what
+     * every [PluginHost.amount] reads, so a coordinator re-prepares on the same beat.
+     */
+    private val notifiedRemaining = MutableStateFlow(splitter.remaining)
 
     init {
         // Web emits CREATE + SET_SESSION + READY across init/setSession; one construction here.
@@ -1492,6 +1495,7 @@ class PurseHeadlessCheckout private constructor(
         return object : PluginHost {
             override val environment get() = params.environment
             override val redirectionReturnUrl get() = session.source.redirection
+            override val amount = notifiedRemaining.asStateFlow()
             override fun buildContext() = pluginContext(item)
             override fun setCollected(data: Map<String, Any?>) = setCollected(item, data)
             override fun setAsPrimary() = makePrimary(item)
@@ -1742,8 +1746,8 @@ class PurseHeadlessCheckout private constructor(
      */
     private fun notifyAmountUpdate() {
         val remaining = splitter.remaining
-        if (remaining.compareTo(lastNotifiedRemaining) == 0) return
-        lastNotifiedRemaining = remaining
+        if (remaining.compareTo(notifiedRemaining.value) == 0) return
+        notifiedRemaining.value = remaining
         activePlugins.values.forEach { (item, plugin) ->
             scope.launch { runCatching { plugin.onAmountUpdate(pluginContext(item)) } }
         }

@@ -7,6 +7,8 @@ package eu.purse.partnerui.plugins.generics.googlepay
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 import com.google.android.gms.wallet.contract.TaskResultContracts
@@ -41,7 +43,9 @@ class GooglePayModule : PartnerModule {
     @Composable
     override fun rememberSurface(plugin: PartnerUiPlugin, request: SurfaceRequest): PaymentSurface {
         val coordinator = rememberGooglePayCoordinator(request.listener)
-        LaunchedEffect(coordinator, request.key) { coordinator.prepare(request.host) }
+        // The sheet request carries the amount — prepare again when it moves (web's onAmountUpdate).
+        val amount by request.host.amount.collectAsState()
+        LaunchedEffect(coordinator, request.key, amount) { coordinator.prepare(request.host) }
         return remember(coordinator) {
             PaymentSurface(hasUi = true, selfSubmitting = true, onSubmit = { }) { modifier ->
                 GooglePayButton(coordinator, modifier)

@@ -18,7 +18,9 @@ import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.PluginHost
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import kotlinx.coroutines.withContext
@@ -27,7 +29,10 @@ import org.json.JSONObject
 /**
  * Google Pay's interactive half: [prepare] runs `/init` (+ Worldline refine) and `isReadyToPay`,
  * [launchSheet] opens the sheet, and an approved sheet selects the method and captures. The sheet
- * runs **before** `/validate`. Obtain one with `rememberGooglePayCoordinator`.
+ * runs **before** `/validate`, and its request carries the amount, so the surface calls [prepare]
+ * again whenever `PluginHost.amount` moves (web's `onAmountUpdate`) — except down to 0, where it
+ * only clears the request (nothing to pay). Obtain one with
+ * `rememberGooglePayCoordinator`.
  */
 class GooglePayCoordinator internal constructor(
     private val activity: ComponentActivity,
@@ -42,6 +47,9 @@ class GooglePayCoordinator internal constructor(
     private var client: GooglePayClient? = null
     private var request: GooglePayRequest? = null
 
+    /** The in-flight [prepare]; a newer one cancels it so a stale `/init` never lands last. */
+    private var preparing: Job? = null
+
     /** `isReadyToPay`'s answer, as Compose state — what [GooglePayButton] shows itself on. */
     var isReady: Boolean by mutableStateOf(false)
         private set
@@ -50,12 +58,19 @@ class GooglePayCoordinator internal constructor(
     var allowedPaymentMethodsJson: String? by mutableStateOf(null)
         private set
 
+    /** Build the request against the current amount; calling it again replaces the previous one. */
     fun prepare(host: PluginHost) {
         attach(host)
+        preparing?.cancel()
+        // The prepared request is about to go stale — no sheet on it, and no Pay button meanwhile.
+        request = null
+        if (isReady) listener.onReady(false)
         isReady = false
         allowedPaymentMethodsJson = null
+        // Nothing left to pay: no sheet request at 0 — wait for the amount to move.
+        if (!hasAmountToPrepare(host)) return
         val client = GooglePayClient.create(activity, host.environment).also { this.client = it }
-        activity.lifecycleScope.launch {
+        preparing = activity.lifecycleScope.launch {
             try {
                 val context = host.buildContext()
                 val req = withContext(Dispatchers.IO) { GooglePayPlugin(context.partner).buildRequest(context) }
@@ -64,6 +79,8 @@ class GooglePayCoordinator internal constructor(
                 val ready = client.isReadyToPay(req.isReadyToPayJson).awaitBoolean()
                 isReady = ready
                 listener.onReady(ready)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
                 dispatch(PluginEvent.InitFailed(e.message))
                 fail(e)
