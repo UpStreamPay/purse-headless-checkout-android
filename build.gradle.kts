@@ -194,6 +194,16 @@ subprojects {
         apply(plugin = "com.vanniktech.maven.publish")
         apply(plugin = "org.jetbrains.dokka")
 
+        // Private snapshots (snapshot.yml). Credentials: ORG_GRADLE_PROJECT_GitHubPackages{Username,Password}.
+        configure<PublishingExtension> {
+            repositories {
+                maven("https://maven.pkg.github.com/UpStreamPay/purse-headless-checkout-android") {
+                    name = "GitHubPackages"
+                    credentials(PasswordCredentials::class)
+                }
+            }
+        }
+
         configure<MavenPublishBaseExtension> {
             configure(
                 AndroidSingleVariantLibrary(

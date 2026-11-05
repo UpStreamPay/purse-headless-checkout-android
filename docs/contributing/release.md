@@ -141,6 +141,36 @@ Then check that a project with only `mavenCentral()` resolves
 `eu.purse:headless-checkout-android:<version>` — the external-app rehearsal in
 [ci.md](ci.md#what-is-not-automated).
 
+## Upcoming release
+
+Every update of the open release PR runs `upcoming-release.yml`, which publishes
+`<next-version>-SNAPSHOT` (unsigned) to GitHub Packages with the workflow's own token. It is private:
+only accounts with read access to this repository can download it. Each build republishes the same
+`-SNAPSHOT` version; a fixed version could not be overwritten.
+
+Test the next release the way a merchant integrates it, before it is merged:
+
+```kotlin
+repositories {
+    maven("https://maven.pkg.github.com/UpStreamPay/purse-headless-checkout-android") {
+        credentials {
+            username = "<github-username>"
+            password = "<classic PAT with read:packages>"  // fine-grained tokens are not accepted
+        }
+        mavenContent { snapshotsOnly() }
+    }
+}
+dependencies {
+    implementation("eu.purse:headless-checkout-android:<next-version>-SNAPSHOT")
+}
+```
+
+Gradle caches a snapshot for 24 hours: pass `--refresh-dependencies` to pick up a newer one.
+
+A Slack message announces each build. One-time setup: an `upcoming-release` environment holding
+`SLACK_WEBHOOK_URL` (an incoming webhook for the channel), deployment branches limited to
+`release-please--branches--main--components--headless-checkout-android`.
+
 ## Local verification
 
 ```bash
