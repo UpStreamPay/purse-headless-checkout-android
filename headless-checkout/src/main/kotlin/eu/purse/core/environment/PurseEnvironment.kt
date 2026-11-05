@@ -66,9 +66,13 @@ enum class PurseEnvironment(val wireValue: String, val paymentApiRoot: String) {
         /** Returns `null` for a missing or unrecognized value — callers decide whether that's fatal. */
         fun fromWire(value: String?): PurseEnvironment? = entries.firstOrNull { it.wireValue == value }
 
-        /** The tier whose Payment API host [apiUrl] names, if it names one (host compared case-insensitively). */
+        /**
+         * The tier whose Payment API host [apiUrl] names, if it names one (host compared
+         * case-insensitively, and without the trailing `.` of a fully qualified name, which still
+         * resolves to the same host).
+         */
         internal fun ofApiUrl(apiUrl: String): PurseEnvironment? {
-            val host = runCatching { URI(apiUrl).host }.getOrNull() ?: return null
+            val host = runCatching { URI(apiUrl).host }.getOrNull()?.removeSuffix(".") ?: return null
             return entries.firstOrNull { URI(it.paymentApiRoot).host.equals(host, ignoreCase = true) }
         }
     }

@@ -35,6 +35,7 @@ class PurseEnvironmentGateTest {
     fun `an api_url names its tier by host only`() {
         assertEquals(PurseEnvironment.DEVELOPMENT, PurseEnvironment.ofApiUrl("https://API.purse-dev.com/payment/v2"))
         assertEquals(PurseEnvironment.TEST, PurseEnvironment.ofApiUrl("http://api.purse-test.com:8443/payment/v1"))
+        assertEquals(PurseEnvironment.TEST, PurseEnvironment.ofApiUrl("https://api.purse-test.com./payment/v1"))
         assertNull(PurseEnvironment.ofApiUrl("https://tenant.example/payment/v1"))
         assertNull(PurseEnvironment.ofApiUrl("https://api.purse-test.com.evil.com/payment/v1"))
         assertNull(PurseEnvironment.ofApiUrl(""))
