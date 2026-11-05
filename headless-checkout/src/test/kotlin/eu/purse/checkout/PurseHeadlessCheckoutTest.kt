@@ -19,6 +19,7 @@ import eu.purse.core.payment.Method
 import eu.purse.core.payment.MethodKey
 import eu.purse.core.payment.Partner
 import eu.purse.core.payment.SaveTokenMode
+import eu.purse.core.session.PurseSessionException
 import eu.purse.partnerui.PluginEvent
 import eu.purse.partnerui.PluginRegistry
 import eu.purse.partnerui.redirect.RedirectAction
@@ -1010,6 +1011,83 @@ class PurseHeadlessCheckoutTest {
         assertEquals(tierRoot, lockedRoot("https://api.purse-live.com@evil.com/payment/v2"))
         assertEquals(tierRoot, lockedRoot("https://api.purse-live.com:8443/payment/v2"))
         assertEquals(tierRoot, lockedRoot(""))
+    }
+
+    /** SDK-12577 (iOS SDK-12562): a release app is refused an internal tier, never switched to production. */
+    @Test
+    fun `a release app refuses a TEST or DEVELOPMENT session at init, a debuggable one gets it`() {
+        fun init(environment: PurseEnvironment, isDebugHost: Boolean) = PurseHeadlessCheckout.init(
+            CheckoutTestSessions.widgetData(apiUrl = environment.paymentApiRoot, environment = environment.wireValue),
+            datetimeChecker = offlineChecker(),
+            isDebugHost = isDebugHost,
+        )
+
+        for (tier in listOf(PurseEnvironment.TEST, PurseEnvironment.DEVELOPMENT)) {
+            val refused = assertThrows(PurseSessionException.EnvironmentNotAllowed::class.java) { init(tier, isDebugHost = false) }
+            assertEquals(PurseErrorCode.ENVIRONMENT_NOT_ALLOWED, refused.code)
+            assertEquals(tier, refused.environment)
+            assertEquals(tier.paymentApiRoot, init(tier, isDebugHost = true).paymentApiRoot)
+        }
+        for (tier in listOf(PurseEnvironment.SANDBOX, PurseEnvironment.PRODUCTION)) {
+            assertEquals(tier.paymentApiRoot, init(tier, isDebugHost = false).paymentApiRoot)
+        }
+    }
+
+    @Test
+    fun `a release app refuses a TEST api_url under a production label`() {
+        val disguised = CheckoutTestSessions.widgetData(
+            apiUrl = "https://API.purse-test.com/payment/v2",
+            environment = PurseEnvironment.PRODUCTION.wireValue,
+        )
+        val refused = assertThrows(PurseSessionException.EnvironmentNotAllowed::class.java) {
+            PurseHeadlessCheckout.init(disguised, datetimeChecker = offlineChecker(), isDebugHost = false)
+        }
+        assertEquals(PurseEnvironment.TEST, refused.environment)
+    }
+
+    @Test
+    fun `a locked release app checks the locked tier, not the session's`() {
+        val testBlob = CheckoutTestSessions.widgetData(
+            apiUrl = PurseEnvironment.TEST.paymentApiRoot,
+            environment = PurseEnvironment.TEST.wireValue,
+        )
+        val locked = PurseHeadlessCheckout.init(
+            testBlob,
+            lockedEnvironment = PurseEnvironment.PRODUCTION,
+            datetimeChecker = offlineChecker(),
+            isDebugHost = false,
+        )
+        assertEquals(PurseEnvironment.PRODUCTION.paymentApiRoot, locked.paymentApiRoot)
+
+        assertThrows(PurseSessionException.EnvironmentNotAllowed::class.java) {
+            PurseHeadlessCheckout.init(
+                CheckoutTestSessions.widgetData(),
+                lockedEnvironment = PurseEnvironment.DEVELOPMENT,
+                datetimeChecker = offlineChecker(),
+                isDebugHost = false,
+            )
+        }
+    }
+
+    @Test
+    fun `setSession in a release app refuses a TEST session and keeps the current one`() {
+        val checkout = PurseHeadlessCheckout.init(
+            CheckoutTestSessions.widgetData(),
+            datetimeChecker = offlineChecker(),
+            isDebugHost = false,
+        )
+        val testSession = CheckoutTestSessions.widgetData(
+            refreshedSessionJson(),
+            apiUrl = PurseEnvironment.TEST.paymentApiRoot,
+            environment = PurseEnvironment.TEST.wireValue,
+        )
+
+        val refused = assertThrows(PurseSessionException.EnvironmentNotAllowed::class.java) {
+            runBlocking { checkout.setSession(testSession) }
+        }
+        assertEquals(PurseErrorCode.ENVIRONMENT_NOT_ALLOWED, refused.code)
+        assertEquals("session-123", checkout.currentSessionId)
+        assertEquals(PurseEnvironment.SANDBOX.paymentApiRoot, checkout.paymentApiRoot)
     }
 
     @Test

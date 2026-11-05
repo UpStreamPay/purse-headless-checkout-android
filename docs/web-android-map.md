@@ -31,7 +31,7 @@ adds or removes a divergence.
 | none | `partnerui/PluginHost.kt` | the seam through which a coordinator reaches the checkout |
 | none (web bundles every plugin) | `partnerui/PartnerModule.kt`, `PartnerArtifacts.kt`, `META-INF/services/eu.purse.partnerui.PartnerModule` in each partner module | optional partner artifacts discovered with `ServiceLoader`; a missing one is named at `init` |
 | `monitoring/*`, `monitoringConfigs.ts` | `checkout/monitoring/CheckoutEventBus.kt`, `CheckoutEventCode.kt`, `MonitoringPayloads.kt`, `core/monitoring/*` | web's 40 codes + `METHOD_DISABLED`, envelope + `platform: android` — see [monitoring](integration/monitoring.md) |
-| `utils/error/*` | `checkout/PurseCheckoutException.kt`, `core/error/PurseErrorCode.kt` | same codes |
+| `utils/error/*` | `checkout/PurseCheckoutException.kt`, `core/error/PurseErrorCode.kt` | same codes, plus native-only ones (`ENVIRONMENT_NOT_ALLOWED`, shared with iOS) |
 | `sdk/src/API/payment-api.ts` | `core/api/PaymentApiClient.kt` | yes |
 | wallet API | `core/api/WalletApiClient.kt` | yes |
 | `server-datetime-checker.ts` | `core/datetime/ServerDatetimeChecker.kt`, `DatetimeApiClient.kt` | yes |
@@ -85,6 +85,7 @@ adds or removes a divergence.
 | Klarna return | page URL | host app must declare a `singleTask` deep link | `KlarnaPaymentView` resumes the same Activity |
 | Payment confirmation after redirect | `/validate`, the redirection return and the success/failure URLs; the merchant confirms on its server | `ReturnedFromRedirect`, then the app asks the merchant's backend. `paymentStatus()` / `awaitPaymentOutcome()` are deprecated (removed at the next major): the session read answers `401` to the client key (SDK-12574, iOS SDK-12559) | the app returns to the launching screen, which cannot read the final redirect |
 | `setSession` survivors | resets the split | keeps an unchanged primary selected | AC of US-24 |
+| `TEST` / `DEVELOPMENT` in a release app | n/a (a page has no release build) | refused at `init` / `restore` / `setSession` with `EnvironmentNotAllowed` (`ENVIRONMENT_NOT_ALLOWED`) when the host app is not debuggable — the locked tier, else the declared one and the `api_url`'s host | same code and rule as iOS (SDK-12562 / SDK-12577); never swapped for production |
 | Second submit | latch posts `HEADLESS_CHECKOUT_SUBMIT_BLOCKED` and returns silently | same latch, atomic, **throws** `SubmitBlocked` (`SUBMIT_BLOCKED`) and re-checks expiry first | a merchant needs a code to react to, not a silent no-op (SDK-12218) |
 | `/validate` once per session | per-instance `#validationConsumed`; `fetch` never replays a POST | same latch, plus a process-wide `ValidateGuard` per session id, streamed bodies (no `HttpURLConnection` replay), and a lost answer (`outcomeUnknown`) spends the session | a re-created Activity can rebuild the checkout for the same session, and `HttpURLConnection` re-sends a buffered POST whose answer was lost (SDK-12621) |
 | `SUBMITTING` disabled state | declared, never set | overlaid on every selectable item while `submitPayment` runs | US-22 |

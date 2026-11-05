@@ -99,7 +99,10 @@ val checkout = PurseHeadlessCheckout.init(
 )
 ```
 
-`init` throws `PurseSessionException.SessionMalformed` when the blob cannot be decoded. Call
+`init` throws `PurseSessionException.SessionMalformed` when the blob cannot be decoded, and
+`PurseSessionException.EnvironmentNotAllowed` (`ENVIRONMENT_NOT_ALLOWED`) when a release
+(non-debuggable) build is handed the internal `TEST` / `DEVELOPMENT` tier — create sessions on sandbox
+or production ([details](consumer-api.md#internal-tiers-in-a-release-app)). Call
 `checkout.teardown()` when the checkout screen is dismissed for good. One session pays once; for a
 new cart, mint a new session and call `checkout.setSession(widgetData)`. Hold the checkout in a
 `ViewModel`, and snapshot it with `saveState()` / `restore()` so a process death mid-redirect does

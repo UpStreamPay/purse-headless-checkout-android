@@ -335,7 +335,8 @@ dispatches its network call to `Dispatchers.IO`; `sessionTransactions` / `paymen
 `suspend`, so no public function blocks. `ValidateFailed.outcomeUnknown` flags a `/validate` that
 left without an answer. `teardown()` sets `isTornDown` and every later operation throws
 `CheckoutTornDown`. All exceptions share one `PurseException` root (`code`, `documentationLink`),
-`PurseSessionException` (`SESSION_MALFORMED`) and `PaymentApiException` (`API_ERROR`) included;
+`PurseSessionException` (`SESSION_MALFORMED`, and `ENVIRONMENT_NOT_ALLOWED` for a TEST / DEVELOPMENT
+tier in a non-debuggable host app, as on iOS) and `PaymentApiException` (`API_ERROR`) included;
 `PurseErrorCodeCoverageTest` exercises every code. The redirect WebView follows `https` pages only,
 with file/content access off (DOM storage on since SDK-12572, as PSP pages need `localStorage`), accepts a return intent only on the app's own scheme, and reports
 recreation after process death as a *return* to reconcile, never a cancel.
