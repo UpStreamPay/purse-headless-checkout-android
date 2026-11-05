@@ -9,11 +9,11 @@ import androidx.activity.result.contract.ActivityResultContract
 
 /**
  * The outcome of a redirect round-trip. **Not the payment outcome** — it only means the shopper
- * came back into the app. [Approved] is a hint to re-check status (re-query the session), not proof
- * the payment succeeded.
+ * came back into the app. [Approved] is a hint to confirm the payment from the merchant's backend,
+ * not proof the payment succeeded.
  */
 sealed interface RedirectionCheckoutResult {
-    /** The shopper returned via the deep link — re-check status to learn the real outcome. */
+    /** The shopper returned via the deep link — confirm from your backend to learn the real outcome. */
     data object Approved : RedirectionCheckoutResult
 
     /** The shopper dismissed the Custom Tab / WebView without returning via the deep link. */

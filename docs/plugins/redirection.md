@@ -131,7 +131,7 @@ sequenceDiagram
         Rd->>PSP: GET / POST-form / injected HTML
         PSP-->>Rd: shopper completes, returns
         Rd-->>Co: Approved / Canceled / Failed
-        Co-->>App: onOutcome(ReturnedFromRedirect) — confirm against the session
+        Co-->>App: onOutcome(ReturnedFromRedirect) — confirm from your backend
     else no redirect returned
         Co-->>App: onOutcome(Completed(result)) + Log.w "no redirect to follow"
     end
@@ -168,7 +168,21 @@ sequenceDiagram
    [`CardPlugin`](card-purse-vault.md) owns anyway.
 6. **`/init` runs on selection, not on screen entry.** It consumes a step against the session, so
    firing one for every offered redirection row would burn several. Call `prepare` when the shopper
-   picks the method.
+   picks the method. The one exception is PayPal bnpl's eligibility probe, below.
+7. **PayPal bnpl is probed at session build.** Web's dedicated `partners/paypal/bnpl` plugin carries
+   an `ensureClientCompatibility` that headless runs for every primary as the session is built
+   (`getEligibilityCheck`, `item-factory/primaries.ts`), whichever plugin later renders it. In
+   `integration_mode = redirection` it POSTs a bare `/init` (envelope only, no browser block) and a
+   `plugin_result.status` of `NOT_ELIGIBLE` withdraws the method. This SDK serves bnpl only in that
+   mode and through this template, so `RedirectionPlugin.ensureClientCompatibility` carries the probe
+   (iOS does the same); every other pair, and bnpl in any other mode, returns without a call. The
+   checkout runs it from `runEligibilityChecks` at `init`, `setSession` and `restore`, and withdraws
+   the method with the filtered `PLUGIN_INCOMPATIBLE` (plus web's `pluginIsIncompatibleWithClient`
+   partner-UI event, WARNING). It **fails closed**, like web's `.catch`: a network or HTTP failure
+   withdraws the method too. No probe runs on a session that is not `READY` or whose `/validate` was
+   consumed — a restored checkout whose payment already left is never re-`/init`ed (SDK-12461).
+   `prepare` still sends its own `/init` on selection, whose `step_id` goes into `/validate`, as web's
+   redirection plugin does in `onSessionSet`.
 
 ## Using it
 
@@ -190,7 +204,7 @@ item, listener)` does exactly this, with `hasUi = false`.
 |---|---|
 | `onReady(ready)` | `/init` returned — there's no form, so the shopper can submit immediately |
 | `onOutcome(PaymentOutcome.Completed)` | Terminal, no redirect pending — `status` is the API's verdict (`SUCCESS`, or a refusal) |
-| `onOutcome(PaymentOutcome.ReturnedFromRedirect)` | The shopper came back from a redirect — not an outcome, confirm with `awaitPaymentOutcome()` |
+| `onOutcome(PaymentOutcome.ReturnedFromRedirect)` | The shopper came back from a redirect — not an outcome, confirm from your backend ([recipe 9](../integration/recipes.md#9-confirm-after-a-redirect-ask-your-backend)) |
 | `onRequiresAction()` | The PSP's hosted page is being opened |
 | `onPaymentId(id)` | Informational `payment_id` off the confirmation-page JWT |
 | `onOutcome(PaymentOutcome.Canceled)` | The shopper dismissed the page without completing | |
@@ -207,15 +221,17 @@ able to pick another method.
 | `CardPlugin` resolved where you expected this one | A vault vendor outranks the template (see the priority table) |
 | `Completed` with a `Log.w "no redirect to follow"` | `/validate` carried no redirect, or it was suppressed as the widget's own confirmation page — see specificity 1 and `RedirectionResolver`'s doc |
 | `PaymentApiException: redirection init not successful` | Backend refused the `/init` for this item |
+| A PayPal bnpl row disappears shortly after `init` | Its eligibility probe answered `NOT_ELIGIBLE`, or failed — see specificity 7 and the `pluginIsIncompatibleWithClient` partner-UI event |
 | `Failed(PartnerUiException("call prepare() first"))` | `submit()` before `/init` came back |
+| The PSP page shows its own generic error ("Sorry, something went wrong") | The page needs a browser feature the WebView lacked — DOM storage was off before SDK-12572 and broke iDEAL; check `adb logcat -s RedirectionCheckout` and the page's console |
 | The PSP page refuses to render | Some providers block embedded WebViews — see the caveat in [plugins/README](README.md#shared-redirects-and-3-d-secure) |
-| `PurseCheckoutException.NoPluginRegistered` | The item resolved to no plugin at all — a near-miss `template` value is the usual cause |
+| `PurseCheckoutException.NoPluginRegistered`, then the method disabled with `PARTNER_UI_FATAL_ERROR` | The item resolved to no plugin at all — a near-miss or unknown `template` value outside redirection mode is the usual cause; the checkout retires it for the session, as web does |
 
 ## Files
 
 | File | Role |
 |---|---|
-| `RedirectionPlugin.kt` | `buildRequest` (`/init`), `preValidation` (`step_id` + browser), `TEMPLATE`, `RedirectionRequest` |
+| `RedirectionPlugin.kt` | `buildRequest` (`/init`), `preValidation` (`step_id` + browser), PayPal bnpl's `ensureClientCompatibility`, `TEMPLATE`, `RedirectionRequest` |
 | `RedirectionMapper.kt` | `/init` body, `browserData`, `step_id` extraction, init-status check |
 | `RedirectionCoordinator.kt` | `/init` on prepare; reports a missing redirect (the shared submit/redirect flow lives in `PaymentCoordinator`) |
 

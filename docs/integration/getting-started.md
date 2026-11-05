@@ -35,7 +35,8 @@ carries the generated API reference; your IDE shows the same KDoc from the publi
 A partner artifact registers its payment method on its own once it is on the classpath. If the
 session offers a method whose artifact you did not add, the SDK logs a warning at `init` naming the
 dependency to add, and the method's payment element has no UI — `submit` reports the same message
-as a `PaymentOutcome.Failed(NoPluginRegistered)`.
+as a `PaymentOutcome.Failed(NoPluginRegistered)` — and building that element disables the method
+with `PARTNER_UI_FATAL_ERROR` for the rest of the session, as web does.
 
 Everything else ships in the artifacts' own manifests: the `INTERNET` permission, Google Pay's
 `meta-data`, the redirect WebView Activity (3-D Secure, redirection methods) and PayPal's return
@@ -98,7 +99,10 @@ val checkout = PurseHeadlessCheckout.init(
 )
 ```
 
-`init` throws `PurseSessionException.SessionMalformed` when the blob cannot be decoded. Call
+`init` throws `PurseSessionException.SessionMalformed` when the blob cannot be decoded, and
+`PurseSessionException.EnvironmentNotAllowed` (`ENVIRONMENT_NOT_ALLOWED`) when a release
+(non-debuggable) build is handed the internal `TEST` / `DEVELOPMENT` tier — create sessions on sandbox
+or production ([details](consumer-api.md#internal-tiers-in-a-release-app)). Call
 `checkout.teardown()` when the checkout screen is dismissed for good. One session pays once; for a
 new cart, mint a new session and call `checkout.setSession(widgetData)`. Hold the checkout in a
 `ViewModel`, and snapshot it with `saveState()` / `restore()` so a process death mid-redirect does
@@ -162,7 +166,7 @@ redirection methods creation runs a `POST /init`.
 ```kotlin
 override fun onOutcome(outcome: PaymentOutcome) = when (outcome) {
     is PaymentOutcome.Completed -> if (outcome.isSuccess) showSuccess() else showDeclined(outcome.status)
-    PaymentOutcome.ReturnedFromRedirect -> confirmWithSession()          // below
+    PaymentOutcome.ReturnedFromRedirect -> confirmWithBackend()          // below
     PaymentOutcome.Canceled -> Unit                                      // the shopper backed out, nothing changed
     is PaymentOutcome.Failed -> showError(outcome.error)                 // a PurseException with a stable code
 }
@@ -171,15 +175,10 @@ override fun onOutcome(outcome: PaymentOutcome) = when (outcome) {
 - `Completed` — `/validate` answered directly. `status` is the API's verdict: `PaymentStatus.SUCCESS`
   is a payment, anything else a declined payment.
 - `ReturnedFromRedirect` — the shopper came back from a redirect (3-D Secure, PayPal, a PSP page).
-  That is **not** an outcome. Ask the session:
-
-```kotlin
-when (checkout.awaitPaymentOutcome()) {              // polls the session's transactions, 60 s max
-    is PaymentSessionStatus.Confirmed -> showSuccess()
-    is PaymentSessionStatus.Failed -> showFailure()
-    is PaymentSessionStatus.Pending -> showStillProcessing()
-}
-```
+  That is **not** an outcome. Ask your backend: it reads the session with its merchant credentials,
+  which the app cannot (the Payment API answers `401` to the client key). See
+  [recipe 9](recipes.md#9-confirm-after-a-redirect-ask-your-backend). `paymentStatus()` /
+  `awaitPaymentOutcome()` are deprecated for that reason.
 
 A `Failed` before any submit (a widget that failed to load) is not a failed payment: leave the
 shopper on the screen with a message; the method is disabled on `paymentMethods` accordingly.

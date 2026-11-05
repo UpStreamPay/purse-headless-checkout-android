@@ -17,14 +17,37 @@ import org.json.JSONObject
  * `x-api-key` and `x-merchant-id`.
  *
  * Blocking on purpose, like [PaymentApiClient] — call it off the main thread.
+ *
+ * Rename and favorite go out as a real `PATCH`, like web and iOS. The Wallet API refuses the
+ * `POST` + `X-HTTP-Method-Override: PATCH` workaround with an empty 401. Android's platform
+ * `HttpURLConnection` (`com.android.okhttp`, since API 19) accepts `PATCH`. Only the desktop JDK's
+ * implementation refuses it, and that one never runs in an app.
  */
-class WalletApiClient(
+class WalletApiClient internal constructor(
     private val apiKey: String,
     walletApiRoot: String,
     private val ownerReference: String,
     private val walletSessionId: String,
     private val merchantId: String,
+    // Test seam: the JVM tests record the request on a fake connection, because the JDK's own
+    // `HttpURLConnection` refuses `PATCH` (Android's does not).
+    private val openConnection: (URL) -> HttpURLConnection,
 ) {
+    constructor(
+        apiKey: String,
+        walletApiRoot: String,
+        ownerReference: String,
+        walletSessionId: String,
+        merchantId: String,
+    ) : this(
+        apiKey = apiKey,
+        walletApiRoot = walletApiRoot,
+        ownerReference = ownerReference,
+        walletSessionId = walletSessionId,
+        merchantId = merchantId,
+        openConnection = { url -> url.openConnection() as HttpURLConnection },
+    )
+
     private val root: String = walletApiRoot.trimEnd('/')
 
     /** One row of `GET /tokens` — web's `WalletItem`. */
@@ -76,17 +99,18 @@ class WalletApiClient(
         execute("PATCH", "/token/$tokenId/favorite?favorite=$favorite", body = null)
     }
 
+    /** The `code` (or `error`) field of a JSON error body, or `null` when the body isn't that shape. */
+    private fun parseErrorCode(responseBody: String): String? = try {
+        val json = JSONObject(responseBody)
+        json.optString("code").ifBlank { json.optString("error") }.ifBlank { null }
+    } catch (_: JSONException) {
+        null
+    }
+
     private fun execute(method: String, path: String, body: String?): String {
         val url = "$root/$ownerReference/sessions/$walletSessionId$path"
-        val connection = (URL(url).openConnection() as HttpURLConnection).apply {
-            // HttpURLConnection refuses PATCH as a request method; the conventional workaround —
-            // which the Purse APIs accept — is POST + X-HTTP-Method-Override.
-            if (method == "PATCH") {
-                requestMethod = "POST"
-                setRequestProperty("X-HTTP-Method-Override", "PATCH")
-            } else {
-                requestMethod = method
-            }
+        val connection = openConnection(URL(url)).apply {
+            requestMethod = method
             connectTimeout = 15_000
             readTimeout = 15_000
             setRequestProperty("x-api-key", apiKey)
@@ -102,9 +126,12 @@ class WalletApiClient(
             val stream = if (code < 400) connection.inputStream else connection.errorStream
             val responseBody = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             if (code >= 400) {
+                // Only the body's error code, never the body itself (see PaymentApiException).
+                val errorCode = parseErrorCode(responseBody)
                 throw PaymentApiException(
-                    "Wallet API $method $path failed: HTTP $code $responseBody",
+                    "Wallet API $method $path failed: HTTP $code" + (errorCode?.let { " ($it)" } ?: ""),
                     status = code,
+                    errorCode = errorCode,
                     path = path,
                 )
             }

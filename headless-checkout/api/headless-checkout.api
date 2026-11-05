@@ -123,7 +123,7 @@ public final class eu/purse/checkout/PurseHeadlessCheckout {
 	public static final field Companion Leu/purse/checkout/PurseHeadlessCheckout$Companion;
 	public static final field VERSION Ljava/lang/String;
 	public static final field WATCHDOG_INTERVAL_MS J
-	public synthetic fun <init> (Ljava/lang/String;Leu/purse/core/session/PurseSessionParams;Leu/purse/checkout/session/PaymentSession;Ljava/lang/String;Leu/purse/checkout/PurseCheckoutHooks;Leu/purse/partnerui/PluginOptions;Leu/purse/core/datetime/ServerDatetimeChecker;JLeu/purse/core/environment/PurseEnvironment;Ljava/util/Set;Leu/purse/checkout/monitoring/MonitoringInstance;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Leu/purse/core/session/PurseSessionParams;Leu/purse/checkout/session/PaymentSession;Ljava/lang/String;Leu/purse/checkout/PurseCheckoutHooks;Leu/purse/partnerui/PluginOptions;Leu/purse/core/datetime/ServerDatetimeChecker;JLeu/purse/core/environment/EnvironmentPolicy;Ljava/util/Set;Leu/purse/checkout/monitoring/MonitoringInstance;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun applySecondary (Leu/purse/checkout/payment/item/SavedSecondaryToken;Ljava/math/BigDecimal;)V
 	public final fun applySecondary (Leu/purse/checkout/payment/secondary/SecondaryToken;Ljava/math/BigDecimal;)V
 	public static synthetic fun applySecondary$default (Leu/purse/checkout/PurseHeadlessCheckout;Leu/purse/checkout/payment/item/SavedSecondaryToken;Ljava/math/BigDecimal;ILjava/lang/Object;)V
@@ -1106,11 +1106,12 @@ public final class eu/purse/core/api/PaymentApiClient$Companion {
 public final class eu/purse/core/api/PaymentApiException : eu/purse/core/error/PurseException {
 	public static final field $stable I
 	public static final field Companion Leu/purse/core/api/PaymentApiException$Companion;
-	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Ljava/lang/Integer;Ljava/lang/String;Ljava/lang/String;)V
-	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Ljava/lang/Integer;Ljava/lang/String;Ljava/lang/String;ILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Ljava/lang/Integer;Ljava/lang/String;Ljava/lang/String;Z)V
+	public synthetic fun <init> (Ljava/lang/String;Ljava/lang/Throwable;Ljava/lang/Integer;Ljava/lang/String;Ljava/lang/String;ZILkotlin/jvm/internal/DefaultConstructorMarker;)V
 	public final fun getErrorCode ()Ljava/lang/String;
 	public final fun getOutcomeUnknown ()Z
 	public final fun getPath ()Ljava/lang/String;
+	public final fun getRequestSent ()Z
 	public final fun getStatus ()Ljava/lang/Integer;
 	public final fun isRetryable ()Z
 	public final fun isSessionTerminal ()Z
@@ -1210,6 +1211,7 @@ public final class eu/purse/core/error/PurseErrorCode : java/lang/Enum {
 	public static final field API_ERROR Leu/purse/core/error/PurseErrorCode;
 	public static final field CHECKOUT_TORN_DOWN Leu/purse/core/error/PurseErrorCode;
 	public static final field ELEMENT_NOT_FULFILLED Leu/purse/core/error/PurseErrorCode;
+	public static final field ENVIRONMENT_NOT_ALLOWED Leu/purse/core/error/PurseErrorCode;
 	public static final field EXPIRED_SESSION Leu/purse/core/error/PurseErrorCode;
 	public static final field FAILED_TO_DELETE_ALL_TOKENS Leu/purse/core/error/PurseErrorCode;
 	public static final field FAILED_TO_INIT_SECONDARY_TOKEN Leu/purse/core/error/PurseErrorCode;
@@ -1790,7 +1792,13 @@ public final class eu/purse/core/session/MethodEntry {
 
 public abstract class eu/purse/core/session/PurseSessionException : eu/purse/core/error/PurseException {
 	public static final field $stable I
-	public synthetic fun <init> (Ljava/lang/String;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public synthetic fun <init> (Ljava/lang/String;Leu/purse/core/error/PurseErrorCode;Lkotlin/jvm/internal/DefaultConstructorMarker;)V
+}
+
+public final class eu/purse/core/session/PurseSessionException$EnvironmentNotAllowed : eu/purse/core/session/PurseSessionException {
+	public static final field $stable I
+	public fun <init> (Leu/purse/core/environment/PurseEnvironment;)V
+	public final fun getEnvironment ()Leu/purse/core/environment/PurseEnvironment;
 }
 
 public final class eu/purse/core/session/PurseSessionException$SessionMalformed : eu/purse/core/session/PurseSessionException {
@@ -2536,6 +2544,8 @@ public final class eu/purse/partnerui/plugins/generics/redirection/RedirectionRe
 
 public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardCoordinator : eu/purse/partnerui/PaymentCoordinator {
 	public static final field $stable I
+	public final fun errorMessage (Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;)Ljava/lang/String;
+	public final fun getFieldStates ()Ljava/util/Map;
 	public final fun getFormValid ()Z
 	public final fun getMode ()Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardCoordinator$Mode;
 	public final fun getSdk ()Leu/purse/securefields/SecureFieldsAndroid;
@@ -2562,6 +2572,37 @@ public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardCoordi
 	public static final fun rememberCardCoordinator (Leu/purse/partnerui/PluginHost;Leu/purse/partnerui/PaymentElementListener;Landroidx/compose/runtime/Composer;I)Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardCoordinator;
 }
 
+public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardField : java/lang/Enum {
+	public static final field CARD_NUMBER Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;
+	public static final field CVV Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;
+	public static final field EXP_DATE Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;
+	public static final field HOLDER_NAME Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;
+	public static fun getEntries ()Lkotlin/enums/EnumEntries;
+	public final fun getTestTag ()Ljava/lang/String;
+	public static fun valueOf (Ljava/lang/String;)Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;
+	public static fun values ()[Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardField;
+}
+
+public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardFieldState {
+	public static final field $stable I
+	public fun <init> ()V
+	public fun <init> (ZZZZ)V
+	public synthetic fun <init> (ZZZZILkotlin/jvm/internal/DefaultConstructorMarker;)V
+	public final fun component1 ()Z
+	public final fun component2 ()Z
+	public final fun component3 ()Z
+	public final fun component4 ()Z
+	public final fun copy (ZZZZ)Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardFieldState;
+	public static synthetic fun copy$default (Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardFieldState;ZZZZILjava/lang/Object;)Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardFieldState;
+	public fun equals (Ljava/lang/Object;)Z
+	public final fun getHasContent ()Z
+	public final fun getWasBlurred ()Z
+	public fun hashCode ()I
+	public final fun isFocused ()Z
+	public final fun isValid ()Z
+	public fun toString ()Ljava/lang/String;
+}
+
 public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardFormKt {
 	public static final fun PurseCardForm (Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardCoordinator;Landroidx/compose/ui/Modifier;Landroidx/compose/runtime/Composer;II)V
 }
@@ -2569,14 +2610,10 @@ public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardFormKt
 public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardMapper {
 	public static final field $stable I
 	public static final field INSTANCE Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardMapper;
-	public static final field METHOD Ljava/lang/String;
 	public static final field VAULT_VENDOR Ljava/lang/String;
-	public final fun buildInitPayload (Ljava/math/BigDecimal;Ljava/lang/String;Lorg/json/JSONObject;)Lorg/json/JSONObject;
-	public static synthetic fun buildInitPayload$default (Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardMapper;Ljava/math/BigDecimal;Ljava/lang/String;Lorg/json/JSONObject;ILjava/lang/Object;)Lorg/json/JSONObject;
 	public final fun buildTokenPaymentData (Leu/purse/partnerui/PayToken;Ljava/lang/String;)Lorg/json/JSONObject;
 	public static synthetic fun buildTokenPaymentData$default (Leu/purse/partnerui/plugins/vaults/purse/creditcard/CardMapper;Leu/purse/partnerui/PayToken;Ljava/lang/String;ILjava/lang/Object;)Lorg/json/JSONObject;
 	public final fun buildValidatePaymentData (Ljava/lang/String;Ljava/lang/String;Ljava/lang/String;)Lorg/json/JSONObject;
-	public final fun parseInit (Lorg/json/JSONObject;)Ljava/lang/Integer;
 }
 
 public final class eu/purse/partnerui/plugins/vaults/purse/creditcard/CardModule : eu/purse/partnerui/PartnerModule {

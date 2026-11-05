@@ -84,6 +84,10 @@ dependencies {
     // background (see CheckoutEventBus wiring).
     implementation(libs.androidx.lifecycle.runtime.ktx)
     implementation(libs.androidx.lifecycle.process)
+    // Records the host app's FLAG_DEBUGGABLE at process start (`HostAppInitializer`), which gates the
+    // internal TEST / DEVELOPMENT tiers — `init` takes no Context. Already on the runtime classpath
+    // through lifecycle-process; declared for the `Initializer` API.
+    implementation(libs.androidx.startup.runtime)
     // The payment elements and the coordinators are Compose-first — remember{}/mutableStateOf,
     // rememberLauncherForActivityResult for the Activity-result launchers.
     implementation(platform(libs.androidx.compose.bom))

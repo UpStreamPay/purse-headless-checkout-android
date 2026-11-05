@@ -72,7 +72,13 @@ abstract class PaymentCoordinator protected constructor(
         listener.onOutcome(PaymentOutcome.Completed(result))
     }
 
-    /** `/validate` never landed or errored — nothing was charged, the shopper may retry. */
+    /**
+     * `/validate` never landed or errored. Usually nothing was charged and the shopper may retry —
+     * but a [PurseCheckoutException.ValidateFailed][eu.purse.checkout.PurseCheckoutException.ValidateFailed]
+     * with `outcomeUnknown` means the payment may exist: the checkout then refuses a second submit;
+     * the outcome is unknown, so the merchant confirms it from its backend (server-side session read)
+     * and, if it did not go through, starts a new session.
+     */
     protected open fun onSubmitFailed(e: Exception) {
         submitting = false
         fail(e)
@@ -158,8 +164,8 @@ abstract class PaymentCoordinator protected constructor(
     /**
      * The shopper is back from the redirect WebView. `Approved` only means they came back
      * ([PaymentOutcome.ReturnedFromRedirect]): a 3-D Secure challenge's final redirect is built
-     * server-side and can land on a URL this client cannot read, so the real outcome is checked
-     * against the session (`PurseHeadlessCheckout.awaitPaymentOutcome`), never inferred here.
+     * server-side and can land on a URL this client cannot read, so the merchant's backend confirms
+     * the real outcome, never inferred here.
      */
     @InternalPurseApi
     fun onRedirectReturn(result: RedirectionCheckoutResult) {

@@ -153,6 +153,7 @@ two compose cleanly. (Posting the *output* of alfred's `/orchestration_order` en
 | Empty or very short method list | Session came back with few methods — the partner/method availability is entity-wide config on alfred's side; check alfred's setup in `usp-widget`. |
 | The `alfred` line (under *Developer* on the setup page) shows the old URL | `.env` edited but not rebuilt — run `:app:installDebug` again. |
 | No Google Pay button on screen 2 | `prepare()` reported not-ready or failed (the reason lands in a snackbar and the *Event log*) — e.g. this session's Google Pay config has no `payment_method_configuration`, or the device/emulator has no Play Services wallet. Every other method still works. |
+| `ENVIRONMENT_NOT_ALLOWED` on screen 1 with the **release** variant | alfred mints on `test` by default (`PUBLIC_API_ENV`), and a non-debuggable app is refused the internal tiers. Use `installDebug`, or point alfred at sandbox to rehearse on the release variant. |
 | A method offered by the session isn't in the list | Screen 2 only offers what this demo has a plugin for (card, Google Pay, PayPal, Klarna, redirection methods, and the secondaries with a registered `SecondaryConfig`) **and** what the setup page has switched on. `Session details` lists everything the session actually carries. |
 
 ---

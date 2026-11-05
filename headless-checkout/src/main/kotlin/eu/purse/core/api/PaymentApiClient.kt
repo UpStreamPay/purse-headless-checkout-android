@@ -1,8 +1,10 @@
 // Web: packages/sdk/src/API/payment-api.ts
-// Same: `{root}/{entityId}/sessions/{sessionId}/init|validate`, GET session, /simulation endpoints.
+// Same: `{root}/{entityId}/sessions/{sessionId}/init|validate`, /simulation endpoints.
+// Differs: a deprecated GET session (web has none; it answers 401 to the client key).
 // Differs: blocking HttpURLConnection; callers hop to Dispatchers.IO.
 package eu.purse.core.api
 
+import eu.purse.checkout.confirmation.SESSION_READ_DEPRECATED
 import eu.purse.core.payload.ValidateItemPayload
 import eu.purse.core.payload.ValidationResult
 import eu.purse.core.payment.LoanProduct
@@ -37,8 +39,9 @@ class PaymentApiClient(
 
     /**
      * `POST /init` — see docs/architecture/headless-checkout.md#init-and-validate. Runs under
-     * [InitGuard]: concurrent duplicates coalesce, transient failures retry with backoff, and a
-     * terminal failure fast-rejects immediate repeats of the same call.
+     * [InitGuard]: concurrent duplicates coalesce, a transient failure (no status, a non-JSON
+     * answer, ≥ 500) is sent up to 3 times in all, and a call that failed for good fast-rejects
+     * every repeat of the same call.
      */
     fun init(payload: JSONObject): JSONObject =
         InitGuard.run(InitGuard.keyFor(sessionId, payload)) { post("/init", payload.toString()) }
@@ -47,8 +50,13 @@ class PaymentApiClient(
      * `POST /validate` — the validate call takes a JSON *array* of items (one per method being
      * submitted), mirroring web's `FetchPaymentAPI.validate`. Returns the `{results, redirection,
      * global_status}` object. See docs/architecture/headless-checkout.md#init-and-validate.
+     *
+     * Sent at most once per session, process-wide ([ValidateGuard]): never retried, never replayed
+     * by the HTTP stack, and refused (`errorCode == VALIDATE_ALREADY_SENT`, nothing sent) while
+     * another `/validate` for the session is in flight or after one the server may have accepted.
      */
-    fun validate(payload: JSONArray): JSONObject = post("/validate", payload.toString())
+    fun validate(payload: JSONArray): JSONObject =
+        ValidateGuard.run(sessionId) { post("/validate", payload.toString()) }
 
     /**
      * Typed `POST /validate` — serializes each [ValidateItemPayload] and parses the response into a
@@ -62,18 +70,19 @@ class PaymentApiClient(
 
     /**
      * `GET /{entityId}/sessions/{sessionId}` — every transaction (`/init`/`/validate` call) made
-     * so far against this session, each with its own `status`. This is the source of truth to
-     * re-query after a capture rather than trusting a locally-held `/validate` result alone —
-     * confirmed against Purse's own published spec/tutorial (see
-     * https://docs.purse.tech/docs/integrate/purse-api/tutorials/simple-payment and
-     * docs/architecture/headless-checkout.md).
+     * so far against this session, each with its own `status`.
+     *
+     * **Deprecated**: the Payment API answers `401` to the client key this client sends, so only the
+     * merchant's backend, with its own credentials, can read it. Removed in the next major.
      */
+    @Deprecated(SESSION_READ_DEPRECATED)
     fun getSession(): JSONArray {
         val responseBody = execute("GET", path = "", body = null)
         return try {
             JSONArray(responseBody)
-        } catch (e: JSONException) {
-            throw PaymentApiException("Payment API GET session returned non-JSON: ${e.message}", e, path = "")
+        } catch (_: JSONException) {
+            // Neither the JSONException's message nor the exception itself: org.json quotes the body.
+            throw PaymentApiException("Payment API GET session returned non-JSON", path = "")
         }
     }
 
@@ -106,8 +115,8 @@ class PaymentApiClient(
         val responseBody = execute("POST", path, product.toJson().toString(), url = "$root$path")
         val candidates = try {
             JSONArray(responseBody)
-        } catch (e: JSONException) {
-            throw PaymentApiException("Payment API $path returned non-JSON array: ${e.message}", e, path = path)
+        } catch (_: JSONException) {
+            throw PaymentApiException("Payment API $path returned non-JSON array", path = path)
         }
         return (0 until candidates.length()).mapNotNull { index ->
             candidates.optJSONObject(index)?.let(LoanSimulation::fromResponse)
@@ -132,8 +141,8 @@ class PaymentApiClient(
         val responseBody = execute("POST", path, body, url)
         return try {
             JSONObject(responseBody)
-        } catch (e: JSONException) {
-            throw PaymentApiException("Payment API $path returned non-JSON: ${e.message}", e, path = path)
+        } catch (_: JSONException) {
+            throw PaymentApiException("Payment API $path returned non-JSON", path = path)
         }
     }
 
@@ -144,18 +153,31 @@ class PaymentApiClient(
         eu.purse.core.monitoring.ApiCallMonitor.time(method, path) { executeUnmonitored(method, path, body, url) }
 
     private fun executeUnmonitored(method: String, path: String, body: String?, url: String): String {
+        val bytes = body?.toByteArray()
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 15_000
             readTimeout = 15_000
             setRequestProperty("x-api-key", apiKey)
-            if (body != null) {
+            if (bytes != null) {
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
+                // Streamed, not buffered: `HttpURLConnection` silently re-sends a buffered body once
+                // when the answer is lost after the request went out (Android's OkHttp-based
+                // implementation and the JDK's alike). For `/validate` that replay reaches the server
+                // as a second submit, answered `400 SESSION_ALREADY_SUBMITTED_ERROR` and hiding the
+                // first, accepted one (SDK-12621). A streamed body cannot be replayed: the failure
+                // surfaces as an outcome-unknown error instead.
+                setFixedLengthStreamingMode(bytes.size)
             }
         }
+        // Until the body is handed to the socket, the server cannot have seen the request.
+        var requestSent = bytes == null
         return try {
-            body?.let { payload -> connection.outputStream.use { it.write(payload.toByteArray()) } }
+            bytes?.let { payload ->
+                connection.outputStream.use { it.write(payload) }
+                requestSent = true
+            }
             // Web's FetchPaymentAPI treats status < 400 as success.
             val code = connection.responseCode
             val stream = if (code < 400) connection.inputStream else connection.errorStream
@@ -173,7 +195,12 @@ class PaymentApiClient(
             }
             responseBody
         } catch (e: IOException) {
-            throw PaymentApiException("Payment API $method $path failed: ${e.message}", e, path = path)
+            throw PaymentApiException(
+                "Payment API $method $path failed: ${e.message}",
+                e,
+                path = path,
+                requestSent = requestSent,
+            )
         } finally {
             connection.disconnect()
         }

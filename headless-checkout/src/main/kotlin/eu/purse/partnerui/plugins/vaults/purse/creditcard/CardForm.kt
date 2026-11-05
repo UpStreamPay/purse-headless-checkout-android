@@ -14,12 +14,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicText
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -28,11 +27,8 @@ import androidx.compose.ui.unit.sp
 import eu.purse.partnerui.CardFormTexts
 import eu.purse.partnerui.PurseTheme
 import eu.purse.partnerui.ThemeValues
-import eu.purse.securefields.SecureFieldsListener
 import eu.purse.securefields.VaultField
 import eu.purse.securefields.VaultFieldController
-import eu.purse.securefields.events.FieldStatePayload
-import eu.purse.securefields.model.VaultFieldName
 
 /**
  * The SDK's card form — SecureFields' secure inputs wrapped in the **label, help text and error
@@ -42,11 +38,18 @@ import eu.purse.securefields.model.VaultFieldName
  *
  * Renders whatever [CardCoordinator.mode] calls for: the four fields of a fresh card, or the lone
  * CVV of a saved card that still needs one. Field copy comes from `PluginOptions.cardFormTexts`
- * ([CardFormTexts]), falling back to the SDK's localized `purse_card_*` resources.
+ * ([CardFormTexts]), falling back to the SDK's `purse_card_*` resources in the checkout's
+ * `PluginOptions.locale` (the device locale when it has none).
  *
  * Error semantics mirror web's `final-form` rules: a field the shopper left **empty after
  * touching it** shows its `requiredError`; content SecureFields rejects shows its `formatError`;
- * otherwise the field's `helperText` (if any) is shown while the field has focus.
+ * otherwise the field's `helperText` (if any) is shown while the field has focus. The state and
+ * error it draws are [CardCoordinator.fieldStates] and [CardCoordinator.errorMessage], for a host
+ * that lays the fields out itself.
+ *
+ * Each secure input carries its label as `contentDescription` and [CardField.testTag]
+ * (`purse_card_number`, `purse_card_exp_date`, `purse_card_cvv`, `purse_card_holder_name`) as its
+ * test tag.
  *
  * This is what `PaymentElementUi` renders for a card element. Call it directly only when you host
  * a [CardCoordinator] yourself; SecureFields' bare `VaultForm(coordinator.sdk)` remains available
@@ -56,37 +59,27 @@ import eu.purse.securefields.model.VaultFieldName
 fun PurseCardForm(coordinator: CardCoordinator, modifier: Modifier = Modifier) {
     val theme = remember(coordinator) { coordinator.theme }
     val texts = remember(coordinator) { coordinator.texts }
-    val states = remember(coordinator.sdk) { mutableStateMapOf<VaultFieldName, FieldUiState>() }
-
-    DisposableEffect(coordinator.sdk) {
-        val unregister = coordinator.sdk.addListener(object : SecureFieldsListener {
-            override fun onChange(payload: FieldStatePayload) = states.update(payload) {
-                copy(valid = payload.valid, length = payload.length ?: 0, error = payload.error)
-            }
-            override fun onFocus(payload: FieldStatePayload) = states.update(payload) { copy(focused = true, touched = true) }
-            override fun onBlur(payload: FieldStatePayload) = states.update(payload) { copy(focused = false, blurred = true) }
-        })
-        onDispose { unregister() }
-    }
+    val states = coordinator.fieldStates
 
     val fields = when (coordinator.mode) {
         CardCoordinator.Mode.FRESH_CARD -> listOf(
-            VaultFieldName.CardNumber to coordinator.sdk.cardNumber,
-            VaultFieldName.ExpDate to coordinator.sdk.expDate,
-            VaultFieldName.Cvv to coordinator.sdk.cvv,
-            VaultFieldName.HolderName to coordinator.sdk.holderName,
+            CardField.CARD_NUMBER to coordinator.sdk.cardNumber,
+            CardField.EXP_DATE to coordinator.sdk.expDate,
+            CardField.CVV to coordinator.sdk.cvv,
+            CardField.HOLDER_NAME to coordinator.sdk.holderName,
         )
-        CardCoordinator.Mode.TOKEN_CVV -> listOf(VaultFieldName.Cvv to coordinator.sdk.cvv)
+        CardCoordinator.Mode.TOKEN_CVV -> listOf(CardField.CVV to coordinator.sdk.cvv)
         CardCoordinator.Mode.TOKEN_NO_CVV -> emptyList()
     }
     if (fields.isEmpty()) return
 
     Column(modifier = modifier, verticalArrangement = Arrangement.spacedBy(theme.gapDp())) {
-        fields.forEach { (name, controller) ->
+        fields.forEach { (field, controller) ->
             ThemedField(
+                field = field,
                 controller = controller,
-                state = states[name] ?: FieldUiState(),
-                texts = texts.resolved(name),
+                state = states[field] ?: CardFieldState(),
+                texts = texts[field],
                 theme = theme,
             )
         }
@@ -95,13 +88,14 @@ fun PurseCardForm(coordinator: CardCoordinator, modifier: Modifier = Modifier) {
 
 @Composable
 private fun ThemedField(
+    field: CardField,
     controller: VaultFieldController,
-    state: FieldUiState,
+    state: CardFieldState,
     texts: ResolvedFieldTexts,
     theme: PurseTheme.Resolved,
 ) {
-    val message = state.message(texts)
-    val invalid = message != null
+    val error = texts.error(state)
+    val invalid = error != null
     Column(Modifier.fillMaxWidth()) {
         texts.label?.let { label ->
             BasicText(
@@ -110,10 +104,12 @@ private fun ThemedField(
                 modifier = Modifier.padding(bottom = 4.dp),
             )
         }
-        FieldFrame(theme, focused = state.focused, invalid = invalid) {
-            VaultField(controller, Modifier.fillMaxWidth().height(FIELD_HEIGHT_DP.dp))
+        FieldFrame(theme, focused = state.isFocused, invalid = invalid) {
+            // Named by its label through the input's own `contentDescription` (see
+            // `vaultFieldConfig`); the tag is the stable UI-test handle.
+            VaultField(controller, Modifier.fillMaxWidth().height(FIELD_HEIGHT_DP.dp).testTag(field.testTag))
         }
-        val helper = message ?: texts.helperText?.takeIf { state.focused && it.isNotBlank() }
+        val helper = texts.message(state)
         if (helper != null) {
             BasicText(
                 text = helper,
@@ -164,34 +160,6 @@ private const val FIELD_RADIUS_DP = 12
 private const val FIELD_PADDING_DP = 12
 private const val REST_BORDER_ALPHA = 0.22f
 
-/** Per-field UI state, reduced from SecureFields' change/focus/blur events. */
-internal data class FieldUiState(
-    val valid: Boolean? = null,
-    val length: Int = 0,
-    val error: String? = null,
-    val focused: Boolean = false,
-    val touched: Boolean = false,
-    val blurred: Boolean = false,
-) {
-    /** The error to show, or `null` when the field is fine (web's required/format rules). */
-    internal fun message(texts: ResolvedFieldTexts): String? = when {
-        // SecureFields reports `error = "format"` for non-empty content it rejects.
-        length > 0 && valid == false && !focused -> texts.formatError
-        length > 0 && error != null && !focused -> texts.formatError
-        // An empty field the shopper visited and left.
-        length == 0 && blurred -> texts.requiredError
-        else -> null
-    }
-}
-
-private fun MutableMap<VaultFieldName, FieldUiState>.update(
-    payload: FieldStatePayload,
-    transform: FieldUiState.() -> FieldUiState,
-) {
-    val field = VaultFieldName.fromFrameName(payload.fieldName) ?: return
-    this[field] = (this[field] ?: FieldUiState()).transform()
-}
-
 /** [CardFormTexts.FieldTexts] with every `null` filled from the SDK's localized resources. */
 internal data class ResolvedFieldTexts(
     val label: String?,
@@ -201,20 +169,20 @@ internal data class ResolvedFieldTexts(
     val formatError: String,
 )
 
-private fun ResolvedCardTexts.resolved(name: VaultFieldName): ResolvedFieldTexts = when (name) {
-    VaultFieldName.CardNumber -> cardNumber
-    VaultFieldName.ExpDate -> expDate
-    VaultFieldName.Cvv -> cvv
-    VaultFieldName.HolderName -> holderName
-}
-
 /** All four fields' copy, resolved once per coordinator (see [rememberCardCoordinator]). */
 internal data class ResolvedCardTexts(
     val cardNumber: ResolvedFieldTexts,
     val expDate: ResolvedFieldTexts,
     val cvv: ResolvedFieldTexts,
     val holderName: ResolvedFieldTexts,
-)
+) {
+    operator fun get(field: CardField): ResolvedFieldTexts = when (field) {
+        CardField.CARD_NUMBER -> cardNumber
+        CardField.EXP_DATE -> expDate
+        CardField.CVV -> cvv
+        CardField.HOLDER_NAME -> holderName
+    }
+}
 
 // --- theme → Compose -----------------------------------------------------------------------------
 

@@ -1,6 +1,10 @@
 // Web: packages/partner-ui/src/plugins/index.ts (`getPlugin`) + `partners/partner_plugins.ts`
-// Same: resolution order vault → template → integration_mode=redirection → (partner, method).
-// Differs: a mutable registry instead of a static table, so a host can add a plugin for a
+// Same: resolution order vault → template → integration_mode=redirection → (partner, method); a
+//       template no plugin serves falls through (web's `'stripe_googlepay'` reaches Stripe's partner
+//       plugin, an `'axepta_wero'` in redirection mode the redirection generic). An item nothing
+//       serves is the checkout's to retire, PARTNER_UI_FATAL_ERROR at engagement (SDK-12575).
+// Differs: a last per-method fallback (Google Pay whatever the partner), which web lacks; a
+//          mutable registry instead of a static table, so a host can add a plugin for a
 //          `Partner.Other`; the Google Pay, Klarna and PayPal plugins arrive from optional artifacts
 //          (`PartnerModule` via `ServiceLoader`) instead of being compiled in.
 package eu.purse.partnerui
@@ -101,6 +105,10 @@ object PluginRegistry {
      * exact (partner, method)                            → partner plugin
      * method                                             → method fallback
      * ```
+     *
+     * A `configurations.template` no plugin is registered for does not stop the walk, as on web: the
+     * session may name a template the partner plugin itself handles (web's `'stripe_googlepay'`).
+     * `null` means nothing serves the pair; the checkout then retires the item when it is engaged.
      */
     fun getPlugin(partner: Partner, method: Method, session: LegacyPaymentSession): PartnerUiPlugin? {
         val configuration = session.protocols[partner]?.get(method)?.configurations ?: return null

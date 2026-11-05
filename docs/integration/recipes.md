@@ -16,7 +16,7 @@ Google Pay, PayPal and Klarna live in their own artifacts (`eu.purse:headless-ch
 6. [Redirection methods](#6-redirection-methods)
 7. [Gift cards and co-payment](#7-gift-cards-and-co-payment)
 8. [Saved cards and saved PayPal accounts](#8-saved-cards-and-saved-paypal-accounts)
-9. [Confirm after a redirect](#9-confirm-after-a-redirect)
+9. [Confirm after a redirect: ask your backend](#9-confirm-after-a-redirect-ask-your-backend)
 10. [Hooks](#10-hooks)
 11. [Events and monitoring](#11-events-and-monitoring)
 12. [Errors](#12-errors)
@@ -77,7 +77,8 @@ Button(onClick = { element.submit() }, enabled = element.ready) { Text("Pay") }
 ```
 
 An empty or invalid form is never payable: `isPaymentFulfilled` stays `false` until every field
-validates. `submit()` tokenizes, then `/init` + `/validate`, then follows 3-D Secure.
+validates. `submit()` tokenizes, then `/validate`, then follows 3-D Secure. To lay out the
+fields yourself or draw your own error messages, see [Card form: two levels](card-form.md).
 
 **Save the card** when the method allows it:
 
@@ -207,19 +208,25 @@ checkout.deleteAllTokens()
 // without a wallet session: WalletOperationFailed(MISSING_WALLET_SESSION)
 ```
 
-## 9. Confirm after a redirect
+## 9. Confirm after a redirect: ask your backend
 
-`PaymentOutcome.ReturnedFromRedirect` means the shopper came back, nothing more.
+`PaymentOutcome.ReturnedFromRedirect` means the shopper came back, nothing more: a 3-D Secure or PSP
+page's final redirect is built server-side and the app cannot read it. The verdict lives in the
+session's transactions, and only **your backend** can read them — with its own merchant credentials.
+The Payment API answers `401` to the client key the app holds. Web works the same way: it concludes
+on `/validate`, the redirection return and the success/failure URLs, and the merchant confirms on its
+server.
 
 ```kotlin
 override fun onOutcome(outcome: PaymentOutcome) {
     when (outcome) {
         is PaymentOutcome.Completed -> render(outcome.status)                // SUCCESS or a decline
         PaymentOutcome.ReturnedFromRedirect -> scope.launch {
-            when (val status = checkout.awaitPaymentOutcome(timeoutMs = 60_000, pollIntervalMs = 3_000)) {
-                is PaymentSessionStatus.Confirmed -> showSuccess()
-                is PaymentSessionStatus.Failed -> showFailure()
-                is PaymentSessionStatus.Pending -> showStillProcessing(status.operations)
+            showConfirming()
+            when (myBackend.paymentVerdict(orderId)) {                      // your own endpoint
+                Verdict.PAID -> showSuccess()
+                Verdict.REFUSED -> showFailure()
+                Verdict.PENDING -> showStillProcessing()                     // retry a few times, then let the order page settle it
             }
         }
         PaymentOutcome.Canceled -> Unit
@@ -228,13 +235,21 @@ override fun onOutcome(outcome: PaymentOutcome) {
 }
 ```
 
-`checkout.paymentStatus()` is the one-shot version; `sessionTransactions()` the raw JSON. The
-response lists operations, not payments: one captured payment is an `AUTHORIZE` and a `CAPTURE` row.
+Your backend reads the session (or the PSP notification it already receives) and answers. The
+session's rows are operations, not payments: one captured payment is an `AUTHORIZE` and a `CAPTURE`
+row (see [plugins/README.md](../plugins/README.md#reading-the-sessions-transactions--operations-not-payments)).
+If your backend relays those rows as they are, `PaymentSessionStatus.from(rows)` classifies them on
+the device.
 
-The same check covers a submit that was interrupted: a `ValidateFailed` whose `outcomeUnknown` is
-`true` (the request left, nothing answered) means the payment may exist — poll before showing an
-error. A return from the redirect WebView after the app was killed lands here too, never on
-`Canceled`.
+The same call covers a submit that was interrupted: a `ValidateFailed` whose `outcomeUnknown` is
+`true` (the request left, nothing answered) means the payment may exist — ask your backend before
+showing an error. A return from the redirect WebView after the app was killed lands here too, never
+on `Canceled`.
+
+`checkout.sessionTransactions()`, `paymentStatus()` and `awaitPaymentOutcome()` read that same route
+with the client key, so they cannot confirm anything: they are **deprecated** and go at the next
+major. Don't poll them. The demo app shows the flow above: its result screen asks the alfred backend
+for the session's transactions.
 
 ## 10. Hooks
 
@@ -278,23 +293,53 @@ goes to background. What is sent — and what never is — is in [Monitoring and
 
 ## 12. Errors
 
-Every SDK exception carries a `code` shared with web.
+Every SDK exception carries a `code` shared with web. Where it reaches you depends on who started
+the attempt:
 
 ```kotlin
+fun handle(e: PurseException) = when {
+    e is PaymentApiException -> if (e.isSessionTerminal) newSession() else retry()   // transport / HTTP
+    e.code == PurseErrorCode.PAYMENT_NOT_FULFILLED_ON_SUBMIT -> highlightMissingAmount()
+    e.code == PurseErrorCode.ELEMENT_NOT_FULFILLED -> focusInvalidForm()
+    else -> showError(e.code)
+}
+
+// An element's or a coordinator's submit() (card, Klarna, redirection) or a wallet tap:
+// the error is the outcome — submit() returns nothing.
+override fun onOutcome(outcome: PaymentOutcome) {
+    if (outcome is PaymentOutcome.Failed) handle(outcome.error)
+}
+
+// submitPayment() yourself: only for a split with no form to submit — gift cards covering the
+// amount, a saved card that pays without its CVV.
 try {
     withContext(Dispatchers.IO) { checkout.submitPayment() }
-} catch (e: PurseCheckoutException) {
-    when (e.code) {
-        PurseErrorCode.PAYMENT_NOT_FULFILLED_ON_SUBMIT -> highlightMissingAmount()
-        PurseErrorCode.ELEMENT_NOT_FULFILLED -> focusInvalidForm()
-        else -> showError(e.code)
-    }
-} catch (e: PaymentApiException) {                     // transport / HTTP
-    if (e.isSessionTerminal) newSession() else retry()
+} catch (e: PurseException) {
+    handle(e)
 }
 ```
 
-Transient `/init` failures are retried by the SDK; do not add your own retry loop.
+A card form pays through its own `submit()` (the element's or `CardCoordinator`'s), which tokenizes
+the card and then calls `submitPayment()` for you. Calling `submitPayment()` instead fails before
+anything is sent with `ValidateFailed: client-side validation failed for purse-creditcard — the card
+form was never submitted…`; calling it while or after the card pays fails with `SubmitBlocked`.
+
+**`/init` is retried for you.** A transient failure — no HTTP answer, an answer that is not JSON,
+or a 5xx — is sent again after 300 ms, then after 900 ms: 3 identical requests at most, and only
+the last failure reaches you. A 4xx is never retried. A call that failed for good (a 4xx, or the
+third transient failure) is not sent again: the same `/init` — same session, partner, method and
+amount — fails at once with that same error, while a different amount is a different call. Do not
+add your own retry loop.
+
+**Why did the API refuse a call?** The message names the call, the HTTP status and the API's
+`error` code (`Payment API POST /init failed: HTTP 400 (BAD_REQUEST)`); `PaymentApiException`
+carries them as `path`, `status` and `errorCode`. A `/validate` failure arrives as
+`PurseCheckoutException.ValidateFailed` with the `PaymentApiException` as its `cause`. The response
+body — the field and rule at fault — is never on the exception, in Logcat or in monitoring: it can
+quote what the shopper typed. To read it, run a debuggable build and open Android Studio's
+**App Inspection → Network Inspector**, which records the SDK's calls with their request and
+response bodies; or route the device through a debugging proxy trusted by a `debug-overrides`
+network security config. Never ship either in a release build.
 
 **A method shows up but cannot pay.** If the session offers Google Pay, PayPal or Klarna and the
 matching artifact is not on your classpath, the method is still listed (the session decides that),
@@ -306,8 +351,10 @@ no plugin registered for klarna/installments — add the `eu.purse:headless-chec
 ```
 
 The same line is logged at `PurseHeadlessCheckout.init` (tag `PurseHeadlessCheckout`, level W), and
-`submitPayment` throws `PurseCheckoutException.NoPluginRegistered`. Add the dependency, or hide the
-method in this build with `init(disabledMethods = setOf(MethodKey(partner, method)))`.
+`submitPayment` throws `PurseCheckoutException.NoPluginRegistered`. Building the element (or that
+submit) also disables the method with `PARTNER_UI_FATAL_ERROR` for the rest of the session, as web
+does; the same happens to a method whose `configurations.template` no plugin serves outside
+redirection mode. Add the dependency, or hide the method in this build with `init(disabledMethods = setOf(MethodKey(partner, method)))`.
 
 ## 13. Locale, texts, theme
 
@@ -335,7 +382,15 @@ PurseHeadlessCheckout.init(
 
 Scopes: `global`, `input`, `label`, `helperText`, each with `Invalid` / `Valid` variants and `inputFocus`.
 Resolution is scope variant → scope → global variant → global, over web's defaults. Every `null`
-text falls back to the SDK's localized resources (English, French).
+text falls back to the SDK's localized resources (English, French), read in `locale` — not the
+device language — so a French device paying through an `en-GB` checkout reads English. Without a
+`locale`, the device's language applies; a language the SDK has no copy for gets English.
+
+Colours take the web spellings: `#rgb`, `#rrggbb`, `#rrggbbaa` (CSS order, alpha last) or
+`transparent` (the default `input.backgroundColor`). Before the `input*` colours reach SecureFields
+the SDK rewrites them as `#AARRGGBB`, the form Android's `Color.parseColor` reads, so a default-theme
+field stays transparent rather than turning black. Other values (`rgb()`, `hsl()`, CSS names) are not
+read by the SDK's own form; on the secure fields, only the few names `Color.parseColor` knows work.
 
 ## 14. BNPL instalment simulation
 
@@ -387,7 +442,7 @@ save decisions, and what the native steps collected. What does not: a card form'
 saved, by design) and `hooks` / `options` (they hold code — pass the same ones to `restore`).
 
 If a submit had already left the device, the restored `sessionState` is `SUBMITTED` and
-`submitPayment` refuses: confirm the outcome with `awaitPaymentOutcome()` (recipe 9) instead of
+`submitPayment` refuses: confirm the outcome from your backend (recipe 9) instead of
 letting the shopper pay twice. The return from the redirect Activity after the process was killed
 lands on the recreated payment element's listener as `PaymentOutcome.ReturnedFromRedirect`, which
 leads to the same check.
@@ -421,7 +476,7 @@ import eu.purse.partnerui.plugins.partners.paypal.wallet.rememberPaypalCoordinat
 import eu.purse.partnerui.plugins.partners.klarna.rememberKlarnaCoordinator            // in headless-checkout-klarna
 
 val host = remember(method.id) { checkout.host(method) }             // remember it: the card form is keyed on it
-val card = rememberCardCoordinator(host, listener)                    // PurseCardForm(card) + card.submit()
+val card = rememberCardCoordinator(host, listener)                    // setPrimary(method); PurseCardForm(card) + card.submit()
 val googlePay = rememberGooglePayCoordinator(listener)                // prepare(host); GooglePayButton(googlePay, theme = …)
 val paypal = rememberPaypalCoordinator(listener)                      // prepare(host); paypal.submit()
 val klarna = rememberKlarnaCoordinator(listener)                      // container = …; prepare(host, returnUrl); submit()
@@ -429,5 +484,11 @@ val redirection = rememberRedirectionCoordinator(listener)            // prepare
 ```
 
 Each partner's `remember*Coordinator` ships with its artifact, in the plugin's own package.
+
+Every coordinator's `submit()` (Google Pay's `launchSheet()`) **pays**: it runs the method's native
+step and `submitPayment()` itself, then follows any redirect — `card.submit()` included, where
+iOS's only tokenizes. Do not
+call `submitPayment()` next to it. The result arrives only on `listener.onOutcome`, so pass a
+listener that implements it.
 
 Per-method internals (`/init` shapes, sequence diagrams, failure modes): [docs/plugins](../plugins/README.md).
