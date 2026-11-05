@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
 
@@ -33,6 +34,21 @@
                 <data android:scheme="${applicationId}.redirect" />
             </intent-filter>
         </activity>
+
+        <!--
+          Records whether the host app is debuggable at process start (SDK-12577): a release app is
+          refused the Purse-internal TEST / DEVELOPMENT tiers with ENVIRONMENT_NOT_ALLOWED. Merged into
+          androidx.startup's single provider, which lifecycle-process already registers.
+        -->
+        <provider
+            android:name="androidx.startup.InitializationProvider"
+            android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
+            tools:node="merge">
+            <meta-data
+                android:name="eu.purse.core.environment.HostAppInitializer"
+                android:value="androidx.startup" />
+        </provider>
 
     </application>
 

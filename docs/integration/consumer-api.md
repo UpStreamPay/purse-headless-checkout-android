@@ -53,7 +53,25 @@ fun init(
 | `disabledMethods` | `(partner, method)` pairs this app build opts out of: never listed on `paymentMethods`, their saved instruments included, whatever the session offers. Scoped to this checkout and re-applied by `setSession`. |
 
 **Throws:** `PurseSessionException.SessionMalformed` if `widgetData` can't be decoded, or the
-session is missing `id` / `expiration_date`.
+session is missing `id` / `expiration_date`; `PurseSessionException.EnvironmentNotAllowed`
+(`ENVIRONMENT_NOT_ALLOWED`) in a release app asked for an internal tier — see
+[Internal tiers in a release app](#internal-tiers-in-a-release-app).
+
+#### Internal tiers in a release app
+
+`PurseEnvironment.TEST` and `DEVELOPMENT` are Purse-internal. When the **host app is not debuggable**
+(its `ApplicationInfo.FLAG_DEBUGGABLE` is unset — any `release` build type, wherever it is
+distributed), `init`, `restore` and `setSession` refuse them with
+`PurseSessionException.EnvironmentNotAllowed` (`ENVIRONMENT_NOT_ALLOWED`, the code iOS raises; the
+exception's `environment` names the tier). What is checked: the `lockedEnvironment` when you pass
+one; otherwise the session's `environment` **and** the tier its `api_url`'s host names, so a blob
+labelled `production` cannot reach TEST through its `api_url`. The SDK never swaps the tier for
+production behind your back. `SANDBOX` and `PRODUCTION` are always allowed, and a debug build gets
+every tier.
+
+The flag is the host app's, read at process start through androidx.startup's
+`InitializationProvider` (already merged by `lifecycle-process`). An app that removes that provider
+from its manifest is treated as a release build.
 
 Call this once per checkout session. The returned `PurseHeadlessCheckout` instance is the object
 every other API in this document hangs off.
@@ -111,8 +129,10 @@ you fetched a fresh one — without tearing the screen down. What survives follo
 
 Same session id → ignored with a warning, as on web. **Throws** `PurseCheckoutException.SessionExpired`
 (`EXPIRED_SESSION`) when the new session is already expired — the old one stays in force —
-`PurseCheckoutException.SubmitBlocked` (`SUBMIT_BLOCKED`) while a payment is being submitted, and
-`PurseCheckoutException.CheckoutTornDown` (`CHECKOUT_TORN_DOWN`) after `teardown()`. Emits
+`PurseCheckoutException.SubmitBlocked` (`SUBMIT_BLOCKED`) while a payment is being submitted,
+`PurseSessionException.EnvironmentNotAllowed` (`ENVIRONMENT_NOT_ALLOWED`) for a TEST / DEVELOPMENT
+session in a release app ([as at `init`](#internal-tiers-in-a-release-app); the old session stays in
+force), and `PurseCheckoutException.CheckoutTornDown` (`CHECKOUT_TORN_DOWN`) after `teardown()`. Emits
 `HEADLESS_CHECKOUT_SET_SESSION`.
 
 Keying UI on `(item.id, generation)` is what makes "keep what is still valid" work on the screen:
@@ -850,10 +870,11 @@ interactive plugin.
 | `PurseCheckoutException.MethodNotSimulable` | `simulateLoan` / `simulateLoans` | The method has no `simulable` label (`METHOD_IS_NOT_SIMULABLE`). |
 | `PurseCheckoutException.LoanSimulationFailed` | `simulateLoan` / `simulateLoans` | The simulation API answered without a schedule — no `plugin_result`, or a refusal like `EMPTY_SIMULATION` (`INVALID_LOAN_SIMULATION`; the API's code is on the cause). |
 | `PurseSessionException.SessionMalformed` | `PurseHeadlessCheckout.init`, `setSession` | `widget.data` couldn't be decoded, or is missing required fields (`SESSION_MALFORMED`). |
+| `PurseSessionException.EnvironmentNotAllowed` | `PurseHeadlessCheckout.init`, `restore`, `setSession` | A release (non-debuggable) app asked for `TEST` / `DEVELOPMENT` — locked, declared, or through the `api_url`'s host (`ENVIRONMENT_NOT_ALLOWED`, native-only, shared with iOS). `environment` names the tier. See [Internal tiers in a release app](#internal-tiers-in-a-release-app). |
 | `PaymentApiException` | Any Payment API call | Network/transport failure, non-2xx/3xx status, or an unusable response body (`API_ERROR`; the backend's own reason is `errorCode`, `outcomeUnknown` when no answer came back). The response body is never carried — to read it while debugging, see [recipes §12](recipes.md#12-errors). A transient `/init` failure has already been sent 3 times when it reaches you. |
 
 All of the above extend `eu.purse.core.error.PurseException`: unchecked, with a stable `code`
-(`PurseErrorCode`, web's names), a `message` and a `documentationLink`. Catch the root for generic
+(`PurseErrorCode`, web's names; `ENVIRONMENT_NOT_ALLOWED` is native-only), a `message` and a `documentationLink`. Catch the root for generic
 handling and branch on `code`. Every code the SDK raises is exercised by
 `PurseErrorCodeCoverageTest`.
 
@@ -864,7 +885,7 @@ handling and branch on `code`. Every code the SDK raises is exercised by
 | Type | Values / shape | Notes |
 |---|---|---|
 | `SessionState` | `READY, SUBMITTING, SUBMITTED, ERROR, EXPIRED, TERMINATED` | Web's `PurseHeadlessCheckoutSessionState` minus `idle` (a checkout cannot exist without a session). |
-| `PurseEnvironment` | `DEVELOPMENT, TEST, SANDBOX, PRODUCTION` | Each carries its own `paymentApiRoot`. |
+| `PurseEnvironment` | `DEVELOPMENT, TEST, SANDBOX, PRODUCTION` | Each carries its own `paymentApiRoot`. `DEVELOPMENT` / `TEST` are internal: refused in a release app ([`ENVIRONMENT_NOT_ALLOWED`](#internal-tiers-in-a-release-app)). |
 | `PurseSessionParams` | `apiKey, apiUrl, environment, entityId, paymentSession` | The decoded `widget.data`. |
 | `MethodConfiguration` | `stable, template, labels, position, vault, settings` | Raw `configurations` block; `isSecondary` derives from `labels`. |
 | `LoanProduct` / `LoanSimulation` | see [Loan simulation](#loan-simulation-bnpl) | Input and result of `simulateLoan`. |

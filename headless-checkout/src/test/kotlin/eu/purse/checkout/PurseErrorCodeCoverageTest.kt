@@ -3,6 +3,7 @@ package eu.purse.checkout
 import eu.purse.checkout.payment.item.DisabledState
 import eu.purse.checkout.state.SessionState
 import eu.purse.core.api.PaymentApiException
+import eu.purse.core.environment.PurseEnvironment
 import eu.purse.core.error.PurseErrorCode
 import eu.purse.core.error.PurseException
 import eu.purse.core.session.PurseSessionException
@@ -22,6 +23,7 @@ class PurseErrorCodeCoverageTest {
     private fun raised(): Map<PurseErrorCode, PurseException> = listOf<PurseException>(
         PurseCheckoutException.SessionExpired("s-1"),
         PurseSessionException.SessionMalformed("not json"),
+        PurseSessionException.EnvironmentNotAllowed(PurseEnvironment.TEST),
         PurseCheckoutException.SubmitBlocked(SessionState.SUBMITTING),
         PurseCheckoutException.CheckoutTornDown(),
         PurseCheckoutException.ValidateFailed("validate call failed"),
