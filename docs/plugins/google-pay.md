@@ -150,7 +150,9 @@ fun GooglePayRow(checkout: PurseHeadlessCheckout, item: PrimaryMethod, listener:
 
 Keying `prepare` on `host.amount` is web's `onAmountUpdate`: without it, a gift card applied after
 the button appeared leaves the sheet showing the full order while `/validate` carries the rest.
-`prepare` hides the button (`onReady(false)`) until the new request is ready.
+`prepare` hides the button (`onReady(false)`) until the new request is ready. At an amount of 0 (a
+gift card covers the whole order) it builds no request at all and the button stays hidden until the
+amount moves again.
 
 The approved sheet commits the method as primary itself (`host.setAsPrimary()`), so there is no
 `setPrimary` call on your side. `rememberPaymentElement(checkout, item, listener)` is the same thing

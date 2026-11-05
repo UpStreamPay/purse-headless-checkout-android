@@ -179,7 +179,8 @@ lifecycleScope.launch {
 
 The host owns re-rendering the list on every emission. The `onAmountUpdate` web's
 `<purse-partner-ui>` element gets is the SDK's concern: each element's `PluginHost.amount` moves
-with the split, and the Google Pay and Klarna surfaces prepare again on it.
+with the split, and the Google Pay and Klarna surfaces prepare again on it (not at 0, where there
+is nothing to prepare).
 
 ---
 

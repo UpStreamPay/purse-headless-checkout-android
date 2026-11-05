@@ -160,7 +160,9 @@ fun KlarnaRow(checkout: PurseHeadlessCheckout, item: PrimaryMethod, listener: Pa
 ```
 
 Re-preparing on `host.amount` is web's `onAmountUpdate`: a fresh `/init` and widget for the new
-amount, with `onReady(false)` until it loads, so `/validate` never rides a stale `step_id`.
+amount, with `onReady(false)` until it loads, so `/validate` never rides a stale `step_id`. At an
+amount of 0 (a gift card covers the whole order) no `/init` goes out: `prepare` removes the widget
+and waits for the amount to move again.
 
 Compose this only when the Klarna row is selected — an unselected row does no `/init` work.
 `rememberPaymentElement(checkout, item, listener)` does exactly this.
