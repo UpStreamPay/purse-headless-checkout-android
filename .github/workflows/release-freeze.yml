@@ -65,21 +65,26 @@ jobs:
           GH_REPO: ${{ github.repository }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          branches=$(gh pr list --state open --base main --limit 200 --json number,headRefName \
-            -q '.[] | select(.number != ($ENV.PR_NUMBER | tonumber)) | .headRefName')
+          prs=$(gh pr list --state open --base main --limit 200 --json number,headRefOid \
+            -q '.[] | select(.number != ($ENV.PR_NUMBER | tonumber)) | "\(.number) \(.headRefOid)"')
           failed=0
-          for branch in $branches; do
-            run=$(gh run list --workflow release-freeze.yml --event pull_request --branch "$branch" --limit 1 \
-              --json databaseId,status -q '.[0] | "\(.databaseId) \(.status)"')
-            read -r id status <<<"$run"
-            if [[ -z "$id" || "$status" != completed ]]; then
-              continue # no verdict yet, or one in progress that reads the live state
+          while read -r number sha; do
+            if [[ -z "$number" ]]; then
+              continue
             fi
+            # By head commit, not branch name: two PRs can share a branch name.
+            id=$(gh run list --workflow release-freeze.yml --event pull_request --commit "$sha" --limit 1 \
+              --json databaseId -q '.[0].databaseId')
+            if [[ -z "$id" ]]; then
+              continue
+            fi
+            # A run in progress may have read the state before the change: let it finish, then re-run.
+            gh run watch "$id" --exit-status >/dev/null 2>&1 || true
             if ! gh run rerun "$id"; then
-              echo "::error::Could not re-run $id ($branch): push to it or re-run it by hand."
+              echo "::error::Could not re-run $id (#$number): push to it or re-run it by hand."
               failed=$((failed + 1))
             fi
-          done
+          done <<<"$prs"
           if (( failed > 0 )); then
             exit 1
           fi
