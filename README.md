@@ -80,7 +80,7 @@ The build needs nothing from your machine: Gradle provisions its own JDK 21 (`gr
 ```
 
 Changed the public API on purpose? `./gradlew apiDump` and commit the `*/api/*.api` dumps (a removal
-is a `feat!:`). Releasing: push to `main` — [docs/contributing/release.md](docs/contributing/release.md).
+is a `feat!:`). Releasing: run Release Please by hand, test the `-SNAPSHOT`, merge the release PR — [docs/contributing/release.md](docs/contributing/release.md).
 
 ## Related
 
