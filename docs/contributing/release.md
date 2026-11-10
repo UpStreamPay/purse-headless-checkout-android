@@ -110,7 +110,7 @@ no bypass. Commits made only of non-releasable types open no PR.
 Outside a freeze, a push to `main` opens nothing: release-please only tags a merged release PR.
 
 While the release PR is open, `release-freeze.yml` (the `Release freeze` check) fails every PR into
-`main` whose title is not `fix:` or `revert:`. A bug found in NRT is fixed by a normal `fix:` PR into
+`main` whose title is not `fix:` or `revert:` (breaking `fix!:` included). A bug found in NRT is fixed by a normal `fix:` PR into
 `main`; merging it updates the release PR and republishes the `-SNAPSHOT`. Closing the release PR
 lifts the freeze without releasing.
 

@@ -4,7 +4,7 @@ name: Release freeze
 on:
   pull_request:
     branches: [main]
-    types: [opened, edited, synchronize, reopened, closed]
+    types: [opened, edited, synchronize, reopened, closed, labeled]
 
 permissions:
   contents: read
@@ -26,32 +26,35 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TITLE: ${{ github.event.pull_request.title }}
-          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          if [[ "$HEAD_REF" == release-please--* ]]; then
-            echo "Release PR itself"
-            exit 0
-          fi
-          release=$(gh pr list --state open --label 'autorelease: pending' --json url -q '.[0].url')
-          if [[ -z "$release" ]]; then
+          releases=$(gh pr list --state open --label 'autorelease: pending' --json number -q '.[].number')
+          if [[ -z "$releases" ]]; then
             echo "No release in progress"
             exit 0
           fi
-          if [[ "$TITLE" =~ ^(fix|revert)(\([a-z0-9._/-]+\))?!?:\  ]]; then
-            echo "Fix allowed during $release"
+          if grep -qx "$PR_NUMBER" <<<"$releases"; then
+            echo "Release PR itself"
             exit 0
           fi
-          echo "::error::Release $release is open: only fix: or revert: PRs can be merged until it is released or closed. Got: $TITLE"
+          # No `!`: a breaking fix would turn the release under NRT into a major.
+          if [[ "$TITLE" =~ ^(fix|revert)(\([a-z0-9._/-]+\))?:\  ]]; then
+            echo "Fix allowed during release #$(head -1 <<<"$releases")"
+            exit 0
+          fi
+          echo "::error::Release #$(head -1 <<<"$releases") is open: only fix: or revert: PRs (not breaking) can be merged until it is released or closed. Got: $TITLE"
           exit 1
 
-  # A release opening or closing changes every other PR's verdict: re-run their last check.
+  # A release starting or ending changes every other PR's verdict: re-run their last check.
+  # `labeled` rather than `opened`: release-please adds the label after creating the PR.
   recheck:
     name: Re-check open PRs
     if: >-
-      startsWith(github.event.pull_request.head.ref, 'release-please--')
-      && (github.event.action == 'opened' || github.event.action == 'closed')
+      (github.event.action == 'labeled' && github.event.label.name == 'autorelease: pending')
+      || ((github.event.action == 'reopened' || github.event.action == 'closed')
+        && contains(github.event.pull_request.labels.*.name, 'autorelease: pending'))
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       actions: write
       pull-requests: read
@@ -60,10 +63,23 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
-          for branch in $(gh pr list --state open --base main --json headRefName -q '.[].headRefName | select(startswith("release-please--") | not)'); do
-            run=$(gh run list --workflow release-freeze.yml --branch "$branch" --limit 1 --json databaseId -q '.[0].databaseId')
-            if [[ -n "$run" ]]; then
-              gh run rerun "$run" || echo "::warning::Could not re-run $run ($branch)"
+          branches=$(gh pr list --state open --base main --limit 200 --json number,headRefName \
+            -q '.[] | select(.number != ($ENV.PR_NUMBER | tonumber)) | .headRefName')
+          failed=0
+          for branch in $branches; do
+            run=$(gh run list --workflow release-freeze.yml --event pull_request --branch "$branch" --limit 1 \
+              --json databaseId,status -q '.[0] | "\(.databaseId) \(.status)"')
+            read -r id status <<<"$run"
+            if [[ -z "$id" || "$status" != completed ]]; then
+              continue # no verdict yet, or one in progress that reads the live state
+            fi
+            if ! gh run rerun "$id"; then
+              echo "::error::Could not re-run $id ($branch): push to it or re-run it by hand."
+              failed=$((failed + 1))
             fi
           done
+          if (( failed > 0 )); then
+            exit 1
+          fi
