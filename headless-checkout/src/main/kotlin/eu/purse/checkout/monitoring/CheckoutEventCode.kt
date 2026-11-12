@@ -46,6 +46,17 @@ enum class CheckoutEventCode {
     HEADLESS_CHECKOUT_PRIMARY_TOKEN_GET_PAYMENT_ELEMENT,
     HEADLESS_CHECKOUT_PRIMARY_TOKEN_SET_AS_PRIMARY,
     HEADLESS_CHECKOUT_REACTIVE_VALUE_SUBSCRIBE,
+
+    /**
+     * The shopper leaves the checkout for a PSP page, a 3-D Secure page or the merchant's
+     * success/failure page (SDK-12712). INFO. Payload, Widget V3's `REDIRECTION` as web posts it:
+     * exactly one of `url` (a [Get][eu.purse.partnerui.redirect.RedirectAction.Get]), `action` (a
+     * [PostForm][eu.purse.partnerui.redirect.RedirectAction.PostForm]) — both the **hostname
+     * only**, or `couldn't parse the url` — or `string_form: true` (a
+     * [PostHtml][eu.purse.partnerui.redirect.RedirectAction.PostHtml], no URL to read); plus
+     * `delegated`, true when the merchant's `onRedirection` hook took the redirect over.
+     */
+    HEADLESS_CHECKOUT_REDIRECTION,
     HEADLESS_CHECKOUT_READY,
     HEADLESS_CHECKOUT_SECONDARY_TOKEN_REGISTER,
     HEADLESS_CHECKOUT_SECONDARY_TOKEN_REMOVE_FROM_SPLIT,

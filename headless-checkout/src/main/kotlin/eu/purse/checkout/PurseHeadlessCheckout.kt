@@ -14,6 +14,7 @@ import eu.purse.checkout.monitoring.EventLevel
 import eu.purse.checkout.monitoring.MonitoringInstance
 import eu.purse.checkout.monitoring.errorPayload
 import eu.purse.checkout.monitoring.monitoringPayload
+import eu.purse.checkout.monitoring.postRedirection
 import eu.purse.checkout.monitoring.summarizeValidationResults
 import eu.purse.checkout.payment.item.DisabledState
 import eu.purse.checkout.payment.item.MethodAvailability
@@ -1503,6 +1504,7 @@ class PurseHeadlessCheckout private constructor(
             override suspend fun submitPayment() = this@PurseHeadlessCheckout.submitPayment()
             override suspend fun delegateRedirection(action: RedirectAction) =
                 this@PurseHeadlessCheckout.delegateRedirection(action)
+            override fun onRedirecting(action: RedirectAction, delegated: Boolean) = bus.postRedirection(action, delegated)
         }
     }
 

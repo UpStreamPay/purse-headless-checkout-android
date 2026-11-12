@@ -3,6 +3,8 @@
 // Differs: one shared dispatch step for every coordinator.
 package eu.purse.partnerui.redirect
 
+import eu.purse.core.InternalPurseApi
+
 /**
  * The merchant's chance to take a redirect over — the seam through which `:headless-checkout`
  * exposes its `PurseCheckoutHooks.onRedirection` hook to every coordinator, the Kotlin analog of
@@ -24,12 +26,22 @@ interface RedirectionDelegate {
      * failure to the element listener; the checkout itself stays usable.
      */
     suspend fun delegateRedirection(action: RedirectAction): Boolean = false
+
+    /**
+     * The shopper is leaving the checkout for [action]: [delegated] is `true` when
+     * [delegateRedirection] handed it to the merchant, `false` when the SDK is about to open its own
+     * WebView. Monitoring only (SDK-12712): [RedirectDispatcher] calls it once per redirect, after the
+     * hook answered and before the launch. It must neither block nor throw. The default does nothing.
+     */
+    @InternalPurseApi
+    fun onRedirecting(action: RedirectAction, delegated: Boolean) {}
 }
 
 /**
  * One shared "offer to the merchant, else launch" step for the five coordinators, so the hook
  * contract (handled → no WebView; not handled → WebView; threw → nothing, report) can't drift
- * between them.
+ * between them. Every redirect that leaves the checkout goes through here, so this is also where it
+ * is reported, once, through [RedirectionDelegate.onRedirecting].
  */
 internal object RedirectDispatcher {
 
@@ -54,6 +66,11 @@ internal object RedirectDispatcher {
         } catch (e: Exception) {
             return Outcome.HookFailed(e)
         }
+        // Reported once the hook has answered, the only point where `delegated` is known, and before
+        // the launch. A throwing hook opened nothing, so it reports no redirect (CLIENT_HOOK_ERROR
+        // covers it), and neither does a decline with no launcher wired. Monitoring can never stop
+        // the redirect.
+        if (handled || launch != null) runCatching { delegate.onRedirecting(action, delegated = handled) }
         if (handled) return Outcome.Delegated
         launch?.invoke(action)
         return Outcome.Launched
