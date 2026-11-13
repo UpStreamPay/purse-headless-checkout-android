@@ -340,6 +340,7 @@ public final class eu/purse/checkout/monitoring/CheckoutEventCode : java/lang/En
 	public static final field HEADLESS_CHECKOUT_PRIMARY_TOKEN_SET_AS_PRIMARY Leu/purse/checkout/monitoring/CheckoutEventCode;
 	public static final field HEADLESS_CHECKOUT_REACTIVE_VALUE_SUBSCRIBE Leu/purse/checkout/monitoring/CheckoutEventCode;
 	public static final field HEADLESS_CHECKOUT_READY Leu/purse/checkout/monitoring/CheckoutEventCode;
+	public static final field HEADLESS_CHECKOUT_REDIRECTION Leu/purse/checkout/monitoring/CheckoutEventCode;
 	public static final field HEADLESS_CHECKOUT_SECONDARY_TOKEN_REGISTER Leu/purse/checkout/monitoring/CheckoutEventCode;
 	public static final field HEADLESS_CHECKOUT_SECONDARY_TOKEN_REMOVE_FROM_SPLIT Leu/purse/checkout/monitoring/CheckoutEventCode;
 	public static final field HEADLESS_CHECKOUT_SECONDARY_TOKEN_TAKE Leu/purse/checkout/monitoring/CheckoutEventCode;

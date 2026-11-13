@@ -30,7 +30,7 @@ adds or removes a divergence.
 | `payment-element/payment-element.ts` | `checkout/element/PaymentElement.kt` + `partnerui/PaymentCoordinator.kt` and one coordinator per plugin | see divergences |
 | none | `partnerui/PluginHost.kt` | the seam through which a coordinator reaches the checkout |
 | none (web bundles every plugin) | `partnerui/PartnerModule.kt`, `PartnerArtifacts.kt`, `META-INF/services/eu.purse.partnerui.PartnerModule` in each partner module | optional partner artifacts discovered with `ServiceLoader`; a missing one is named at `init` |
-| `monitoring/*`, `monitoringConfigs.ts` | `checkout/monitoring/CheckoutEventBus.kt`, `CheckoutEventCode.kt`, `MonitoringPayloads.kt`, `core/monitoring/*` | web's 40 codes + `METHOD_DISABLED`, envelope + `platform: android` — see [monitoring](integration/monitoring.md) |
+| `monitoring/*`, `monitoringConfigs.ts`, `utils/redirection-log.ts` | `checkout/monitoring/CheckoutEventBus.kt`, `CheckoutEventCode.kt`, `MonitoringPayloads.kt`, `RedirectionLog.kt`, `core/monitoring/*` | web's 40 codes + `METHOD_DISABLED`, envelope + `platform: android` — see [monitoring](integration/monitoring.md) |
 | `utils/error/*` | `checkout/PurseCheckoutException.kt`, `core/error/PurseErrorCode.kt` | same codes, plus native-only ones (`ENVIRONMENT_NOT_ALLOWED`, shared with iOS) |
 | `sdk/src/API/payment-api.ts` | `core/api/PaymentApiClient.kt` | yes |
 | wallet API | `core/api/WalletApiClient.kt` | yes |

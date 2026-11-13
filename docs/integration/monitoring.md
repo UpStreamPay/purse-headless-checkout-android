@@ -57,6 +57,7 @@ Android additions marked.
 | `HEADLESS_CHECKOUT_VALIDATION_STARTED` | INFO | before `/validate` | `session_id`, `nb_items` |
 | `HEADLESS_CHECKOUT_VALIDATION_SUCCESS` / `_FAILED` | SUCCESS / WARNING | `/validate` answered | `global_status`, `results[]` |
 | `HEADLESS_CHECKOUT_PAYMENT_ERROR` | ERROR | a refused `/validate`, a thrown submit error; WARNING for a saved gift card that failed to `/init` | see below |
+| `HEADLESS_CHECKOUT_REDIRECTION` | INFO | the shopper leaves the checkout for a PSP page, a 3-D Secure page or the merchant's success/failure page, on any method, after an approved or a refused `/validate` (SDK-12712) | Widget V3's payload: exactly one of `url` (`RedirectAction.Get`), `action` (`PostForm`) — the **hostname only**, or `couldn't parse the url` — or `string_form: true` (`PostHtml`); plus `delegated`, `true` when the `onRedirection` hook took the redirect over. Posted once the hook has answered and before the SDK opens its WebView; a throwing hook opens nothing and posts none |
 | `HEADLESS_CHECKOUT_ON_BEFORE_VALIDATE_HOOK_FAILED`, `CLIENT_HOOK_ERROR` | ERROR | a merchant hook threw | `hook`, `message` |
 | `HEADLESS_CHECKOUT_PARTNER_UI_EVENT` | INFO / WARNING / ERROR | every plugin event (`PluginEvent`), and a plugin refusing the client (`code: pluginIsIncompatibleWithClient`, WARNING — SDK-12071) | `code`, `partner`, `method`, `reason` (capped) |
 | `HEADLESS_CHECKOUT_PARTNER_API_CALL_START` / `_END` | NETWORK / PERFORMANCE | every Payment API call | `call`, `path`, `durationMs`, `success` |
@@ -84,6 +85,8 @@ Not in any event, by construction:
   form content, shopper identity;
 - raw amounts (`SET_SESSION` says how many methods, `SECONDARY_TOKEN_TAKE` whether the slice was
   partial — web sends the amounts; Android does not);
+- a redirect's path, query string, form fields or HTML — `REDIRECTION` carries the destination
+  hostname only;
 - transaction ids and partner payloads: `results[]` is a field allowlist, `plugin_result` travels as
   its `status` only, and a Payment API error message never quotes the response body;
 - a `DisabledState`'s message (it can quote amounts) — only its code.

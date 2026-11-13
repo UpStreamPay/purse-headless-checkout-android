@@ -19,6 +19,28 @@ class RedirectDispatcherTest {
         override suspend fun delegateRedirection(action: RedirectAction) = answer(action)
     }
 
+    /** A delegate that records, in order, the hook call, every `onRedirecting` report and the launch. */
+    private class Recorder(
+        private val answer: suspend (RedirectAction) -> Boolean,
+        private val report: (RedirectAction, Boolean) -> Unit = { _, _ -> },
+    ) : RedirectionDelegate {
+        val steps = mutableListOf<String>()
+        val reports = mutableListOf<Pair<RedirectAction, Boolean>>()
+
+        override suspend fun delegateRedirection(action: RedirectAction): Boolean {
+            steps += "hook"
+            return answer(action)
+        }
+
+        override fun onRedirecting(action: RedirectAction, delegated: Boolean) {
+            steps += "report"
+            reports += action to delegated
+            report(action, delegated)
+        }
+
+        val launch: (RedirectAction) -> Unit = { steps += "launch" }
+    }
+
     @Test
     fun `a host without a hook declines, so the SDK launches its own redirect`() = runBlocking {
         var launched: RedirectAction? = null
@@ -74,5 +96,80 @@ class RedirectDispatcherTest {
         val outcome = RedirectDispatcher.dispatch(action, delegate { false }, launch = null)
 
         assertEquals(RedirectDispatcher.Outcome.Launched, outcome)
+    }
+
+    // --- SDK-12712: every redirect that leaves is reported once, with whether the merchant took it ---
+
+    @Test
+    fun `a redirect the SDK opens is reported as not delegated, after the hook and before the launch`() = runBlocking {
+        val recorder = Recorder({ false })
+
+        RedirectDispatcher.dispatch(action, recorder, recorder.launch)
+
+        assertEquals(listOf("hook", "report", "launch"), recorder.steps)
+        assertEquals(listOf(action to false), recorder.reports)
+    }
+
+    @Test
+    fun `a redirect the merchant takes over is reported as delegated, and nothing is launched`() = runBlocking {
+        val recorder = Recorder({ true })
+
+        val outcome = RedirectDispatcher.dispatch(action, recorder, recorder.launch)
+
+        assertEquals(RedirectDispatcher.Outcome.Delegated, outcome)
+        assertEquals(listOf("hook", "report"), recorder.steps)
+        assertEquals(listOf(action to true), recorder.reports)
+    }
+
+    @Test
+    fun `a throwing hook opened nothing, so no redirect is reported`() = runBlocking {
+        val recorder = Recorder({ throw IllegalStateException("no browser available") })
+
+        val outcome = RedirectDispatcher.dispatch(action, recorder, recorder.launch)
+
+        assertTrue(outcome is RedirectDispatcher.Outcome.HookFailed)
+        assertEquals(listOf("hook"), recorder.steps)
+    }
+
+    @Test
+    fun `a decline with no launcher wired opens nothing, so no redirect is reported`() = runBlocking {
+        val recorder = Recorder({ false })
+
+        RedirectDispatcher.dispatch(action, recorder, launch = null)
+
+        assertTrue(recorder.reports.isEmpty())
+    }
+
+    @Test
+    fun `a report that throws neither blocks the launch nor changes the outcome`() = runBlocking {
+        val declining = Recorder({ false }, report = { _, _ -> error("monitoring down") })
+        val handling = Recorder({ true }, report = { _, _ -> error("monitoring down") })
+
+        assertEquals(RedirectDispatcher.Outcome.Launched, RedirectDispatcher.dispatch(action, declining, declining.launch))
+        assertEquals(listOf("hook", "report", "launch"), declining.steps)
+        assertEquals(RedirectDispatcher.Outcome.Delegated, RedirectDispatcher.dispatch(action, handling, handling.launch))
+    }
+
+    @Test
+    fun `the hook and the launcher get the very same action, whatever the report`() = runBlocking {
+        val forms = listOf(
+            action,
+            RedirectAction.PostForm("https://acs.example/challenge", "PaReq=abc&MD=1", returnUrlPrefix = "https://shop.example/return"),
+            RedirectAction.PostHtml("<form action=\"https://acs.example\"></form>"),
+        )
+        forms.forEach { form ->
+            var offered: RedirectAction? = null
+            var launched: RedirectAction? = null
+            RedirectDispatcher.dispatch(
+                form,
+                Recorder({
+                    offered = it
+                    false
+                }),
+            ) { launched = it }
+
+            assertSame(form, offered)
+            assertSame(form, launched)
+        }
     }
 }
