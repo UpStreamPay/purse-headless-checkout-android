@@ -1,5 +1,5 @@
 [versions]
-agp = "9.5.0"
+agp = "9.5.1"
 kotlin = "2.4.21"
 coreKtx = "1.19.1"
 junit = "4.13.2"
@@ -10,7 +10,7 @@ material = "1.14.0"
 json = "20260814"
 securefields = "1.4.3"
 lifecycleRuntimeKtx = "2.10.0"
-startupRuntime = "1.1.1"
+startupRuntime = "1.2.0"
 coroutines = "1.11.0"
 paypalWebPayments = "2.3.0"
 playServicesWallet = "20.0.0"
@@ -56,7 +56,7 @@ kotlin-android = { id = "org.jetbrains.kotlin.android", version.ref = "kotlin" }
 kotlin-compose = { id = "org.jetbrains.kotlin.plugin.compose", version.ref = "kotlin" }
 # Delivery chain (SDK-12219): Maven Central publishing, API docs, and the CI quality gates.
 maven-publish = { id = "com.vanniktech.maven.publish", version = "0.37.0" }
-dokka = { id = "org.jetbrains.dokka", version = "2.2.0" }
+dokka = { id = "org.jetbrains.dokka", version = "2.3.0" }
 binary-compatibility-validator = { id = "org.jetbrains.kotlinx.binary-compatibility-validator", version = "0.18.2" }
 ktlint = { id = "org.jlleitschuh.gradle.ktlint", version = "14.2.0" }
 detekt = { id = "io.gitlab.arturbosch.detekt", version = "1.23.8" }
