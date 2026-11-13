@@ -1,3 +1,33 @@
+# Changelog
+
+## [0.2.0](https://github.com/UpStreamPay/purse-headless-checkout-android/compare/v0.1.0...v0.2.0) (2026-11-13)
+
+
+### Features
+
+* **card:** card form field state, accessible names and checkout locale (SDK-12579) ([#56](https://github.com/UpStreamPay/purse-headless-checkout-android/issues/56)) ([2f80d28](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/2f80d28cc18ed0bc82cb42badfc12f824a10bec0))
+* **confirmation:** deprecate the client-side session read (SDK-12574) ([#51](https://github.com/UpStreamPay/purse-headless-checkout-android/issues/51)) ([ff00da3](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/ff00da3e4951186cb6aaa94eb3b972b3fd620aa5))
+* **monitoring:** log the redirection destination hostname (SDK-12712) ([#65](https://github.com/UpStreamPay/purse-headless-checkout-android/issues/65)) ([273e75d](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/273e75da617d58d671aca1e5e3787e553dc281f9))
+* **paypal:** withdraw an ineligible PayPal bnpl in redirection mode (SDK-12576) ([#53](https://github.com/UpStreamPay/purse-headless-checkout-android/issues/53)) ([2fb36ca](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/2fb36ca9f22d3b57ef0c17f2db1e54d2a6c541a8))
+
+
+### Bug Fixes
+
+* **card:** name the missing card submit and document the low-level path (SDK-12580) ([#57](https://github.com/UpStreamPay/purse-headless-checkout-android/issues/57)) ([ab667b1](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/ab667b15f00de116961934fef47e78d3b901c8dc))
+* **card:** send partner_data.browser on the card /validate (SDK-12569) ([#41](https://github.com/UpStreamPay/purse-headless-checkout-android/issues/41)) ([b329962](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/b3299621bb2bbb769d69da160cdc6e554d6522b0))
+* **card:** skip /init for the Purse vault card (SDK-12570) ([#47](https://github.com/UpStreamPay/purse-headless-checkout-android/issues/47)) ([192f330](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/192f330fbef80c25f1db0792b42d8c13ee8a9abd))
+* **card:** spell theme colours the way SecureFields parses them (SDK-12578) ([#55](https://github.com/UpStreamPay/purse-headless-checkout-android/issues/55)) ([7ff4d3a](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/7ff4d3af4c12e74d03576d808d6299d49381be05))
+* **checkout:** send /validate at most once per session (SDK-12621) ([#58](https://github.com/UpStreamPay/purse-headless-checkout-android/issues/58)) ([04dedb0](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/04dedb067f5f43ab4283400bb197d375667b41cf))
+* count every BNPL instalment in the loan simulation total (SDK-12566) ([#39](https://github.com/UpStreamPay/purse-headless-checkout-android/issues/39)) ([24576e2](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/24576e2a32ca6fe79934bef08bd3426d5f52d536))
+* **environment:** refuse TEST / DEVELOPMENT in a release app (SDK-12577) ([#54](https://github.com/UpStreamPay/purse-headless-checkout-android/issues/54)) ([a23796d](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/a23796de43f6064797a67f2e3c926bdc48d3f484))
+* **headless:** take a primary out of the split when its amount bounds suspend it ([#40](https://github.com/UpStreamPay/purse-headless-checkout-android/issues/40)) ([ff843db](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/ff843db7abef9ef42e068b13e4de54a88cf0db60))
+* lock the environment tier, not the Payment API root (SDK-12571) ([#37](https://github.com/UpStreamPay/purse-headless-checkout-android/issues/37)) ([199b8f2](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/199b8f227bb39a84f2acaa27d03ffbadeb980d34))
+* **partner-ui:** retire a method no plugin serves when it is engaged (SDK-12575) ([#52](https://github.com/UpStreamPay/purse-headless-checkout-android/issues/52)) ([4634fc2](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/4634fc23f9f684f6aee520f429c4ffd709016789))
+* re-prepare Google Pay and Klarna when the amount moves (SDK-12567) ([#48](https://github.com/UpStreamPay/purse-headless-checkout-android/issues/48)) ([7ebd4b3](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/7ebd4b3eea931b3913222cb1c65fd34c87ff37bc))
+* **redirect:** enable DOM storage in the redirect WebView (SDK-12572) ([#49](https://github.com/UpStreamPay/purse-headless-checkout-android/issues/49)) ([7a63685](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/7a63685427631c525f058f5c939262dcde44a403))
+* **redirect:** stop other apps from opening the redirect WebView (SDK-12625) ([#38](https://github.com/UpStreamPay/purse-headless-checkout-android/issues/38)) ([51bc0f1](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/51bc0f18e2bc779d933528ad43273fef30576d8c))
+* **wallet:** send a real PATCH to rename or favorite a saved token (SDK-12573) ([#50](https://github.com/UpStreamPay/purse-headless-checkout-android/issues/50)) ([90d3a79](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/90d3a794308dd17af4cebbca2c6c0355f3d405c5))
+
 ## 0.1.0 (2026-09-30)
 
 
@@ -50,4 +80,3 @@
 ### Code Refactoring
 
 * one SDK module, plus one optional artifact per partner SDK ([b54a022](https://github.com/UpStreamPay/purse-headless-checkout-android/commit/b54a022bd77126c8063d855a9f5f069844ace617))
-
