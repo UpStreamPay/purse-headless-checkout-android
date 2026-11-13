@@ -76,6 +76,14 @@ release-please reads it to decide the next version and the changelog section. `P
 `revert`, `docs`, `refactor`, `test`, `ci`, `build`, `chore` or `style`. It reruns when the title is
 edited. A title that would fail here — `Feat/monitoring`, a branch name — releases nothing.
 
+## Release freeze
+
+`Release freeze` (`.github/workflows/release-freeze.yml`) fails a pull request into `main` whose
+title is not `fix:` or `revert:` while a release PR (`autorelease: pending`) is open, so only fixes
+land during NRT (see [release.md](release.md#step-1--freeze-the-release-pr)). The release PR itself
+passes. When the release PR opens, reopens or closes, the last run of the check on every other open PR is
+re-run, so no verdict goes stale.
+
 ## Dependencies
 
 `.github/workflows/dependencies.yml` submits the resolved Gradle dependency graph (GitHub cannot
@@ -104,7 +112,8 @@ Repository settings, not code — a repository admin applies them once. `.github
 - no deletion, no force-push, no bypass
 - pull request required, **1 approval**, **review from a code owner**, approvals dismissed on a new push
 - status checks, **strict** (branch up to date with `main`): `Style, static analysis, API surface`,
-  `Build, unit tests, lint`, `Minified demo (R8) + 16 KB alignment`, `Dependency review`
+  `Build, unit tests, lint`, `Minified demo (R8) + 16 KB alignment`, `Dependency review`,
+  `Release freeze`
 - code scanning: CodeQL, blocking on high or critical security alerts and on errors
 
 **`release tags` ruleset** on `refs/tags/v*`: creation, update and deletion restricted, repository
