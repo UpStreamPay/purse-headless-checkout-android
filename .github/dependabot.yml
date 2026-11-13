@@ -3,11 +3,22 @@ version: 2
 # One grouped pull request a week per ecosystem: every Gradle bump lands in one PR, every GitHub
 # Actions bump in another, so platform and CI changes are reviewed separately. Security updates
 # skip the weekly schedule and open as soon as an advisory lands, grouped per ecosystem too.
+
+# Dependabot's proxy only lets a job reach the default registries and the ones declared here; any
+# other host gets a 403 from the proxy itself ("egress not allowlisted"). Klarna's repository is
+# public, so it needs no credentials, only the declaration.
+registries:
+  klarna:
+    type: maven-repository
+    url: https://x.klarnacdn.net/mobile-sdk
+
 updates:
   # Gradle version catalog (gradle/libs.versions.toml) + the Gradle wrapper. Partner SDK bumps land
   # as PRs, so CI's 16 KB alignment audit and the minified demo build vet them before merge.
   - package-ecosystem: gradle
     directory: /
+    registries:
+      - klarna
     schedule:
       interval: weekly
     labels:
