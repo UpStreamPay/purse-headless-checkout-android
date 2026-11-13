@@ -37,6 +37,7 @@ buildscript {
             classpath("org.bitbucket.b_c:jose4j:0.9.7")
             classpath("org.jdom:jdom2:2.0.6.1")
             classpath("org.apache.commons:commons-lang3:3.21.0")
+            classpath("com.google.guava:guava:33.7.2-jre")
             classpath("org.freemarker:freemarker:2.3.35")
             classpath("com.fasterxml.jackson.core:jackson-core:2.22.4")
             classpath("com.fasterxml.jackson.core:jackson-databind:2.22.4")
