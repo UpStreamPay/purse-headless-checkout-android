@@ -22,7 +22,7 @@ SDK, in Kotlin and Compose.
 | [Architecture](architecture/headless-checkout.md) | Modules, the purse-payment flow, plugin lifecycle. |
 | [Plugins](plugins/README.md) | Per PSP: `/init` contract, sequence, quirks, failure modes — [Google Pay](plugins/google-pay.md) · [Klarna](plugins/klarna.md) · [PayPal](plugins/paypal.md) · [Card](plugins/card-purse-vault.md) · [Redirection](plugins/redirection.md). |
 | [Web ↔ Android map](web-android-map.md) | The web file behind each Android file, and every deliberate divergence. |
-| [Release](contributing/release.md) · [CI and gates](contributing/ci.md) | Cut a release (push to `main`); what blocks a merge and how to refresh an API dump. |
+| [Release](contributing/release.md) · [CI and gates](contributing/ci.md) | Cut a release (run Release Please, then merge the release PR); what blocks a merge and how to refresh an API dump. |
 | [Distribution](decisions/distribution.md) · [R8](decisions/r8-proguard.md) · [16 KB](decisions/16kb-alignment.md) | Maven Central, one engine artifact + optional partner artifacts; consumer rules; the native-library audit. |
 | [Simplification review](decisions/simplification-review.md) · [Pain points](decisions/pain-points-recap.md) | Decisions and their reasons. |
 | [Testing with alfred](internal/testing-with-alfred.md) | Run the demo against real sessions. |

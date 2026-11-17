@@ -1,11 +1,14 @@
 name: Release Please
 
-# Conventional commits on main decide the next semantic version. release-please keeps a release PR
-# open with the changelog; merging it (reviewed and gated like any other PR) creates the `v<version>`
+# Conventional commits on main decide the next semantic version. Running this workflow by hand
+# freezes a release: release-please opens the release PR with the changelog, published as a SNAPSHOT
+# for NRT (upcoming-release.yml). While it is open only fixes reach main (release-freeze.yml) and
+# each one updates it. Merging it (reviewed and gated like any other PR) creates the `v<version>`
 # tag and a draft GitHub release, and the tag triggers staging.yml. Nothing is pushed to main
 # directly, so the main ruleset needs no bypass. See docs/contributing/release.md.
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main
@@ -19,9 +22,21 @@ permissions:
 
 jobs:
   release-please:
+    # A dispatch from another branch would release from it.
+    if: github.ref_name == 'main'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
+      # On push, update the release PR only during a freeze; otherwise just tag a merged one.
+      - name: Release PR open?
+        id: freeze
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          n=$(gh pr list --state open --label 'autorelease: pending' --json number -q length)
+          echo "open=$n" >> "$GITHUB_OUTPUT"
+
       # TF_REPO_AUTOMATION_PAT is a fine-grained token scoped to this repository alone (Contents,
       # Pull requests and Issues: read and write). It is not GITHUB_TOKEN because events raised by
       # GITHUB_TOKEN start no workflow: CI must run on the release PR, and the tag must trigger
@@ -31,3 +46,4 @@ jobs:
           token: ${{ secrets.TF_REPO_AUTOMATION_PAT }}
           config-file: release-please-config.json
           manifest-file: .release-please-manifest.json
+          skip-github-pull-request: ${{ github.event_name == 'push' && steps.freeze.outputs.open == '0' }}

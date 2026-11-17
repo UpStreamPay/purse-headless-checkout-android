@@ -12,14 +12,15 @@ The release is driven from GitHub, exactly like [securefields-android](https://g
 
 | Step | Trigger | What happens |
 |---|---|---|
-| 1 | Push to `main` | `release-please.yml`: conventional commits decide the next version; a **release PR** carries the version and the changelog |
+| 1 | **Release Please** run by hand (the freeze) | `release-please.yml`: conventional commits decide the next version; a **release PR** carries the version and the changelog, and is published as a `-SNAPSHOT` for NRT |
 | 2 | Release PR merged | release-please pushes tag `v<version>` and opens a **draft GitHub release** with the changelog |
 | 3 | Tag push (`v*`), after a codeowner approves | `staging.yml`: gates run, the four artifacts are signed and uploaded to the Central Portal as a **pending deployment**, the draft release gets the Maven coordinates and the generated API reference |
 | 4 | Manual workflow, after a codeowner approves | `release.yml`: re-publishes the latest tag on `main` with `automaticRelease = true`, promoting to **Maven Central**; the GitHub release is published |
 
-Merging the release PR is all it takes to start a release. The pending deployment lets you inspect POMs
-and artifacts before anything goes public. Pushes made only of non-releasable commits (`docs:`,
-`chore:`, …) produce no tag and trigger nothing.
+Running Release Please freezes `main` until the release PR is merged or closed; merging it is all it
+takes to start the publication. The pending deployment lets you inspect POMs and artifacts before
+anything goes public. A freeze made only of non-releasable commits (`docs:`, `chore:`, …) opens no
+release PR.
 
 ## What gets published
 
@@ -97,13 +98,21 @@ A change that `./gradlew apiCheck` flags as an API break must ship as `feat!:` (
 `BREAKING CHANGE:` footer), so the changelog lists it under breaking changes. Renaming, removing or changing the signature of anything in the `*/api/*.api` dumps is such a
 change; adding is not.
 
-## Step 1 — the release PR
+## Step 1 — freeze: the release PR
 
-On every push to `main`, `.github/workflows/release-please.yml` reads the commits since the last
-release and keeps one PR open, `chore(main): release <version>`, that bumps the manifest and
-prepends the changelog. It goes through CI and a codeowner's review like any other PR; nothing is
-ever pushed to `main` directly, so the ruleset needs no bypass. Pushes made only of non-releasable
-commits leave no PR.
+**Actions → Release Please → Run workflow** (on `main`): `.github/workflows/release-please.yml`
+reads the commits since the last release and opens `chore(main): release <version>`, which bumps
+the manifest and prepends the changelog. Opening it publishes the
+[upcoming release](#upcoming-release) `-SNAPSHOT`: run the NRT on it. The PR goes through CI and a
+codeowner's review like any other; nothing is ever pushed to `main` directly, so the ruleset needs
+no bypass. Commits made only of non-releasable types open no PR.
+
+Outside a freeze, a push to `main` opens nothing: release-please only tags a merged release PR.
+
+While the release PR is open, `release-freeze.yml` (the `Release freeze` check) fails every PR into
+`main` whose title is not `fix:` or `revert:` (breaking `fix!:` included). A bug found in NRT is fixed by a normal `fix:` PR into
+`main`; merging it updates the release PR and republishes the `-SNAPSHOT`. Closing the release PR
+lifts the freeze without releasing.
 
 ## Step 2 — merge the release PR
 
@@ -143,7 +152,7 @@ Then check that a project with only `mavenCentral()` resolves
 
 ## Upcoming release
 
-Every update of the open release PR runs `upcoming-release.yml`, which publishes
+Every update of the open release PR (its opening, then each fix merged during the freeze) runs `upcoming-release.yml`, which publishes
 `<next-version>-SNAPSHOT` (unsigned) to GitHub Packages with the workflow's own token. It is private:
 only accounts with read access to this repository can download it. Each build republishes the same
 `-SNAPSHOT` version; a fixed version could not be overwritten.
