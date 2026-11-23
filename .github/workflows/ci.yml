@@ -79,6 +79,15 @@ jobs:
             **/build/reports/lint-results-*.html
           if-no-files-found: ignore
 
+      - name: Upload test telemetry
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ci-harvester-xunit
+          path: '**/build/test-results/**/*.xml'
+          retention-days: 7
+          if-no-files-found: ignore
+
   release-consumer:
     name: Minified demo (R8) + 16 KB alignment
     runs-on: ubuntu-latest
