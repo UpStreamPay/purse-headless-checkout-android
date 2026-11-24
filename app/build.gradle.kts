@@ -26,7 +26,7 @@ fun envOrDotEnv(key: String): String =
 android {
     namespace = "eu.purse.checkout.demo"
     compileSdk {
-        version = release(37)
+        version = release(37) { minorApiLevel = 1 }
     }
 
     defaultConfig {

@@ -11,7 +11,7 @@ plugins {
 android {
     namespace = "eu.purse.partnerui.googlepay"
     compileSdk {
-        version = release(37)
+        version = release(37) { minorApiLevel = 1 }
     }
 
     defaultConfig {
