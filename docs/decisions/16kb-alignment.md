@@ -26,7 +26,7 @@ two AndroidX libraries carry native code, and both are aligned:
 | `androidx.datastore:datastore-core` (Compose/lifecycle transitive) | `libdatastore_shared_counter.so` × 4 ABIs | ✅ `p_align = 0x4000` |
 
 So no partner needs a version bump, no method needs to be dropped, and no limit needs
-documenting. `targetSdk` is 36 (demo) and libraries compile against API 37.
+documenting. `targetSdk` is 36 (demo) and libraries compile against API 37.1.
 
 ## Kept true in CI
 

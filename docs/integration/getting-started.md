@@ -8,7 +8,7 @@ page takes you from an empty project to a first payment. Everything else is in t
 
 | | |
 |---|---|
-| Android | minSdk 26; the libraries compile against API 37 |
+| Android | minSdk 26; the libraries compile against API 37.1 |
 | UI | Jetpack Compose (the payment elements are composables; a View-based app hosts them in a `ComposeView`) |
 | Backend | your server creates a Purse **Client Session** and hands the app its base64 `widget.data` string |
 
